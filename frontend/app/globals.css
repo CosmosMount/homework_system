@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+:root {
+  --color-bg: #050505;
+  --color-surface: #0c0d0f;
+  --color-surface-raised: #121419;
+  --color-surface-hover: #181b21;
+  --color-text-primary: #f4f5f7;
+  --color-text-secondary: #a3a9b3;
+  --color-text-muted: #747b86;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-strong: rgba(255, 255, 255, 0.2);
+  --color-accent: #e32636;
+  --color-accent-hover: #ff3346;
+  --color-success: #36b37e;
+  --color-warning: #e5a83b;
+  --color-danger: #f05252;
+  --color-info: #4c9aff;
+  --focus-ring: #f4f5f7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+  background: var(--color-bg);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--color-text-primary);
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    radial-gradient(circle at 78% 18%, rgba(227, 38, 54, 0.13), transparent 32rem),
+    var(--color-bg);
+  background-size: 32px 32px, 32px 32px, auto, auto;
+  font-family:
+    Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.7;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+::selection {
+  color: white;
+  background: var(--color-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

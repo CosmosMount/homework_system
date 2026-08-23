@@ -1,0 +1,204 @@
+name: ${COMPOSE_PROJECT_NAME:-pnx-training}
+
+x-app-environment: &app-environment
+  APP_ENV: "${APP_ENV:-development}"
+  APP_BASE_URL: "${APP_BASE_URL:-http://localhost:8080}"
+  APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Shanghai}"
+  TRUSTED_HOSTS: "${TRUSTED_HOSTS:-localhost,127.0.0.1,backend}"
+  CAMPUS_EMAIL_DOMAIN: "${CAMPUS_EMAIL_DOMAIN:-hkust-gz.edu.cn}"
+  LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+  SESSION_CURRENT_SECRET: "${SESSION_CURRENT_SECRET:-development-only-session-secret-at-least-32-bytes}"
+  SESSION_PREVIOUS_SECRET: "${SESSION_PREVIOUS_SECRET:-}"
+  CSRF_SECRET: "${CSRF_SECRET:-development-only-csrf-secret-at-least-32-bytes}"
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "${POSTGRES_DB:-pnx_training}"
+  DATABASE_USER: "${POSTGRES_USER:-pnx}"
+  DATABASE_PASSWORD: "${POSTGRES_PASSWORD:-development-only-postgres-password}"
+  DATABASE_POOL_SIZE: "${DATABASE_POOL_SIZE:-10}"
+  DATABASE_MAX_OVERFLOW: "${DATABASE_MAX_OVERFLOW:-10}"
+  MINIO_INTERNAL_ENDPOINT: http://minio:9000
+  MINIO_PUBLIC_BASE_URL: "${MINIO_PUBLIC_BASE_URL:-http://localhost:8080/storage}"
+  MINIO_BUCKET: "${MINIO_BUCKET:-pnx-training}"
+  MINIO_ACCESS_KEY: "${MINIO_ROOT_USER:-pnx_dev_access}"
+  MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-development-only-minio-secret-key}"
+  MINIO_REGION: "${MINIO_REGION:-us-east-1}"
+  SMTP_HOST: "${SMTP_HOST:-smtp.example.invalid}"
+  SMTP_PORT: "${SMTP_PORT:-587}"
+  SMTP_USERNAME: "${SMTP_USERNAME:-}"
+  SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+  SMTP_STARTTLS: "${SMTP_STARTTLS:-true}"
+  MAIL_FROM: "${MAIL_FROM:-no-reply@hkust-gz.edu.cn}"
+  MAIL_REPLY_TO: "${MAIL_REPLY_TO:-no-reply@hkust-gz.edu.cn}"
+  GLOBAL_MAX_UPLOAD_BYTES: "${GLOBAL_MAX_UPLOAD_BYTES:-2147483648}"
+  UPLOAD_PART_SIZE_BYTES: "${UPLOAD_PART_SIZE_BYTES:-16777216}"
+  UPLOAD_SESSION_TTL_SECONDS: "${UPLOAD_SESSION_TTL_SECONDS:-86400}"
+  WORKER_NAME: "${WORKER_NAME:-primary}"
+  WORKER_HEARTBEAT_INTERVAL_SECONDS: "${WORKER_HEARTBEAT_INTERVAL_SECONDS:-60}"
+  WORKER_STALE_AFTER_SECONDS: "${WORKER_STALE_AFTER_SECONDS:-300}"
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:17.11-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-pnx_training}"
+      POSTGRES_USER: "${POSTGRES_USER:-pnx}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-development-only-postgres-password}"
+      POSTGRES_INITDB_ARGS: --encoding=UTF8
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - data_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-pnx_dev_access}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-development-only-minio-secret-key}"
+    volumes:
+      - minio_data:/data
+    networks:
+      - app_net
+      - data_net
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  migrate:
+    image: &backend-image "pnx-training-backend:${APP_IMAGE_TAG:-dev}"
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - data_net
+    logging: *default-logging
+
+  backend:
+    image: *backend-image
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - app_net
+      - data_net
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=3)
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  worker:
+    image: *backend-image
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - data_net
+      - worker_egress_net
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker_healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  frontend:
+    image: "pnx-training-frontend:${APP_IMAGE_TAG:-dev}"
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - app_net
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  nginx:
+    image: nginx:1.31.3-alpine3.24
+    restart: unless-stopped
+    ports:
+      - "${APP_HTTP_PORT:-8080}:8080"
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/nginx-health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    stop_grace_period: 30s
+    logging: *default-logging
+
+networks:
+  app_net:
+    driver: bridge
+  data_net:
+    driver: bridge
+    internal: true
+  worker_egress_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  minio_data:
