@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "thresholds": {
+    "tls_warning_days": 30,
+    "tls_critical_days": 7,
+    "worker_stale_seconds": 300,
+    "outbox_oldest_seconds": 600,
+    "backup_max_age_seconds": 86400,
+    "disk_warning_available_percent": 20,
+    "disk_critical_available_percent": 10,
+    "http_5xx_warning_rate": 0.01,
+    "http_5xx_critical_rate": 0.05,
+    "http_p95_warning_ms": 500,
+    "http_p95_critical_ms": 1000
+  }
+}

@@ -50,13 +50,13 @@
 
 访问：未登录。对应 AUTH-001、AUTH-002、AUTH-010。
 
-`email` 必须规范化后精确以 `@hkust-gz.edu.cn` 结尾；不接受子域名、相似域名或通过该字符串作为局部内容绕过校验。
+`email` 必须规范化后精确以 `@connect.hkust-gz.edu.cn` 结尾；旧域名、子域名、相似域名或通过该字符串作为局部内容的请求均被拒绝。
 
 ```json
 {
   "full_name": "张三",
   "student_number": "12345678",
-  "email": "student@hkust-gz.edu.cn",
+  "email": "student@connect.hkust-gz.edu.cn",
   "password": "user-supplied-password"
 }
 ```
@@ -78,7 +78,7 @@
 | 方法与路径 | 请求 | 结果 | 需求 |
 | --- | --- | --- | --- |
 | `POST /auth/email-verifications/resend` | `{email}` | 统一返回 202 | AUTH-002、AUTH-009 |
-| `POST /auth/email-verifications/confirm` | `{token}` | `{status: active}`，无需审批或分组 | AUTH-002、AUTH-003 |
+| `POST /auth/email-verifications/confirm` | `{token}` | `{status: active}`；空系统首个验证账号成为管理员，其余为学生 | AUTH-002～AUTH-003、AUTH-008 |
 
 令牌无效返回 `400 INVALID_TOKEN`，过期或已使用返回 410。重发接口不暴露邮箱是否注册。
 
@@ -86,14 +86,17 @@
 
 | 方法与路径 | 请求/响应 | 需求 |
 | --- | --- | --- |
-| `POST /auth/login` | `{email,password}` → `{user}` 并设置 Session Cookie | AUTH-004、AUTH-006、AUTH-009 |
+| `POST /auth/login` | `{identifier,password}` → `{user}` 并设置 Session Cookie；暂时兼容旧 `{email,password}` 请求 | AUTH-004、AUTH-006、AUTH-009 |
 | `POST /auth/logout` | 撤销当前 Session，返回 204 | AUTH-006 |
 | `GET /auth/me` | 当前用户、可空届次/方向、角色、状态 | AUTH-004、AUTH-007 |
 | `GET /auth/csrf` | `{csrf_token}` 并刷新 CSRF Cookie | NFR-002 |
 | `GET /auth/sessions` | 当前用户的 Session 列表 | AUTH-006 |
 | `DELETE /auth/sessions/{session_id}` | 撤销指定本人 Session | AUTH-006 |
+| `GET /auth/admin/sessions` | 管理员查看当前所有活跃登录会话的脱敏用户与设备摘要 | AUTH-007、AUTH-008、NFR-006 |
 
-登录对外只使用 `INVALID_CREDENTIALS`；未验证邮箱返回 403 `EMAIL_NOT_VERIFIED`，禁用账号返回通用 `ACCOUNT_UNAVAILABLE`。系统不存在注册审批状态。
+`identifier` 可以是 Connect 邮箱前缀用户名或完整邮箱；用户名先补全为当前 Connect 域名，完整邮箱按原域名规范化，因此旧域名存量账号仍须输入完整邮箱。用户名和对应 Connect 完整邮箱映射到同一账号及同一邮箱限流维度。兼容字段 `email` 只用于旧客户端请求解析，新 OpenAPI 契约和前端统一使用 `identifier`。
+
+登录对账号不存在、密码错误、`pending_email` 和 `disabled` 统一返回 401 `INVALID_CREDENTIALS`，响应状态、文案和主体不暴露账号是否存在或当前状态。成功登录唯一的已验证 active student 时，服务端在事务锁内把其持久化为 admin、撤销旧 Session、写审计，再返回管理员用户并创建新的 4 小时空闲 Session；多账号用户不触发该修正。系统不存在注册审批状态；用户在注册成功页或统一重发验证接口继续邮箱验证流程。
 
 ### 密码重置
 
@@ -265,12 +268,17 @@
 | `PATCH /admin/competition-tasks/{task_id}` | 修改赛题 | COMP-004 |
 | `GET /admin/competitions/{id}/teams` | 筛选队伍、人数和提交状态 | TEAM-004～TEAM-006 |
 | `POST /admin/teams/{team_id}/members` | `{user_id,reason}` 补录 | TEAM-005 |
+| `GET /admin/competitions/{id}/registrations` | 返回个人报名记录、状态、当前队伍和管理员可见的取消资格原因 | COMP-003 |
+| `POST /admin/competitions/{id}/registrations/{user_id}/disqualify` | `{reason}` 取消个人资格并在仍有有效队伍时同步取消整队资格 | COMP-003、TEAM-006 |
+| `GET /admin/teams/{team_id}` | 返回队伍成员、权限字段和各赛题提交/最新版本摘要 | TEAM-004～TEAM-006、SUB-005 |
 | `DELETE /admin/teams/{team_id}/members/{user_id}` | `{reason}` 管理员移除 | TEAM-005 |
 | `POST /admin/teams/{team_id}/captain-transfer` | `{new_captain_user_id,reason}` | TEAM-005 |
 | `POST /admin/teams/{team_id}/waive-min-size` | `{reason}` 人数豁免 | TEAM-004 |
 | `POST /admin/teams/{team_id}/disqualify` | `{reason}` 取消资格 | COMP-003、TEAM-006 |
 
 赛事时间必须满足：`registration_start < registration_end <= submission_start < submission_end`。赛题截止处于提交窗口内。
+个人取消资格原因只返回管理员和对应学生本人；联动队伍的 `disqualification_reason` 使用不含个人原因的固定通用说明。管理员补录使 `invalid` 队伍达到最低人数时恢复 `locked`；从 `locked` 队伍移除成员后低于最低人数且没有豁免时转为 `invalid`。所有上述纠错请求必须提供非空原因并写审计。
+
 
 ## 优秀作业接口
 

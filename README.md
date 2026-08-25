@@ -2,19 +2,21 @@
 
 面向单校单组织的内部业务平台，用于学校邮箱自助注册、站内通知、培训作业提交、私密评语、校内赛组队与优秀作业展示。
 
-阶段 1 工程骨架已经建立：前端、后端、数据库迁移、Worker、Nginx、Docker Compose 和 CI 均已落盘。当前登录页是明确标注“认证尚未接入”的界面骨架；注册、登录、通知、作业和赛事等业务能力按路线图后续阶段实现。
+阶段 1～6 已完成实现与隔离验收：认证、通知、个人作业、校内赛、个人/团队不可变版本、私密评语、优秀作业、MinIO 分片上传，以及生产 HTTPS、监控告警、加密增量备份、隔离恢复、发布回滚和容量验证均已接入。开发 Compose 继续通过 Nginx `5000` 端口提供局域网服务；生产现场还需部署方注入受信域名/证书、校园 SMTP、异机备份目标和独立告警接收方。
+
+当前质量门通过 123 个后端测试、31 个前端测试、严格类型与主机/容器生产构建；阶段 6 的三浏览器 Playwright、隔离 HTTPS 及 npm/pip/Gitleaks/Trivy 零高危或零泄漏门继续有效。空库已完成 0006 往返和初始管理员并发验收，用户名与完整邮箱登录已通过 `http://10.4.150.222:5000` 真实验收。
 
 ## 核心边界
 
 - 培训作业由个人提交，校内赛作品由团队队长提交。
 - 只设学生和管理员两个角色，不提供分数、排名或公开评语。
-- 学生验证 `@hkust-gz.edu.cn` 邮箱后直接激活，无需管理员审批或初始分组。
+- 新账号只接受 `@connect.hkust-gz.edu.cn`；邮箱前缀自动作为用户名，完成邮箱验证后可用用户名或完整邮箱登录。空系统首个完成验证的账号自动成为受最后管理员保护的管理员，其余账号直接激活为学生。
 - 优秀作业只显示在对应作业中，不建立独立范本页面或赛事优秀成果入口。
 - 除认证相关页面外，所有内容只对已登录用户开放。
 - 现有战队官网与培训知识库保持独立；本系统不复制培训内容，也不修改或调用现有站点。
 - 单个提交版本的附件总量不超过 2 GB，文件存储在 MinIO，元数据存储在 PostgreSQL。
 
-## 计划技术栈
+## 技术栈
 
 - 前端：Next.js App Router、TypeScript、Tailwind CSS
 - 后端：FastAPI、SQLAlchemy、Alembic、PostgreSQL
@@ -31,7 +33,14 @@ Copy-Item .env.example .env
 docker compose --env-file .env --file infra/compose/compose.yml up --build
 ```
 
-启动完成后访问 `http://localhost:8080/login`。Nginx 是唯一主机入口；可通过 `/health/live`、`/health/ready` 和 `/health/worker` 检查后端、数据库与 Worker 状态。开发配置只使用 HTTP，生产环境必须按部署文档配置校内域名、HTTPS 和独立强密钥。
+Linux/macOS 使用：
+
+```bash
+cp .env.example .env
+docker compose --env-file .env --file infra/compose/compose.yml up --build
+```
+
+模板默认启动后访问 `http://localhost:8080/login`。如需局域网开发验收，在 `.env` 中修改 `APP_HTTP_PORT`，并同步设置 `APP_BASE_URL`、`TRUSTED_HOSTS` 和 `MINIO_PUBLIC_BASE_URL`；不要暴露 PostgreSQL、MinIO Console、Frontend 或 Backend 端口。Nginx 是唯一主机入口；可通过 `/health/live`、`/health/ready` 和 `/health/worker` 检查后端、数据库与 Worker 状态。开发配置只使用 HTTP，生产环境必须按部署文档配置校内域名、HTTPS 和独立强密钥。
 
 停止并保留数据卷：
 
@@ -59,6 +68,19 @@ py -3.12 -m venv .venv
 ```
 
 完整迁移前滚/回滚与 Compose 冒烟测试由 [.github/workflows/ci.yml](.github/workflows/ci.yml) 在真实 PostgreSQL、MinIO 和 Docker 环境执行。
+
+## 生产部署与运维
+
+生产部署使用 `.env.production.example`、`infra/compose/compose.production.yml` 和 `infra/nginx/nginx.production.conf`。必须填写固定镜像标签或 digest、校内 HTTPS 域名/证书、独立强密钥、SMTP 和 OpenPGP 接收方；生产只开放 Nginx 80/443，其他组件不映射主机端口。
+
+- `infra/release/preflight.sh`：检查固定镜像、秘密文件、证书、拓扑和新鲜加密备份。
+- `infra/release/deploy.sh` / `rollback.sh`：按备份门、迁移、健康等待、HTTPS 冒烟执行发布或仅镜像回滚。
+- `infra/monitoring/check.sh` / `evaluate-alerts.sh`：生成不含个人信息的健康快照并评估证书、Worker、Outbox、备份、磁盘、5xx 和 P95 告警。
+- `infra/backup/backup.sh`：每周 MinIO 完整基线、每日相对周基线的累计增量，并为每天生成 PostgreSQL 快照；所有可恢复归档离开宿主机前使用 OpenPGP 加密。
+- `infra/backup/restore.sh`：只允许显式 `pnx-restore-*` 隔离项目，从周完整或“周基线 + 日增量”恢复并自动运行 Alembic/对象引用对账。
+- `infra/backup/retention.sh`：默认 dry-run，保留 14 个每日、8 个每周，并保护仍被保留每日备份引用的周基线。
+
+`BACKUP_STATE_DIR` 必须是与备份输出分离的本机 `0700` 目录；缺少有效周基线时每日备份会失败，不能绕过。完整部署、备份、故障演练、容量结果和外部现场材料见部署文档、容量报告与生产运维报告。
 
 ## Windows 裸预览
 
@@ -95,5 +117,7 @@ Set-Location backend
 15. [路线图](.agents/docs/14-roadmap.md)
 16. [架构决策](.agents/docs/15-decisions.md)
 17. [变更记录](.agents/docs/16-changelog.md)
+18. [容量与性能报告](.agents/docs/17-capacity-performance-report.md)
+19. [生产运维与故障恢复报告](.agents/docs/18-production-operations-report.md)
 
 开发或修改项目之前必须先阅读 [AGENTS.md](AGENTS.md) 和 [.agents/tasks/current-task.md](.agents/tasks/current-task.md)。

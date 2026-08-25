@@ -1,0 +1,364 @@
+name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required}
+
+x-app-environment: &app-environment
+  APP_ENV: production
+  APP_BASE_URL: "${APP_BASE_URL:?APP_BASE_URL is required}"
+  APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Shanghai}"
+  TRUSTED_HOSTS: "${TRUSTED_HOSTS:?TRUSTED_HOSTS is required}"
+  CAMPUS_EMAIL_DOMAIN: "${CAMPUS_EMAIL_DOMAIN:-connect.hkust-gz.edu.cn}"
+  LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+  SESSION_COOKIE_SECURE: "true"
+  SESSION_CURRENT_SECRET_FILE: /run/secrets/session_current_secret
+  CSRF_SECRET_FILE: /run/secrets/csrf_secret
+  TEAM_INVITE_CODE_PEPPER_FILE: /run/secrets/team_invite_code_pepper
+  OUTBOX_ENCRYPTION_KEY_FILE: /run/secrets/outbox_encryption_key
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "${POSTGRES_DB:?POSTGRES_DB is required}"
+  DATABASE_USER: "${POSTGRES_USER:?POSTGRES_USER is required}"
+  DATABASE_PASSWORD_FILE: /run/secrets/database_password
+  DATABASE_POOL_SIZE: "${DATABASE_POOL_SIZE:-8}"
+  DATABASE_MAX_OVERFLOW: "${DATABASE_MAX_OVERFLOW:-4}"
+  MINIO_INTERNAL_ENDPOINT: http://minio:9000
+  MINIO_PUBLIC_BASE_URL: "${MINIO_PUBLIC_BASE_URL:?MINIO_PUBLIC_BASE_URL is required}"
+  MINIO_BUCKET: "${MINIO_BUCKET:?MINIO_BUCKET is required}"
+  MINIO_ACCESS_KEY_FILE: /run/secrets/minio_access_key
+  MINIO_SECRET_KEY_FILE: /run/secrets/minio_secret_key
+  MINIO_REGION: "${MINIO_REGION:-us-east-1}"
+  SMTP_HOST: "${SMTP_HOST:?SMTP_HOST is required}"
+  SMTP_PORT: "${SMTP_PORT:-587}"
+  SMTP_USERNAME: "${SMTP_USERNAME:-}"
+  SMTP_PASSWORD_FILE: /run/secrets/smtp_password
+  SMTP_STARTTLS: "${SMTP_STARTTLS:-true}"
+  MAIL_FROM: "${MAIL_FROM:?MAIL_FROM is required}"
+  MAIL_REPLY_TO: "${MAIL_REPLY_TO:?MAIL_REPLY_TO is required}"
+  GLOBAL_MAX_UPLOAD_BYTES: "${GLOBAL_MAX_UPLOAD_BYTES:-2147483648}"
+  UPLOAD_PART_SIZE_BYTES: "${UPLOAD_PART_SIZE_BYTES:-16777216}"
+  UPLOAD_SESSION_TTL_SECONDS: "${UPLOAD_SESSION_TTL_SECONDS:-86400}"
+  WORKER_NAME: "${WORKER_NAME:-primary}"
+  WORKER_HEARTBEAT_INTERVAL_SECONDS: "${WORKER_HEARTBEAT_INTERVAL_SECONDS:-60}"
+  WORKER_STALE_AFTER_SECONDS: "${WORKER_STALE_AFTER_SECONDS:-300}"
+  WORKER_POLL_INTERVAL_SECONDS: "${WORKER_POLL_INTERVAL_SECONDS:-5}"
+  WORKER_LOCK_LEASE_SECONDS: "${WORKER_LOCK_LEASE_SECONDS:-300}"
+
+x-app-secrets: &app-secrets
+  - session_current_secret
+  - csrf_secret
+  - team_invite_code_pepper
+  - outbox_encryption_key
+  - database_password
+  - minio_access_key
+  - minio_secret_key
+  - smtp_password
+
+x-app-security: &app-security
+  read_only: true
+  init: true
+  pids_limit: 256
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:17.11-bookworm
+    restart: unless-stopped
+    read_only: true
+    init: true
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:?POSTGRES_DB is required}"
+      POSTGRES_USER: "${POSTGRES_USER:?POSTGRES_USER is required}"
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_password
+      POSTGRES_INITDB_ARGS: --encoding=UTF8
+    secrets:
+      - database_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /var/run/postgresql:rw,noexec,nosuid,size=16m
+    networks:
+      - data_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+          pids: 256
+        reservations:
+          memory: 512m
+    logging: *default-logging
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data"]
+    restart: unless-stopped
+    read_only: true
+    init: true
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_access_key
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_secret_key
+    secrets:
+      - minio_access_key
+      - minio_secret_key
+    volumes:
+      - minio_data:/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    networks:
+      - app_net
+      - data_net
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g
+          pids: 256
+        reservations:
+          memory: 512m
+    logging: *default-logging
+
+  migrate:
+    image: "${BACKEND_IMAGE:?BACKEND_IMAGE must be fixed}"
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    <<: *app-security
+    environment: *app-environment
+    secrets: *app-secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - data_net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+          pids: 256
+    logging: *default-logging
+
+  backend:
+    image: "${BACKEND_IMAGE:?BACKEND_IMAGE must be fixed}"
+    restart: unless-stopped
+    <<: *app-security
+    environment: *app-environment
+    secrets: *app-secrets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+    networks:
+      - app_net
+      - data_net
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/api/v1/health/ready', headers={'Host':'backend'}), timeout=3)
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 1g
+          pids: 256
+        reservations:
+          memory: 256m
+    logging: *default-logging
+
+  worker:
+    image: "${BACKEND_IMAGE:?BACKEND_IMAGE must be fixed}"
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    <<: *app-security
+    environment: *app-environment
+    secrets: *app-secrets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+    networks:
+      - data_net
+      - worker_egress_net
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker_healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768m
+          pids: 256
+        reservations:
+          memory: 256m
+    logging: *default-logging
+
+  frontend:
+    image: "${FRONTEND_IMAGE:?FRONTEND_IMAGE must be fixed}"
+    restart: unless-stopped
+    read_only: true
+    init: true
+    user: "10001:10001"
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      API_INTERNAL_BASE_URL: http://backend:8000/api/v1
+      DEPLOYMENT_MODE: production
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /app/.next/cache:rw,noexec,nosuid,size=128m
+    networks:
+      - app_net
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768m
+          pids: 256
+        reservations:
+          memory: 192m
+    logging: *default-logging
+
+  nginx:
+    image: nginx:1.31.3-alpine3.24
+    restart: unless-stopped
+    read_only: true
+    init: true
+    user: "101:101"
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "${PRODUCTION_HTTP_BIND:-0.0.0.0}:${PRODUCTION_HTTP_PORT:-80}:8080"
+      - "${PRODUCTION_HTTPS_BIND:-0.0.0.0}:${PRODUCTION_HTTPS_PORT:-443}:8443"
+    volumes:
+      - type: bind
+        source: "${TLS_CERTIFICATE_SOURCE:?TLS_CERTIFICATE_SOURCE is required}"
+        target: /etc/nginx/tls/fullchain.pem
+        read_only: true
+      - type: bind
+        source: ../nginx/nginx.production.conf
+        target: /etc/nginx/nginx.conf
+        read_only: true
+    secrets:
+      - tls_private_key
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - app_net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/nginx-health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+          pids: 128
+        reservations:
+          memory: 64m
+    logging: *default-logging
+
+networks:
+  app_net:
+    driver: bridge
+  data_net:
+    driver: bridge
+    internal: true
+  worker_egress_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  minio_data:
+
+secrets:
+  session_current_secret:
+    file: "${SESSION_CURRENT_SECRET_SOURCE:?SESSION_CURRENT_SECRET_SOURCE is required}"
+  csrf_secret:
+    file: "${CSRF_SECRET_SOURCE:?CSRF_SECRET_SOURCE is required}"
+  team_invite_code_pepper:
+    file: "${TEAM_INVITE_CODE_PEPPER_SOURCE:?TEAM_INVITE_CODE_PEPPER_SOURCE is required}"
+  outbox_encryption_key:
+    file: "${OUTBOX_ENCRYPTION_KEY_SOURCE:?OUTBOX_ENCRYPTION_KEY_SOURCE is required}"
+  database_password:
+    file: "${DATABASE_PASSWORD_SOURCE:?DATABASE_PASSWORD_SOURCE is required}"
+  minio_access_key:
+    file: "${MINIO_ACCESS_KEY_SOURCE:?MINIO_ACCESS_KEY_SOURCE is required}"
+  minio_secret_key:
+    file: "${MINIO_SECRET_KEY_SOURCE:?MINIO_SECRET_KEY_SOURCE is required}"
+  smtp_password:
+    file: "${SMTP_PASSWORD_SOURCE:?SMTP_PASSWORD_SOURCE is required}"
+  tls_private_key:
+    file: "${TLS_PRIVATE_KEY_SOURCE:?TLS_PRIVATE_KEY_SOURCE is required}"

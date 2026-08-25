@@ -5,18 +5,21 @@ x-app-environment: &app-environment
   APP_BASE_URL: "${APP_BASE_URL:-http://localhost:8080}"
   APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Shanghai}"
   TRUSTED_HOSTS: "${TRUSTED_HOSTS:-localhost,127.0.0.1,backend}"
-  CAMPUS_EMAIL_DOMAIN: "${CAMPUS_EMAIL_DOMAIN:-hkust-gz.edu.cn}"
+  CAMPUS_EMAIL_DOMAIN: "${CAMPUS_EMAIL_DOMAIN:-connect.hkust-gz.edu.cn}"
   LOG_LEVEL: "${LOG_LEVEL:-INFO}"
   SESSION_CURRENT_SECRET: "${SESSION_CURRENT_SECRET:-development-only-session-secret-at-least-32-bytes}"
   SESSION_PREVIOUS_SECRET: "${SESSION_PREVIOUS_SECRET:-}"
   CSRF_SECRET: "${CSRF_SECRET:-development-only-csrf-secret-at-least-32-bytes}"
+  TEAM_INVITE_CODE_PEPPER: "${TEAM_INVITE_CODE_PEPPER:-development-only-team-invite-pepper-32-bytes}"
+  SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
+  OUTBOX_ENCRYPTION_KEY: "${OUTBOX_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}"
   DATABASE_HOST: postgres
   DATABASE_PORT: "5432"
   DATABASE_NAME: "${POSTGRES_DB:-pnx_training}"
   DATABASE_USER: "${POSTGRES_USER:-pnx}"
   DATABASE_PASSWORD: "${POSTGRES_PASSWORD:-development-only-postgres-password}"
-  DATABASE_POOL_SIZE: "${DATABASE_POOL_SIZE:-10}"
-  DATABASE_MAX_OVERFLOW: "${DATABASE_MAX_OVERFLOW:-10}"
+  DATABASE_POOL_SIZE: "${DATABASE_POOL_SIZE:-8}"
+  DATABASE_MAX_OVERFLOW: "${DATABASE_MAX_OVERFLOW:-4}"
   MINIO_INTERNAL_ENDPOINT: http://minio:9000
   MINIO_PUBLIC_BASE_URL: "${MINIO_PUBLIC_BASE_URL:-http://localhost:8080/storage}"
   MINIO_BUCKET: "${MINIO_BUCKET:-pnx-training}"
@@ -28,14 +31,16 @@ x-app-environment: &app-environment
   SMTP_USERNAME: "${SMTP_USERNAME:-}"
   SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
   SMTP_STARTTLS: "${SMTP_STARTTLS:-true}"
-  MAIL_FROM: "${MAIL_FROM:-no-reply@hkust-gz.edu.cn}"
-  MAIL_REPLY_TO: "${MAIL_REPLY_TO:-no-reply@hkust-gz.edu.cn}"
+  MAIL_FROM: "${MAIL_FROM:-no-reply@connect.hkust-gz.edu.cn}"
+  MAIL_REPLY_TO: "${MAIL_REPLY_TO:-no-reply@connect.hkust-gz.edu.cn}"
   GLOBAL_MAX_UPLOAD_BYTES: "${GLOBAL_MAX_UPLOAD_BYTES:-2147483648}"
   UPLOAD_PART_SIZE_BYTES: "${UPLOAD_PART_SIZE_BYTES:-16777216}"
   UPLOAD_SESSION_TTL_SECONDS: "${UPLOAD_SESSION_TTL_SECONDS:-86400}"
   WORKER_NAME: "${WORKER_NAME:-primary}"
   WORKER_HEARTBEAT_INTERVAL_SECONDS: "${WORKER_HEARTBEAT_INTERVAL_SECONDS:-60}"
   WORKER_STALE_AFTER_SECONDS: "${WORKER_STALE_AFTER_SECONDS:-300}"
+  WORKER_POLL_INTERVAL_SECONDS: "${WORKER_POLL_INTERVAL_SECONDS:-5}"
+  WORKER_LOCK_LEASE_SECONDS: "${WORKER_LOCK_LEASE_SECONDS:-300}"
 
 x-default-logging: &default-logging
   driver: json-file
@@ -150,6 +155,8 @@ services:
       context: ../../frontend
       dockerfile: Dockerfile
     restart: unless-stopped
+    environment:
+      API_INTERNAL_BASE_URL: http://backend:8000/api/v1
     networks:
       - app_net
     healthcheck:

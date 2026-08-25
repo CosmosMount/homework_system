@@ -118,3 +118,150 @@ jobs:
       - name: 清理 Compose
         if: always()
         run: docker compose --env-file .env --file infra/compose/compose.yml down --volumes --remove-orphans
+
+  production-security:
+    runs-on: ubuntu-latest
+    needs: [frontend, backend]
+    steps:
+      - uses: actions/checkout@v6
+      - name: 构建发布候选镜像
+        run: |
+          docker build --tag "pnx-ci-backend:${GITHUB_SHA}" backend
+          docker build --tag "pnx-ci-frontend:${GITHUB_SHA}" frontend
+      - name: 渲染并核对生产 Compose
+        shell: bash
+        run: |
+          render_root="${RUNNER_TEMP}/production-render"
+          secret_root="${render_root}/secrets"
+          mkdir -p "$secret_root"
+          for secret_name in session_current_secret csrf_secret team_invite_code_pepper outbox_encryption_key database_password minio_access_key minio_secret_key smtp_password; do
+            openssl rand -base64 48 >"${secret_root}/${secret_name}"
+            chmod 600 "${secret_root}/${secret_name}"
+          done
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+            -subj "/CN=ci.example.invalid" \
+            -keyout "${secret_root}/tls-private-key.pem" \
+            -out "${render_root}/tls-certificate.pem" >/dev/null 2>&1
+          chmod 600 "${secret_root}/tls-private-key.pem"
+          {
+            printf '%s\n' "COMPOSE_PROJECT_NAME=pnx-ci-production-render"
+            printf '%s\n' "BACKEND_IMAGE=pnx-ci-backend:${GITHUB_SHA}"
+            printf '%s\n' "FRONTEND_IMAGE=pnx-ci-frontend:${GITHUB_SHA}"
+            printf '%s\n' "APP_BASE_URL=https://ci.example.invalid"
+            printf '%s\n' "TRUSTED_HOSTS=ci.example.invalid,backend"
+            printf '%s\n' "MINIO_PUBLIC_BASE_URL=https://ci.example.invalid/storage"
+            printf '%s\n' "POSTGRES_DB=pnx_ci"
+            printf '%s\n' "POSTGRES_USER=pnx_ci"
+            printf '%s\n' "MINIO_BUCKET=pnx-ci"
+            printf '%s\n' "SMTP_HOST=smtp.example.invalid"
+            printf '%s\n' "MAIL_FROM=ci@connect.hkust-gz.edu.cn"
+            printf '%s\n' "MAIL_REPLY_TO=ci@connect.hkust-gz.edu.cn"
+            printf '%s\n' "TLS_CERTIFICATE_SOURCE=${render_root}/tls-certificate.pem"
+            printf '%s\n' "TLS_PRIVATE_KEY_SOURCE=${secret_root}/tls-private-key.pem"
+            printf '%s\n' "SESSION_CURRENT_SECRET_SOURCE=${secret_root}/session_current_secret"
+            printf '%s\n' "CSRF_SECRET_SOURCE=${secret_root}/csrf_secret"
+            printf '%s\n' "TEAM_INVITE_CODE_PEPPER_SOURCE=${secret_root}/team_invite_code_pepper"
+            printf '%s\n' "OUTBOX_ENCRYPTION_KEY_SOURCE=${secret_root}/outbox_encryption_key"
+            printf '%s\n' "DATABASE_PASSWORD_SOURCE=${secret_root}/database_password"
+            printf '%s\n' "MINIO_ACCESS_KEY_SOURCE=${secret_root}/minio_access_key"
+            printf '%s\n' "MINIO_SECRET_KEY_SOURCE=${secret_root}/minio_secret_key"
+            printf '%s\n' "SMTP_PASSWORD_SOURCE=${secret_root}/smtp_password"
+          } >"${render_root}/compose.env"
+          docker compose \
+            --env-file "${render_root}/compose.env" \
+            --file infra/compose/compose.production.yml \
+            config --quiet
+          docker compose \
+            --env-file "${render_root}/compose.env" \
+            --file infra/compose/compose.production.yml \
+            config --format json >"${render_root}/compose.json"
+          jq -e '
+            ([.services[] | has("build")] | all(. == false))
+            and ([.services | to_entries[] | select(.key != "nginx") | .value.ports? // empty] | length == 0)
+            and ((.services.nginx.ports // []) | length == 2)
+            and (.networks.data_net.internal == true)
+          ' "${render_root}/compose.json" >/dev/null
+      - name: 运行秘密、SBOM、镜像和配置安全门
+        shell: bash
+        run: |
+          security_output="${RUNNER_TEMP}/security"
+          mkdir -p "$security_output"
+          SECURITY_OUTPUT_DIR="$security_output" \
+          BACKEND_IMAGE="pnx-ci-backend:${GITHUB_SHA}" \
+          FRONTEND_IMAGE="pnx-ci-frontend:${GITHUB_SHA}" \
+            infra/security/scan.sh
+      - name: 保存 SBOM 与机器可读扫描报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/security/*.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  playwright:
+    runs-on: ubuntu-latest
+    needs: [compose-smoke]
+    env:
+      COMPOSE_PROJECT_NAME: pnx-ci-e2e
+      APP_IMAGE_TAG: ci-e2e-${{ github.sha }}
+      APP_ENV: test
+      APP_HTTP_PORT: "8080"
+      APP_BASE_URL: http://127.0.0.1:8080
+      MINIO_PUBLIC_BASE_URL: http://127.0.0.1:8080/storage
+      TRUSTED_HOSTS: 127.0.0.1,localhost,backend
+      PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+    steps:
+      - uses: actions/checkout@v6
+      - name: 启动隔离 E2E 拓扑
+        run: docker compose --env-file .env.example --file infra/compose/compose.yml up --build --detach
+      - name: 等待服务并创建虚构测试账号
+        shell: bash
+        run: |
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:8080/health/worker >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              docker compose --env-file .env.example --file infra/compose/compose.yml ps
+              docker compose --env-file .env.example --file infra/compose/compose.yml logs --no-color
+              exit 1
+            fi
+            sleep 5
+          done
+          password_file="${RUNNER_TEMP}/e2e-password"
+          openssl rand -base64 48 >"$password_file"
+          chmod 600 "$password_file"
+          docker compose --env-file .env.example --file infra/compose/compose.yml \
+            cp "$password_file" backend:/tmp/e2e-password
+          docker compose --env-file .env.example --file infra/compose/compose.yml \
+            exec -T --user 0 backend chown 10001:10001 /tmp/e2e-password
+          docker compose --env-file .env.example --file infra/compose/compose.yml \
+            exec -T backend python -m app.cli seed-e2e-users \
+              --password-file /tmp/e2e-password --confirm-synthetic-data
+          docker compose --env-file .env.example --file infra/compose/compose.yml \
+            exec -T --user 0 backend rm -f /tmp/e2e-password
+          printf '%s\n' "E2E_PASSWORD_FILE=$password_file" >>"$GITHUB_ENV"
+      - name: 安装固定 Playwright 依赖
+        shell: bash
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
+            --env npm_config_cache=/tmp/npm-cache \
+            --env XDG_CACHE_HOME=/tmp/xdg-cache \
+            --volume "${PWD}/frontend:/work" \
+            --workdir /work \
+            "$PLAYWRIGHT_IMAGE" npm ci
+      - name: 运行 Chromium、Firefox 与 WebKit 核心流程
+        shell: bash
+        run: |
+          docker run --rm \
+            --network host \
+            --user "$(id -u):$(id -g)" \
+            --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
+            --env XDG_CACHE_HOME=/tmp/xdg-cache \
+            --env CI=1 \
+            --env E2E_BASE_URL=http://127.0.0.1:8080 \
+            --env E2E_REQUIRE_AUTH=1 \

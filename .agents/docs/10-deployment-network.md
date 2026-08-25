@@ -4,7 +4,7 @@
 
 首版部署在校内 Linux 服务器，通过 Docker Compose 管理 Nginx、Next.js、FastAPI、Worker、PostgreSQL 和 MinIO。系统是单节点业务部署，不宣称高可用；通过可靠持久化、备份和可恢复更新满足 NFR-001、NFR-007～NFR-009、NFR-012。
 
-阶段 1 仓库配置以主机 `8080` 映射到 Nginx `8080`，仅用于本地开发和 CI 冒烟；它不是生产 HTTP 方案。生产部署仍必须使用下述 80/443、HTTPS、证书和强密钥要求。
+阶段 1 仓库配置默认以主机 `8080` 映射到 Nginx `8080`，仅用于本地开发和 CI 冒烟；它不是生产 HTTP 方案。局域网开发验收可以在被 Git 忽略的 `.env` 中设置 `APP_HTTP_PORT`，并同步设置 `APP_BASE_URL`、`TRUSTED_HOSTS` 和 `MINIO_PUBLIC_BASE_URL`；Compose 仍只允许 Nginx 映射主机端口。生产部署仍必须使用下述 80/443、HTTPS、证书和强密钥要求。
 
 ## 服务与端口
 
@@ -58,13 +58,18 @@ PostgreSQL 不加入 `app_net`。`data_net` 的 internal 属性不会阻断 Work
 │   ├── postgres/
 │   └── minio/
 ├── backups/
+├── state/
+│   └── backup/
+├── tmp/
 └── logs/
 ```
 
 - `data/postgres` 和 `data/minio` 使用独立持久卷或挂载点，不能位于容器可写层。
 - `backups` 使用与业务数据不同的磁盘或远端加密存储；同盘副本不算有效备份。
+- `state/backup` 只保存当前 MinIO 周完整基线的对象键、大小与 SHA-256 清单，必须是宿主机本地 `0700` 目录，且不得等于、位于或包含 `backups`；它不是可独立恢复的备份，不能同步到未加密的远端目标。
+- `tmp` 只承载备份/恢复期间的明文临时归档，必须位于受控本地磁盘；脚本退出时清理，宿主机仍应配置重启后的临时文件清理。
 - 目录仅授予对应服务账号和受控运维组访问。
-- Compose 文件和非秘密配置纳入仓库；真实环境文件、证书私钥、数据和备份不纳入 Git。
+- Compose 文件和非秘密配置纳入仓库；真实环境文件、证书私钥、数据、状态清单和备份不纳入 Git。
 
 ## Nginx 路由
 
@@ -80,6 +85,7 @@ PostgreSQL 不加入 `app_net`。`data_net` 的 internal 属性不会阻断 Work
 - `X-Forwarded-Proto`、`Host` 和真实 IP 只信任受控代理链。
 - `/api/v1` 默认请求体限制 2 MiB；文件数据只走 `/storage/`。
 - `/storage/` 单请求限制为 17 MiB，覆盖 16 MiB 分片及协议开销。
+- MinIO 预签名基于内部 `minio:9000` 生成；Nginx 去除 `/storage` 前缀时必须把上游 `Host` 固定恢复为 `minio:9000`，否则 SigV4 返回 `SignatureDoesNotMatch`。
 - 安全头以 `08-auth-security-email.md` 为准。
 
 ## HTTPS 与域名
@@ -116,9 +122,11 @@ minio
 - `APP_BASE_URL`
 - `APP_TIMEZONE=Asia/Shanghai`
 - `TRUSTED_HOSTS`
-- `CAMPUS_EMAIL_DOMAIN=hkust-gz.edu.cn`，生产值必须与产品要求一致
+- `CAMPUS_EMAIL_DOMAIN=connect.hkust-gz.edu.cn`，生产值必须与产品要求一致
 - `SESSION_CURRENT_SECRET`、`SESSION_PREVIOUS_SECRET`
 - `CSRF_SECRET`
+- `SESSION_COOKIE_SECURE=true`，生产不得关闭
+- `OUTBOX_ENCRYPTION_KEY`，独立 32 字节认证加密密钥
 - `GLOBAL_MAX_UPLOAD_BYTES=2147483648`
 - `UPLOAD_PART_SIZE_BYTES=16777216`
 - `UPLOAD_SESSION_TTL_SECONDS=86400`
@@ -152,16 +160,10 @@ minio
 2. 从模板生成生产环境文件并注入独立随机密钥。
 3. 拉取固定镜像，启动 PostgreSQL 与 MinIO，等待健康。
 4. 运行 Alembic 升级，再启动 Backend、Worker、Frontend 和 Nginx。
-5. 使用目标管理命令创建首个管理员：
-
-   ```bash
-   docker compose exec backend python -m app.cli create-admin
-   ```
-
-   命令交互读取校园邮箱和密码，不在命令行参数或 shell 历史中暴露密码。
-
-6. 验证 HTTPS、注册邮件、登录、上传、Worker、审计和健康端点。
-7. 执行一次备份并在隔离环境完成恢复测试后再开放用户访问。
+5. 在确认数据库不存在任何 `active` 用户后，通过公开注册页注册 `@connect.hkust-gz.edu.cn` 账号并完成邮箱验证；首个成功验证的账号在同一事务中成为受最后管理员保护的 `admin`。升级库若恰好只有一个已验证 active student，`20260825_0007` 会提升其角色并撤销旧 Session，用户需重新登录。
+6. 核对 `user.initial_admin_granted` 审计事件、管理员用户页面和最后管理员保护。`python -m app.cli create-admin` 仅保留为数据库已无法通过正常注册引导时的受控恢复工具，必须在容器内交互执行、记录审批与审计，不作为正常首次部署步骤。
+7. 验证 HTTPS、Connect 注册拒绝边界、注册邮件、登录、上传、Worker、审计和健康端点。
+8. 执行一次备份并在隔离环境完成恢复测试后再开放用户访问。
 
 ## 健康检查与监控
 
@@ -187,30 +189,32 @@ minio
 
 ### 策略
 
-- PostgreSQL：每日 `pg_dump` 自定义格式，每周完整备份；保留最近 14 个每日和 8 个每周版本。
-- MinIO：每日对新增/变化对象做增量镜像，每周执行完整校验清单；版本必须与数据库备份时间戳关联。
+- PostgreSQL：每日与每周均生成 `pg_dump` 自定义格式快照；保留最近 14 个每日和 8 个每周版本。
+- MinIO：每周完整归档全部对象并流式计算完整清单；每日相对当前周基线生成累计增量，只携带新增/变化对象、删除集合和当日完整清单。任一每日备份只依赖一个周基线，不依赖更早的每日备份。
+- 日增量通过周备份 ID 和基线清单 SHA-256 绑定。缺少本地基线状态、周加密归档、外部校验和或成功元数据时必须失败，不得静默退化为每日完整备份或无基线增量。
 - 配置：备份 Compose、Nginx 非秘密配置和加密后的必要密钥材料；证书私钥按学校规范保管。
-- 所有备份在离开宿主机前加密，并写入校验和与清单。
+- 所有可恢复备份在离开宿主机前使用 OpenPGP 接收方加密，并写入归档 SHA-256、内部逐文件校验清单和不含个人信息的外部元数据。
+- 保留脚本默认只做 dry-run；应用删除时先识别保留每日备份引用的周基线，被引用基线即使超过周数量阈值也不得删除。
 
 ### 一致性
 
-每周完整备份在短维护窗口中暂停新提交和管理写操作，等待 Worker 完成或释放任务，然后记录数据库与 MinIO 清单时间点。每日备份允许少量孤立对象，恢复后由对账 Worker识别，不允许出现数据库引用缺失对象而无告警。
+每周完整备份在短维护窗口中暂停新提交和管理写操作，等待 Worker 完成或释放任务，然后记录数据库与 MinIO 清单时间点。每日备份允许少量孤立对象，但数据库快照与对象清单使用同一备份 ID；恢复后必须运行全量只读对账，不允许数据库引用缺失对象、大小/哈希不符或未追踪对象无告警。
 
 ### 恢复演练
 
-1. 在隔离网络启动相同或兼容版本的 PostgreSQL 与 MinIO。
-2. 验证备份校验和，恢复对象和数据库。
-3. 运行迁移状态检查与引用对账，确认每个 `available` 文件存在且大小/哈希匹配。
-4. 使用测试管理员验证登录、通知、提交版本、评语、作业内优秀作业和下载。
-5. 记录实际 RPO/RTO；目标为 RPO 24 小时、RTO 4 小时。
+1. 在隔离网络和全新 `pnx-restore-*` Compose 项目中启动相同或兼容版本的 PostgreSQL 与 MinIO，显式确认项目名；恢复脚本拒绝普通生产/开发项目名。
+2. 验证目标归档外部校验和、OpenPGP 解密、内部逐文件校验和与安全路径；若目标为每日增量，再解析并验证其唯一周基线归档。
+3. 恢复目标日 PostgreSQL 快照；MinIO 先导入空桶周基线，再校验基线对象集合、应用新增/变化对象和删除集合，最后核对目标完整清单。周完整备份直接导入空桶。
+4. 检查 Alembic head，运行只读引用对账，确认每个 `available` 文件存在且大小/哈希匹配，并报告未追踪对象而不自动删除。
+5. 使用测试管理员验证登录、通知、提交版本、评语、作业内优秀作业和下载，记录实际 RPO/RTO；目标为 RPO 24 小时、RTO 4 小时。
 
-恢复演练至少每学期一次，结果写入 `.agents/docs/16-changelog.md` 或正式运维记录。
+恢复演练至少每学期一次，结果写入 `.agents/docs/18-production-operations-report.md` 和变更记录。生产命令、故障演练与外部前置材料见该报告。
 
 ## 发布与回滚
 
 1. 在 CI 构建固定镜像并完成测试、依赖扫描和迁移测试。
 2. 生产更新前备份数据库并确认 MinIO 健康。
-3. 运行向后兼容迁移，启动新 Backend/Worker，再更新 Frontend 和 Nginx。
+3. 运行向后兼容迁移；数据修正导致 Session 撤销时提前通知受影响用户。迁移成功后启动新 Backend/Worker，再更新 Frontend 和 Nginx。
 4. 执行冒烟测试和监控观察。
 5. 应用故障时回退镜像；数据库使用迁移的前滚修复或已测试降级。禁止在未评估数据写入后直接恢复旧数据库备份。
 

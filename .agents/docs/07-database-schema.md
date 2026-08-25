@@ -76,9 +76,10 @@ erDiagram
 约束：
 
 - `email_normalized` 和 `student_number` 分别唯一。
-- 公开注册邮箱必须满足正则 `^[^@]+@hkust-gz\.edu\.cn$`；其他后缀不能写入公开注册用户。
-- `active` 学生必须具有 `email_verified_at`；`cohort_id` 和 `direction_id` 均可空且不参与登录条件。
-- 公开注册只能创建 `student`，验证成功后直接从 `pending_email` 进入 `active`。
+- Connect 用户名由 `email_normalized` 的 local-part 派生，不新增用户名列、独立唯一约束或可编辑用户名；旧域名存量账号不启用前缀登录。
+- 数据库 CHECK 允许 `@hkust-gz.edu.cn` 存量行与 `@connect.hkust-gz.edu.cn` 新行共存；公开注册和管理员邮箱修改的 Service 只允许 Connect 域名。
+- 任一 `active` 账号必须具有 `email_verified_at`；`cohort_id` 和 `direction_id` 均可空且不参与登录条件。
+- 公开注册先创建 `pending_email student`；验证事务在固定 advisory lock 内确认没有任何 `active` 用户时把首个账号设为 `admin`，其余账号保持 `student`。同一事务锁也用于登录时确认不存在其他用户行；唯一的已验证 `active student` 必须提升为 `admin`、增加 revision、撤销旧 Session 并写审计。
 - `password_hash` 只存 Argon2id 编码结果。
 - 角色变更和状态变更均写 `audit_logs`。
 
@@ -103,7 +104,7 @@ erDiagram
 
 `id`, `event_type`, `email_normalized`, `user_id`, `ip_prefix`, `occurred_at`, `metadata`。
 
-- 用于登录限流与安全分析；`metadata` 禁止密码、Cookie 和一次性令牌。
+- 用于登录限流与安全分析；用户名和对应 Connect 完整邮箱都先写成同一个规范化完整邮箱，`metadata` 禁止密码、Cookie 和一次性令牌。
 - 索引 `(email_normalized, occurred_at)` 和 `(ip_prefix, occurred_at)`。
 
 ## 通知与站内提醒
@@ -296,10 +297,11 @@ CHECK (
 
 ### `outbox_jobs`
 
-`id`, `job_type`, `event_key`, `payload`, `status`, `available_at`, `attempt_count`, `max_attempts`, `locked_by`, `locked_at`, `last_error_code`, `last_error_summary`, `created_at`, `sent_at`。
+`id`, `job_type`, `event_key`, `payload`, `secret_payload_ciphertext`, `status`, `available_at`, `attempt_count`, `max_attempts`, `locked_by`, `locked_at`, `last_error_code`, `last_error_summary`, `created_at`, `sent_at`。
 
 - `event_key` 唯一，是 MAIL-005 的幂等依据。
-- `payload` 只含完成任务所需的资源 ID和模板变量，不保存密码、Cookie 或明文一次性令牌。
+- `payload` 只含完成任务所需的资源 ID和非秘密模板变量，不保存密码、Cookie 或明文一次性令牌。
+- `secret_payload_ciphertext` 可空，只用于保存经独立 Outbox 密钥认证加密的投递秘密；不得通过管理 API、日志或审计返回。
 - 领取索引 `(status, available_at)`；Worker 使用 `FOR UPDATE SKIP LOCKED`。
 - 邮件管理 API 只查询 `job_type` 为邮件的记录并对接收方脱敏。
 
@@ -339,3 +341,4 @@ CHECK (
 3. 删除列或枚举值采用至少一个版本的弃用窗口，先停止读取和写入，再迁移数据，最后移除。
 4. 生产迁移前完成 PostgreSQL 备份；不可逆迁移必须给出经过测试的前滚恢复方案。
 5. 迁移测试从空库升级到最新，也从上一个发布版本升级到最新，并验证全部检查、唯一和外键约束。
+6. 数据修正迁移 `20260825_0007` 不改变结构，只在用户表恰好一行且该行是已验证 `active student` 时提升为管理员、撤销旧 Session 并追加审计；降级保留已授予角色，避免系统重新失去管理员。

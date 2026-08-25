@@ -1,6 +1,7 @@
 /.env
 /.env.*
 !/.env.example
+!/.env.production.example
 
 **/.venv/
 **/__pycache__/
@@ -13,6 +14,8 @@
 **/node_modules/
 **/.next/
 **/coverage/
+**/playwright-report/
+**/test-results/
 *.tsbuildinfo
 
 .DS_Store

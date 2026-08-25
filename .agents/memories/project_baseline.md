@@ -3,21 +3,24 @@
 ## 长期稳定事实
 
 - 项目是单校、单组织的内部平台，不是多租户 SaaS、公开论坛或通用网盘。
-- 用户角色只有学生和管理员；学生使用 `@hkust-gz.edu.cn` 邮箱注册，验证成功后直接激活，不经过管理员审核或强制初始分组。
+- 用户角色只有学生和管理员；新账号使用 `@connect.hkust-gz.edu.cn` 注册，邮箱前缀派生为用户名，激活后可用用户名或完整邮箱登录。空系统首个完成验证的账号成为受最后管理员保护的管理员；历史数据库若用户表恰好一行且该账号已验证并处于 `active`，部署迁移或下次登录会把它持久化为管理员。其余账号直接激活为学生，不经过人工审核或强制初始分组。
 - 现有官网与飞书培训知识库由独立仓库维护，本系统不复制、不修改、不运行时集成。
 - 培训作业默认可向全体学生投放，也可在管理员事后维护可选届次/方向后定向投放；个人提交作业，校内赛由团队队长提交。
 - 提交允许保留多个不可变版本，私密评语只对相应个人或团队成员与管理员可见。
 - 不提供分数、排名、自动评奖和公开评语；管理员可标记作业版本为优秀作业，它只在对应作业中向该作业受众显示，赛事版本不能标记。
-- 计划架构为 Next.js + FastAPI + PostgreSQL + MinIO + Nginx + Docker Compose，部署在校内服务器。
+- 架构固定为 Next.js + FastAPI + PostgreSQL + MinIO + Nginx + Docker Compose，部署在校内服务器。
 - 单个提交版本的附件合计上限为 2 GB，使用预签名分片上传。
 - 站内通知与 SMTP 邮件配合，邮件和定时发布由 PostgreSQL Outbox Worker 可靠执行，不引入 Redis。
 
 ## 当前阶段
 
-权威中文文档基线和阶段 1 工程骨架已于 2026-08-23 完成。仓库现有 Next.js 16/React 19 前端、FastAPI 分层后端、异步 PostgreSQL 会话、Worker 心跳、首条 Alembic 迁移、固定版本 Dockerfile、Nginx、Compose 与 GitHub Actions；业务认证尚未实现，登录页明确保持禁用骨架。
+阶段 1～6 已完成实现与真实 Linux Docker/浏览器/运维验收，首版发布候选已经形成。系统具备认证与两角色授权、用户与可选分类、通知与工作台、邮件 Outbox、固定受众作业、个人/团队不可变版本、私密评语、作业内优秀版本、赛事报名组队，以及通知/作业/赛事共用的 MinIO multipart。管理员可维护自己的姓名、学号和校园邮箱，并查看全体活跃登录人员的脱敏会话信息。
 
-本机已通过前后端 lint、格式、严格类型、14 个后端测试、3 个前端测试、Next.js 生产构建及 Python/npm 依赖漏洞审计。Windows 裸启动已验证前端登录页、跳转、404、健康和后端存活、统一错误；PostgreSQL 未启动时就绪接口安全返回 503。自动浏览器视觉检查因本机浏览器沙箱不可用而未执行。
+当前质量门通过 Ruff/136 个 Python 文件格式检查、100 个应用源文件严格 Mypy、130 个后端测试、ESLint、严格 TypeScript、40 个前端测试和主机/容器 Next.js 生产构建。阶段 6 的 Chromium/Firefox/WebKit 核心流程及 `npm audit`、`pip-audit`、Gitleaks、Alpine 镜像与生产配置安全门继续有效。
 
-当前 Windows 主机未安装 Docker，因此完整 Compose、Nginx 运行态、MinIO、Worker 与真实 PostgreSQL 迁移仍等待 Linux Docker 主机或 CI 验收；通过前不得进入阶段 2。
+生产资源边界下读取 P95 为 341.754 ms、错误率 0%；每日增量恢复 RPO 31 秒、RTO 13 秒且对象对账为 0。空库已完成 `base → 20260825_0006 → 20260825_0005 → 20260825_0006`，并发邮箱验证只产生一个初始管理员和一条授予审计；阶段 6 发布脚本记录 `pnx-release-20260825T013516Z` 并通过 HTTPS 冒烟，所有认证增量隔离资源也已清理。
 
-实现时必须继续遵守：校园邮箱精确为 `@hkust-gz.edu.cn`、验证后直接激活、届次/方向不阻塞登录、优秀作业只存在于对应作业且赛事版本不可标记。阶段 1 仅创建 `worker_heartbeats` 表，后续业务表必须按对应阶段另行计划和迁移。
+开发 Compose 当前为 `20260825_0007`；Frontend、Backend、Worker、PostgreSQL、MinIO 与 Nginx 均健康，只有 Nginx 映射 `0.0.0.0:5000`。数据库已清除历史 Stage 4/Stage 5/Codex Smoke 数据，只保留 `yzhang367@connect.hkust-gz.edu.cn`，该账号是唯一的已验证 `active admin`；MinIO 私有桶为 0 对象，非目标 Outbox 为 0。角色变化已撤销全部旧 Session，用户需重新登录；两条维护审计保留，Alembic head 仍为 0007。删除前 PostgreSQL 与 MinIO 恢复材料暂存于 `/tmp`，路径和校验值见 `.agents/plans/plan_remove_smoke_accounts.md` 与运维报告。统一前端 API Client 已兼容 `202` 等成功空响应，管理员新建作业、个人资料和登录人员页面均已注册。
+浏览器端作业/通知发布、正式版本和上传幂等操作已统一兼容普通局域网 HTTP：原生 `crypto.randomUUID()` 缺失时使用 Web Crypto `getRandomValues()` 生成 UUID v4。Frontend 新镜像和 Nginx 已重启，真实 Chromium 环境能力与回归测试一致。
+
+当前没有进行中的仓库开发任务；局域网 HTTP 作业发布兼容修复已完成并部署。现场上线仍须部署方提供受信域名/证书、异机加密备份目标、独立告警接收方和学校数据留存/灾难恢复制度，不能把临时 CA、本机目录或未经投递验收的 SMTP 配置当作已完成；只有用户表恰好一行且唯一账号已验证、处于 `active` 时才允许自动修正管理员，多账号无管理员的历史库仍必须走受控恢复。

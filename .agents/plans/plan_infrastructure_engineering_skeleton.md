@@ -71,3 +71,11 @@
 - 本机通过 Ruff、格式、Mypy、12 个 Pytest、ESLint、严格 TypeScript、3 个 Vitest、Next.js 生产构建、`pip-audit` 和 `npm audit`。
 - Compose 与 CI YAML 已解析，网络、端口、健康依赖、环境变量和 Nginx 路由通过静态交叉断言。
 - 当前主机无 Docker；真实镜像构建、Nginx `-t`、空 PostgreSQL 迁移前滚/回滚及完整 Compose 冒烟已配置在 CI，仍需在 Docker 环境实际运行。
+
+## 追加执行结果（2026-08-24）
+
+- 已在 Linux Docker 29.6.0、Docker Compose v5.1.4 环境构建固定前后端镜像并启动完整拓扑，弥补 2026-08-23 Windows 主机无法执行的验收项。
+- 空 PostgreSQL 17 数据卷完成 `upgrade head → downgrade base → upgrade head`，最终 Alembic 版本为 `20260823_0001 (head)`。
+- 真实 `nginx -t` 发现两个请求 ID 正则的 `{n}` 量词未加引号，已修复；合法请求 ID 保留、非法值替换和 Nginx 健康探针均通过。
+- Frontend、Backend、Worker、PostgreSQL、MinIO 和 Nginx 全部健康；迁移服务以 0 退出，`/login`、三类健康接口和局域网 `0.0.0.0:5000` 入口均通过。
+- 只有 Nginx 映射本项目主机端口，阶段 1 集成验收完成。

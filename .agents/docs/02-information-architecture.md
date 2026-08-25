@@ -24,7 +24,7 @@
 ├── /assignments
 │   └── /assignments/[assignmentId]
 │       ├── /assignments/[assignmentId]/submissions/[submissionId]
-│       └── /assignments/[assignmentId]/excellent/[versionId]
+│       └── /assignments/[assignmentId]/excellent-submissions/[versionId]
 ├── /competitions
 │   └── /competitions/[competitionId]
 │       ├── /competitions/[competitionId]/team
@@ -93,7 +93,7 @@ flowchart TD
 
 ### 注册与邮箱验证
 
-`使用 @hkust-gz.edu.cn 邮箱注册 → 邮件验证并直接激活 → 登录 → 工作台`。管理员不审批注册，也不要求先分配届次/方向；任何失败状态都应提供可执行的下一步，但不得泄露其他账号信息。
+`使用 @connect.hkust-gz.edu.cn 邮箱注册 → 邮件验证并直接激活 → 登录`。空系统首个完成验证的账号进入管理后台并可配置人员角色，其余账号进入学生工作台；不做人工审批或强制初始分组。
 
 ### 作业提交
 

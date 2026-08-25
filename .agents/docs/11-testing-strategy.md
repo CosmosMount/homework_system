@@ -21,7 +21,7 @@
 
 ## 单元测试重点
 
-- 账号状态机只允许 `pending_email → active ↔ disabled`，最后一个管理员不能被降级或禁用。
+- 账号状态机只允许 `pending_email → active ↔ disabled`，最后一个管理员不能被降级或禁用；唯一已验证 active student 在部署修正或登录时成为管理员，待验证/禁用/多账号均不得误提升。
 - 受众组合的全部、并集、交集和发布快照计算。
 - 上海时区展示与 UTC 存储，公共截止和个人延期优先级；覆盖 NFR-005。
 - 赛事阶段顺序、报名窗口、人数上下限、队伍锁定和队长转让。
@@ -45,17 +45,19 @@
 
 | 编号 | 场景 | 预期 | 需求 |
 | --- | --- | --- | --- |
-| AUTH-T01 | `student@hkust-gz.edu.cn` 注册 | `pending_email`，验证邮件入 Outbox | AUTH-001～AUTH-002 |
+| AUTH-T01 | `student@connect.hkust-gz.edu.cn` 注册 | `pending_email`，验证邮件入 Outbox | AUTH-001～AUTH-002 |
 | AUTH-T02 | 其他后缀、子域、相似域、重复邮箱或学号 | 字段错误且不创建用户 | AUTH-001、AUTH-010 |
-| AUTH-T03 | 验证令牌成功、过期、重复使用 | 仅首次有效，成功直接进入 `active` | AUTH-002～AUTH-003 |
-| AUTH-T04 | 未分配届次/方向的已验证用户登录 | 成功创建 Session，可接收全体通知和作业 | AUTH-003、AUTH-007、NEWS-002、HW-002 |
-| AUTH-T05 | `pending_email` 或 `disabled` 登录 | 不创建 Session，文案不泄露详情 | AUTH-004、AUTH-009 |
+| AUTH-T03 | 空系统首个账号、后续账号验证，以及令牌过期、重复使用 | 仅首次令牌有效；首个成功验证账号成为 `active admin`，后续账号成为 `active student` | AUTH-002～AUTH-003、AUTH-008 |
+| AUTH-T04 | 未分配届次/方向的已验证 Connect 用户分别以派生用户名和完整邮箱登录 | 两种标识创建同一账号 Session，可接收全体通知和作业；旧域名账号只接受完整邮箱 | AUTH-003～AUTH-004、AUTH-007、NEWS-002、HW-002 |
+| AUTH-T05 | `pending_email` 或 `disabled` 分别以用户名/邮箱登录 | 不创建 Session，文案不泄露详情 | AUTH-004、AUTH-009 |
 | AUTH-T06 | 登录、退出、撤销其他会话 | Cookie 安全且撤销立即生效 | AUTH-006 |
 | AUTH-T07 | 重置密码 | 一次性令牌失效，其他 Session 撤销 | AUTH-005 |
 | AUTH-T08 | 修改邮箱 | Session 撤销并回到待验证 | AUTH-010 |
 | AUTH-T09 | 禁用账号 | 当前 Session 下一请求失效 | AUTH-007 |
 | AUTH-T10 | 降级/禁用最后管理员 | 返回业务冲突并审计 | AUTH-008 |
-| AUTH-T11 | 登录和重置限流 | 达阈值返回 429 与重试时间 | AUTH-009 |
+| AUTH-T11 | 用户名与对应完整邮箱交替登录失败，以及重置限流 | 两种登录标识共享邮箱计数，达阈值返回 429 与重试时间 | AUTH-009 |
+| AUTH-T12 | 空系统两个账号并发完成邮箱验证 | 两者均可激活，但固定事务锁保证仅一个成为初始 `admin`，另一账号为 `student`，且只写一条授予审计 | AUTH-003、AUTH-008、NFR-009 |
+| AUTH-T13 | 历史库只有一个已验证 `active student`，以及待验证/禁用/多账号对照 | 迁移或成功登录把唯一 active 账号持久化为 `admin`、撤销旧 Session 并写一次审计；其他对照不提升 | AUTH-004、AUTH-008、NFR-006 |
 
 ### 通知
 
@@ -134,6 +136,7 @@
 | MAIL-T01 | SMTP 4xx/网络失败 | 按计划重试，不回滚站内发布 | MAIL-002～MAIL-003 |
 | MAIL-T02 | 连续 8 次失败 | 进入 `dead`，管理员可人工重试 | MAIL-003 |
 | MAIL-T03 | Worker 在发送前后崩溃 | 不丢任务，站内通知不重复 | MAIL-005 |
+| MAIL-T05 | 验证/重置令牌已使用、过期或被替代 | Worker 不调用 SMTP，任务进入 `dead/TOKEN_SUPERSEDED` | AUTH-002、AUTH-005、MAIL-004～MAIL-005 |
 | SEC-T01 | CSRF 缺失/错误、跨源请求 | 写请求被拒绝 | NFR-002 |
 | SEC-T02 | Markdown 注入脚本、iframe、危险 URL | 输出中不存在可执行内容 | NFR-011 |
 | SEC-T03 | 日志与审计抽样 | 不含密码、Cookie、令牌、邀请码、完整评语 | NFR-006、NFR-012 |
@@ -160,6 +163,8 @@
 ## 前端与无障碍测试
 
 - 每个表单测试必填、服务端字段错误、加载、重复点击和成功跳转。
+- 登录表单覆盖用户名文本输入、完整邮箱输入和 `identifier` 请求体；注册成功态覆盖派生用户名及验证前不可登录提示。
+- 统一 API Client 覆盖 JSON 成功响应、统一错误结构，以及 `202`、`204` 等成功空响应；认证邮件申请使用模拟 `Response`，不得依赖真实 SMTP 投递。
 - 键盘完成注册、邮箱验证后的登录、通知阅读、作业提交、建队、邀请加入、评语和优秀作业查看/标记。
 - 弹窗/抽屉焦点锁、Escape、焦点恢复、错误聚焦和 `aria-live`。
 - 360 px、768 px、1280 px、1440 px 关键页面截图回归。
@@ -194,10 +199,34 @@
 
 合并前必须通过：格式检查、静态类型、单元测试、数据库迁移测试、API 契约测试、前端组件测试、依赖漏洞检查和秘密扫描。涉及认证、权限、上传、状态机或迁移的变更必须运行对应集成测试；发布候选必须运行核心 Playwright 流程和 Compose 冒烟测试。
 
-阶段 1 已落地三类 CI Job：Frontend 执行 ESLint、严格 TypeScript、Vitest、生产构建和 `npm audit`；Backend 在真实 PostgreSQL 17 上执行 Ruff、Mypy、Pytest、`pip-audit` 以及 Alembic 升级/降级/再升级；Compose 冒烟构建完整拓扑，通过 Nginx 验证登录骨架和三类健康端点，并扫描常见明文私钥与平台令牌格式。Playwright、镜像漏洞扫描和完整秘密扫描在对应业务页面或生产加固阶段加入，不能以当前基础扫描替代发布前安全复查。
+阶段 1 已落地三类 CI Job：Frontend 执行 ESLint、严格 TypeScript、Vitest、生产构建和 `npm audit`；Backend 在真实 PostgreSQL 17 上执行 Ruff、Mypy、Pytest、`pip-audit` 以及 Alembic 升级/降级/再升级；Compose 冒烟构建完整拓扑并扫描常见明文私钥与平台令牌格式。阶段 3 完成时本机通过 Ruff/格式、严格 Mypy、49 个后端测试、ESLint、严格 TypeScript、13 个前端测试和生产构建，并在真实 PostgreSQL/Compose 完成 `20260824_0003` 迁移往返、六服务健康、5000 端口 SSR/授权、Worker 定时发布和 MinIO multipart/下载/清理冒烟。Playwright、镜像漏洞扫描和完整秘密扫描在后续端到端与生产加固阶段加入，不能以当前 HTTP、组件和受控集成验证替代发布前安全复查。
+
+阶段 4 完成时本机通过 Ruff/格式、严格 Mypy、59 个后端测试、ESLint、严格 TypeScript、20 个前端测试和生产构建；真实 PostgreSQL 为 `20260824_0004 (head)`。局域网 HTTP/MinIO/Worker 冒烟已覆盖作业快照、两版提交与幂等、上传恢复和完整校验、越权 404、评语修订与隐私、优秀标记/取消和授权下载、延期、关闭拒绝、定时发布与自动关闭。
+
+阶段 5 完成时本机通过 Ruff/格式、严格 Mypy、68 个后端测试、ESLint、严格 TypeScript、27 个前端测试和 Next.js 生产构建；Docker 内生产构建及真实 PostgreSQL `20260825_0005 → 20260824_0004 → 20260825_0005` 往返通过。局域网 `5000` 端口冒烟覆盖报名撤回/重报、邀请码轮换与旧码失效、并发双加入仅一队成功、Worker 自动锁队、管理员补录/移除/队长变更/人数豁免、个人取消资格联动、非队长 403、MinIO multipart 团队提交、当前成员读取/下载、历史成员和其他队伍 404、团队私密评语、原因审计及归档状态保留；全部临时账号最终禁用。
+
+阶段 6 完成时新增生产 Compose/Nginx/配置契约、发布回滚、监控告警、安全扫描、Playwright、确定性容量种子、读取与 multipart 负载、对象对账和备份链测试。生产资源边界下 100 会话共 2,000 次读取错误率 0%，P95 341.754 ms；20 个 100 MiB multipart 全部成功，近 2 GiB 单文件 127 片零错误。真实 OpenPGP 周完整备份后新增 32 B 虚构对象，日归档只携带该 1 个变化对象而非全部 4,128 B 对象集；从每日增量恢复空项目的 RPO 31 秒、RTO 13 秒，对账缺失/大小/哈希/未追踪均为 0。NFR-T08 已逐一停止 Frontend、Backend、Worker、PostgreSQL 和 MinIO，健康与用户影响符合设计，Worker 在停止后 321 秒准确转为 stale。最终门通过 Ruff/132 文件格式/125 源文件严格 Mypy/112 个后端测试、ESLint/严格 TypeScript/30 个前端测试/生产构建；Chromium、Firefox、WebKit 的 12 个只读流程与 Chromium 注册写入通过。`npm audit`、`pip-audit` 为 0；Gitleaks 同时扫描 Git 历史与 Git 跟踪/未忽略候选树均为 0；Backend/Frontend 镜像和生产配置 HIGH/CRITICAL 为 0。全新 PostgreSQL 空库完成 `base → 20260825_0005 → base → 20260825_0005`，隔离发布脚本 HTTPS 冒烟通过。完整命令、环境和结果见 `17-capacity-performance-report.md` 与 `18-production-operations-report.md`。
+
+Connect 邮箱与首次管理员增量完成时，Ruff/126 文件格式、100 源文件严格 Mypy、115 个后端测试、ESLint、严格 TypeScript、30 个前端测试和 Next.js 生产构建通过。全新 PostgreSQL 完成 `base → 20260825_0006 → 20260825_0005 → 20260825_0006`；两个真实并发验证请求均为 200，最终只有一个初始管理员和一条授予审计；有 Connect 数据时降级保护通过。现有 `pnx-training` 升级为 0006，六服务健康且仅 Nginx 映射局域网 `5000`。
+
+邮箱前缀用户名增量完成时，Ruff/135 文件格式、127 源文件严格 Mypy、123 个后端测试、ESLint、严格 TypeScript、31 个前端测试和主机/容器 Next.js 生产构建通过。隔离激活 Connect 账号经局域网 `5000` 分别以用户名和完整邮箱登录均返回 200 和同一用户；隔离账号、Session、审计及临时秘密均已清理。现有待验证账号仍不能登录，校园 SMTP 未注入导致 8 个验证任务处于 `retry`。
+
+成功空响应兼容修复完成时，前端 12 个测试文件、32 项测试、ESLint、严格 TypeScript 及主机/容器 Next.js 生产构建通过。回归测试只构造内存中的 `202` 空响应，未调用重发验证或密码重置 API；Frontend 单独重建后六个常驻服务健康，本机与局域网 `5000` 重发验证页面均为 200，未发送测试邮件。
+
+SMTP 受控恢复完成时，通知定向 8 项测试、Ruff、127 个 Python 文件格式、100 源文件严格 Mypy 和完整 127 项后端测试通过。不执行 `MAIL FROM/RCPT/DATA` 的连接、STARTTLS 与认证预检成功；重建 Worker 后 15 条失效令牌任务全部进入 `dead/TOKEN_SUPERSEDED`，本次窗口只有最新有效验证任务 1 条进入 `sent`。六个常驻服务健康，Nginx、API 就绪经 `5000` 返回 200，Frontend 根路径按预期返回 307。
+
+管理员权限与人员视图补齐完成时，Ruff、135 个 Python 文件格式检查、100 个应用源文件严格 Mypy、完整 128 项后端测试、ESLint、严格 TypeScript 和 36 项前端测试通过。回归覆盖管理员作业管理/新建入口、个人资料更新请求和活跃登录人员展示；运行态经 `5000` 确认三个目标页面均由认证守卫处理，管理员会话 API 匿名访问为 401 而非 404，Backend、PostgreSQL、Worker 与 MinIO 健康链路均为 200。
+
+唯一账号管理员保证完成时，Ruff、136 个 Python 文件格式检查、100 个应用源文件严格 Mypy、完整 130 项后端测试、ESLint、严格 TypeScript、36 项前端测试和 Next.js 生产构建通过。回归覆盖唯一已验证 active student 的登录提升、Session 撤销和审计，以及多账号、待验证、禁用和既有管理员边界；开发 Compose 已升级到 `20260825_0007` 并用新镜像重建，六服务健康。当前开发库有 21 个账号，不满足唯一账号前置条件，因而迁移没有改变角色或 Session；该未触发结果与设计一致。
+
+历史 Smoke 清理维护验收中，执行前断言目标为唯一指定 Connect active student、待删除账号恰好 20 个且目标未拥有任何业务数据；单事务执行后断言用户表恰好一行且为已验证 admin，通知/作业/赛事/队伍/提交/版本/文件根表均为 0，非目标 Outbox 为 0。运行态进一步确认 MinIO 为 0 对象、全部旧 Session 已撤销、两条维护审计存在、Alembic 保持 `20260825_0007`、六服务健康且最近日志无严重错误。
+
+局域网 HTTP 幂等键兼容修复完成时，新增共享浏览器端幂等键工具和管理员作业发布回归：模拟 `crypto.randomUUID` 不存在，验证 `crypto.getRandomValues` 仍生成合法 UUID v4 且发布 POST 到达 API Client；原生 UUID 优先路径和拒绝低熵随机降级也有独立测试。最终 14 个前端测试文件、40 项测试、ESLint、严格 TypeScript 和主机/容器 Next.js 生产构建通过。真实 Chromium 在 `http://10.4.150.222:5000` 确认 `isSecureContext=false`、`randomUUID=undefined`、`getRandomValues=function`；Frontend 与 Nginx 重启后六个常驻服务健康。
+
+Markdown 预览与蓝白主题修复完成时，新增管理员作业编辑回归：服务端清洗后的 `<h2>`、`<ul>` 和 `<li>` 在“Markdown 渲染预览”中作为文档结构呈现，原始 `#` 标记不直接显示；富文本仍通过 `SafeHtml`，危险 HTML 测试保持有效。全局主题变更后通过完整前端测试、ESLint、严格 TypeScript、生产构建及真实 Chromium 页面验收，检查蓝白背景、圆角容器和键盘焦点。
 
 ## 测试数据规则
 
 - 不把真实学生姓名、学号、邮箱、提交或评语复制到开发、CI 和截图。
-- 固定种子生成明确的虚构数据，邮箱使用保留测试域名。
+- 固定种子生成明确的虚构数据；需要通过校园域名校验的场景使用不会真实投递的虚构 local-part 与 Connect 后缀，隔离环境不得接入校园 SMTP。
 - 测试失败日志同样执行秘密脱敏；大文件边界测试使用稀疏或流式生成数据，不把 2 GiB 样本提交仓库。

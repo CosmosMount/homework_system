@@ -2,23 +2,23 @@
 
 ## 文档约定
 
-- “学生”指使用 `@hkust-gz.edu.cn` 邮箱完成验证并处于 `active` 状态的普通用户。
-- “管理员”指角色为 `admin` 的已激活用户。
+- “学生”指使用 `@connect.hkust-gz.edu.cn` 邮箱完成验证、处于 `active` 状态且角色为 `student` 的普通用户。
+- “管理员”指角色为 `admin` 的已激活用户；空系统首个完成邮箱验证的账号自动成为初始管理员，历史数据库中唯一已验证 active 账号也必须持久化为管理员，但不形成第三种角色。
 - “目标用户”指符合内容受众规则的已激活学生。届次与方向是登录后可选维护的分类，不是账号激活条件；未分类学生只能命中“全部学生”受众。
 - 所有截止时间按 `Asia/Shanghai` 向用户展示，持久化使用 PostgreSQL `TIMESTAMPTZ`。
 - `必须` 表示首版验收条件；`可以` 表示首版提供的可选操作，不代表未来假设。
 
 ## 认证与账号
 
-- **AUTH-001**：学生必须使用邮箱后缀精确为 `hkust-gz.edu.cn` 的学校邮箱注册；邮箱去除首尾空白并按小写唯一比较。注册资料包括真实姓名、学号、学校邮箱和密码。
+- **AUTH-001**：公开注册必须使用邮箱后缀精确为 `connect.hkust-gz.edu.cn` 的学校邮箱；邮箱去除首尾空白并按小写唯一比较。注册资料包括真实姓名、学号、学校邮箱和密码；系统自动把规范化邮箱的 `@` 前缀派生为用户名，不提供另一套可编辑用户名。
 - **AUTH-002**：注册后必须发送一次性邮箱验证链接。验证令牌只能使用一次且 24 小时过期；未验证账号状态为 `pending_email`。
-- **AUTH-003**：邮箱验证成功后账号必须直接进入 `active`，不经过管理员审批，也不要求先分配届次、方向或其他组别。
-- **AUTH-004**：只有 `active` 账号可以登录；`pending_email` 和 `disabled` 不得创建业务 Session。
+- **AUTH-003**：邮箱验证成功后账号必须直接进入 `active`，不经过人工审批，也不要求先分配届次、方向或其他组别。若系统此前不存在任何 `active` 用户，当前验证账号成为 `admin`；否则保持 `student`。
+- **AUTH-004**：只有 `active` 账号可以登录；Connect 账号可以使用派生用户名或完整邮箱，旧域名存量账号只使用完整邮箱；`pending_email` 和 `disabled` 不得创建业务 Session。
 - **AUTH-005**：学生可以申请密码重置。重置令牌只能使用一次、30 分钟过期，成功重置后必须使该用户的其他 Session 失效。
 - **AUTH-006**：登录创建服务端 Session；退出必须立即撤销当前 Session。用户能够查看并撤销自己的其他登录会话。
 - **AUTH-007**：管理员可以禁用和恢复账号，也可以在登录后按需维护可选届次与技术方向。禁用必须填写内部原因并写入审计日志；分类为空不得影响登录。
-- **AUTH-008**：首个管理员必须通过容器内管理命令创建，公开注册流程不得创建管理员；已有管理员可以将其他已验证账号提升为管理员或恢复为学生，操作必须审计。
-- **AUTH-009**：登录失败对账号不存在、密码错误和不可登录状态返回统一对外文案；系统必须按邮箱和来源 IP 限流，并记录不含密码的安全事件。
+- **AUTH-008**：空系统首个完成邮箱验证的账号必须在并发安全的事务中成为初始 `admin`；若用户表恰好只有一个账号，且该账号已验证、处于 `active student`，部署修正或其成功登录必须在相同事务锁内把它持久化为 `admin`、撤销旧 Session 并写审计。已有管理员可以将其他已验证账号提升为管理员或恢复为学生，操作必须审计；多账号但无管理员的异常历史库仍走受控恢复。容器内管理命令不是正常首次部署的必经步骤。
+- **AUTH-009**：登录失败对账号不存在、密码错误和不可登录状态返回统一对外文案；系统必须先把用户名或完整邮箱规范化为账号邮箱，再按该邮箱和来源 IP 限流，并记录不含密码的安全事件。
 - **AUTH-010**：邮箱、学号均全局唯一；管理员修改邮箱后，账号必须重新完成邮箱验证才能恢复登录。
 
 账号状态机：
@@ -158,7 +158,7 @@ stateDiagram-v2
 
 | 需求 | 页面 | API | 数据实体/约束 | 验收场景 |
 | --- | --- | --- | --- | --- |
-| AUTH-001～AUTH-010 | 注册、邮箱验证、登录、管理员用户、个人 Session | `/auth/*`、`/admin/users/*` | `users`、`sessions`、`one_time_tokens`、`auth_security_events`、可选届次/方向、审计 | AUTH-T01～AUTH-T11、SEC-T01、SEC-T03 |
+| AUTH-001～AUTH-010 | 注册、邮箱验证、登录、管理员用户、个人 Session | `/auth/*`、`/admin/users/*` | `users`、`sessions`、`one_time_tokens`、`auth_security_events`、可选届次/方向、审计 | AUTH-T01～AUTH-T13、SEC-T01、SEC-T03 |
 | NEWS-001～NEWS-008 | 学生工作台、通知列表/详情、管理员通知 | `/announcements*`、`/admin/announcements*`、`/notifications*` | `announcements`、通知受众关联、`announcement_files`、`student_notifications`、Outbox | NEWS-T01～NEWS-T07 |
 | HW-001～HW-007 | 作业列表/详情、个人版本、管理员作业/提交 | `/assignments*`、`/admin/assignments*` | `assignments`、受众配置、`assignment_audience_users`、`assignment_extensions` | HW-T01～HW-T13 |
 | SUB-001～SUB-008 | 作业版本、赛题提交、管理员提交反馈 | `/submission-versions`、`/submissions/*`、管理员反馈接口 | `submissions`、`submission_versions`、`version_files`、`feedback` | HW-T04～HW-T09、HW-T13、TEAM-T06～TEAM-T07 |
