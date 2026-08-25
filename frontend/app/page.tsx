@@ -1,5 +1,11 @@
 import { redirect } from "next/navigation";
 
-export default function Home(): never {
-  redirect("/login");
+import { getOptionalUser } from "@/lib/api/server";
+
+export default async function Home() {
+  const user = await getOptionalUser();
+  if (user === null) {
+    redirect("/login");
+  }
+  redirect(user.role === "admin" ? "/admin/dashboard" : "/dashboard");
 }

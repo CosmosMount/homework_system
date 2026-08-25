@@ -1,5 +1,5 @@
 import { AuthShell } from "@/components/auth/auth-shell";
-import { LoginFormSkeleton } from "@/components/auth/login-form-skeleton";
+import { LoginForm } from "@/components/auth/auth-forms";
 
 export default function LoginPage() {
   return (
@@ -8,7 +8,7 @@ export default function LoginPage() {
       eyebrow="IDENTITY / LOGIN"
       title="登录训练平台"
     >
-      <LoginFormSkeleton />
+      <LoginForm />
     </AuthShell>
   );
 }

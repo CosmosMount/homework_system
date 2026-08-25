@@ -20,7 +20,7 @@ export function AuthShell({
           <div className="flex items-center gap-3">
             <span
               aria-hidden="true"
-              className="h-3 w-3 bg-[var(--color-accent)]"
+              className="h-3 w-3 bg-[var(--color-accent-fill)]"
             />
             <span className="font-mono text-sm tracking-[0.2em] text-[var(--color-text-secondary)]">
               PNX / TRAINING HUB
@@ -56,7 +56,7 @@ export function AuthShell({
           <div className="mb-10 flex items-center gap-3 lg:hidden">
             <span
               aria-hidden="true"
-              className="h-3 w-3 bg-[var(--color-accent)]"
+              className="h-3 w-3 bg-[var(--color-accent-fill)]"
             />
             <span className="font-mono text-sm tracking-[0.2em] text-[var(--color-text-secondary)]">
               PNX / TRAINING HUB
