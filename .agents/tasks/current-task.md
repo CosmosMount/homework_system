@@ -2,7 +2,7 @@
 
 ## 状态
 
-已完成：Markdown 说明预览缺失修复及蓝白圆角主题换肤。
+已完成：Markdown 说明预览缺失修复、蓝白圆角主题换肤、管理员命令栏统一及 CI 类型检查修复。
 
 ## 完成内容
 
@@ -13,7 +13,7 @@
 
 ## 验证结果
 
-- 前端 14 个测试文件、41 项测试通过；ESLint、严格 TypeScript 和 Next.js 生产构建通过。
+- 前端 14 个测试文件、42 项测试通过；ESLint、严格 TypeScript 和 Next.js 生产构建通过。
 - Frontend 已重建并替换，Nginx 已重启；`/health/live`、`/health/ready`、`/health/worker` 和 `/nginx-health` 均返回 200。
 - 匿名访问 `/api/v1/auth/admin/sessions` 返回 401；本次未修改业务 API、权限、数据库或迁移。
 
@@ -22,6 +22,13 @@
 - 主操作按钮改为浅蓝底深蓝字，统一圆角、阴影和悬停反馈；保留深蓝状态标签以维持对比度。
 - 学生端筛选/上传，以及管理员新建通知、新建作业、新建赛事入口接入共享按钮样式。
 - 管理员创建入口增加加号图标和清晰的按钮语义。
+- 管理员通知、作业和赛事列表页统一复用紧凑命令栏，创建链接使用浅蓝 `h-9`/`rounded-lg` 按钮样式，表单主按钮保持原有尺寸。
+- 修复 `test_auth_login.py` 的 `AuthenticatedContext` 测试类型标注，以及 `test_notifications.py` 的 `RecordingSender` 属性推断；不改变运行时逻辑。
+
+## 本轮验证结果
+
+- 后端定向认证/通知测试 14 项、严格 Mypy（127 个源文件）、Ruff 检查与格式检查通过。
+- 前端 14 个测试文件 42 项测试、ESLint、严格 TypeScript 和 Next.js 生产构建通过。
 
 ## 正式计划
 

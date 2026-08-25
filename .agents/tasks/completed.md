@@ -1,5 +1,12 @@
 # 已完成任务
 
+# 2026-08-26：管理员命令栏统一与 CI 类型检查修复
+
+- 参考 `management_system` 的 `PageCommandBar` 与按钮尺寸，新增管理员页头组件；通知、作业和赛事列表的创建入口统一为浅蓝、`h-9`、`rounded-lg` 的命令栏按钮链接，保留原有路由、加号图标和管理员后端鉴权。
+- 共享 `commandButtonClassName`/`commandLinkClassName` 只用于紧凑命令栏，表单主按钮的 `buttonClassName` 不变；新增回归断言覆盖链接地址、浅蓝令牌、圆角和高度。
+- 修复 CI 的 3 个 Mypy 错误：认证测试使用 `AuthenticatedContext` 显式转换，通知测试保留 `RecordingSender` 的具体类型；运行时业务代码未改变。
+- 后端定向测试 14 项、严格 Mypy 127 个源文件、Ruff 检查/格式检查，以及前端 14 个测试文件 42 项、ESLint、严格 TypeScript、Next.js 生产构建全部通过。
+
 # 2026-08-25：Markdown 预览与蓝白圆角主题换肤
 
 - 管理员作业编辑页新增“Markdown 渲染预览”，复用后端清洗后的 HTML；新建或未保存时明确提示预览对应最近一次保存版本。
