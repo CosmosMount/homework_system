@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -34,12 +34,14 @@ class ApplicationError(Exception):
         code: str,
         message: str,
         details: Sequence[ErrorDetail] = (),
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
         self.details = list(details)
+        self.headers = dict(headers or {})
 
 
 class DependencyUnavailableError(ApplicationError):
@@ -63,6 +65,7 @@ def error_response(
     code: str,
     message: str,
     details: Sequence[ErrorDetail] = (),
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     payload = ErrorResponse(
         error=ErrorPayload(
@@ -75,6 +78,7 @@ def error_response(
     return JSONResponse(
         status_code=status_code,
         content=payload.model_dump(mode="json", exclude_none=True),
+        headers=dict(headers or {}),
     )
 
 
@@ -87,6 +91,7 @@ def register_error_handlers(app: FastAPI) -> None:
             code=exc.code,
             message=exc.message,
             details=exc.details,
+            headers=exc.headers,
         )
 
     @app.exception_handler(RequestValidationError)

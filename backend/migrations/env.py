@@ -5,15 +5,25 @@ from typing import Any
 from alembic import context
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import app.announcements.models  # noqa: F401
+import app.assignments.models  # noqa: F401
+import app.competitions.models  # noqa: F401
+import app.submissions.models  # noqa: F401
+from app.audit.models import AuditLog  # noqa: F401
+from app.auth.models import AuthSecurityEvent, OneTimeToken, Session  # noqa: F401
 from app.core.config import get_settings
 from app.database.base import Base
 from app.health.models import WorkerHeartbeat  # noqa: F401
+from app.notifications.models import OutboxJob, StudentNotification  # noqa: F401
+from app.uploads.models import StoredFile, UploadPart, UploadSession  # noqa: F401
+from app.users.models import Cohort, Direction, User  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+database_url = get_settings().database_url
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
 
