@@ -138,7 +138,8 @@ describe("admin permissions UI", () => {
     render(await AdminAssignmentsPage());
     const assignmentLink = screen.getByRole("link", { name: "新建作业" });
     expect(assignmentLink).toHaveAttribute("href", "/admin/assignments/new");
-    expect(assignmentLink.className).toContain("rounded-xl");
+    expect(assignmentLink.className).toContain("rounded-lg");
+    expect(assignmentLink.className).toContain("h-9");
   });
 
   it("allows an admin to open the new assignment page", async () => {

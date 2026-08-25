@@ -1,7 +1,8 @@
 import Link from "next/link";
 
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AppShell } from "@/components/layout/app-shell";
-import { buttonLinkClassName } from "@/components/ui/form-controls";
+import { commandLinkClassName } from "@/components/ui/form-controls";
 import { getAdminAssignments, requireAdmin } from "@/lib/api/server";
 import { formatDateTime } from "@/lib/format";
 
@@ -13,26 +14,20 @@ export default async function AdminAssignmentsPage() {
 
   return (
     <AppShell user={admin}>
-      <div className="flex flex-wrap items-end justify-between gap-5">
-        <div>
-          <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
-            ADMIN / ASSIGNMENTS
-          </p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-            作业管理
-          </h1>
-          <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-            管理固定受众快照、公共截止、个人延期、提交统计与优秀版本。
-          </p>
-        </div>
-        <Link
-          className={buttonLinkClassName + " group shrink-0"}
-          href="/admin/assignments/new"
-        >
-          <span aria-hidden="true" className="text-lg leading-none transition-transform group-hover:rotate-90">＋</span>
-          <span>新建作业</span>
-        </Link>
-      </div>
+      <AdminPageHeader
+        eyebrow="ADMIN / ASSIGNMENTS"
+        title="作业管理"
+        description="管理固定受众快照、公共截止、个人延期、提交统计与优秀版本。"
+        actions={
+          <Link
+            className={commandLinkClassName + " group"}
+            href="/admin/assignments/new"
+          >
+            <span aria-hidden="true" className="text-base leading-none transition-transform group-hover:rotate-90">＋</span>
+            <span>新建作业</span>
+          </Link>
+        }
+      />
 
       <div className="mt-8 space-y-3">
         {assignments.items.map((assignment) => (

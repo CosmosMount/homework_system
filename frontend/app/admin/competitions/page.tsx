@@ -1,7 +1,8 @@
 import Link from "next/link";
 
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AppShell } from "@/components/layout/app-shell";
-import { buttonLinkClassName } from "@/components/ui/form-controls";
+import { commandLinkClassName } from "@/components/ui/form-controls";
 import { getAdminCompetitions, requireAdmin } from "@/lib/api/server";
 import {
   competitionStatusLabel,
@@ -17,26 +18,20 @@ export default async function AdminCompetitionsPage() {
 
   return (
     <AppShell user={admin}>
-      <div className="flex flex-wrap items-end justify-between gap-5">
-        <div>
-          <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
-            ADMIN / COMPETITIONS
-          </p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-            赛事管理
-          </h1>
-          <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-            管理赛事阶段、赛题、报名队伍、带原因纠错和团队私密评语。
-          </p>
-        </div>
-        <Link
-          className={buttonLinkClassName + " group shrink-0"}
-          href="/admin/competitions/new"
-        >
-          <span aria-hidden="true" className="text-lg leading-none transition-transform group-hover:rotate-90">＋</span>
-          <span>新建赛事</span>
-        </Link>
-      </div>
+      <AdminPageHeader
+        eyebrow="ADMIN / COMPETITIONS"
+        title="赛事管理"
+        description="管理赛事阶段、赛题、报名队伍、带原因纠错和团队私密评语。"
+        actions={
+          <Link
+            className={commandLinkClassName + " group"}
+            href="/admin/competitions/new"
+          >
+            <span aria-hidden="true" className="text-base leading-none transition-transform group-hover:rotate-90">＋</span>
+            <span>新建赛事</span>
+          </Link>
+        }
+      />
 
       <div className="mt-8 space-y-3">
         {competitions.items.map((competition) => (

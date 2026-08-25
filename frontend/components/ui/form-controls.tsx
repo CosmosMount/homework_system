@@ -6,6 +6,11 @@ export const inputClassName =
 export const buttonClassName =
   "inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[var(--color-action-border)] bg-[var(--color-action-fill)] px-5 font-semibold text-[var(--color-action-text)] shadow-[var(--shadow-button)] transition duration-200 hover:-translate-y-0.5 hover:bg-[var(--color-action-fill-hover)] hover:shadow-[var(--shadow-button-hover)] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 disabled:hover:shadow-[var(--shadow-button)]";
 
+export const commandButtonClassName =
+  "inline-flex h-9 min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-transparent bg-[var(--color-action-fill)] px-3 text-sm font-medium whitespace-nowrap text-[var(--color-action-text)] transition-all outline-none hover:bg-[var(--color-action-fill-hover)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] active:translate-y-px disabled:pointer-events-none disabled:opacity-50";
+
+export const commandLinkClassName = commandButtonClassName + " no-underline";
+
 export const buttonLinkClassName = buttonClassName + " no-underline";
 
 type FieldProps = Readonly<{
