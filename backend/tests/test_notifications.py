@@ -160,7 +160,7 @@ class TokenProcessorHarness(OutboxProcessor):
     def __init__(self, job: OutboxJob, *, deliverable: bool) -> None:
         self._job = job
         self._deliverable = deliverable
-        self._sender = RecordingSender()
+        self._sender: RecordingSender = RecordingSender()
         self.sent_ids: list[UUID] = []
         self.superseded_ids: list[UUID] = []
         self.failed_ids: list[UUID] = []

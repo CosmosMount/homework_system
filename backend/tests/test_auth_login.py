@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
 from app.auth.repository import AuthRepository
-from app.auth.service import AuthenticationService
+from app.auth.service import AuthenticatedContext, AuthenticationService
 from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.core.security import PasswordManager, PasswordVerification
@@ -205,7 +205,7 @@ async def test_admin_session_list_returns_active_user_metadata() -> None:
         ip_prefix="192.0.2.0/24",
         user_agent_summary="Browser / Linux",
     )
-    context = SimpleNamespace(user=admin, session=current_session)
+    context = cast(AuthenticatedContext, SimpleNamespace(user=admin, session=current_session))
     service = AuthenticationService(
         cast(AsyncSession, SimpleNamespace()),
         Settings(app_env="test"),
