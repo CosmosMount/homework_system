@@ -132,3 +132,16 @@
 
 - 后端完整 136 项测试、Ruff、格式检查和严格 Mypy 通过；前端 48 项测试、ESLint、严格 TypeScript 和 Next.js 生产构建通过。
 - Backend、Worker、Frontend、Nginx 已重建重启；六个 Compose 服务健康，健康端点与 5000 端口登录页均返回 200。
+
+## 本次追加：删除届次相关设置
+
+- 管理员侧栏与分类页改为“方向设置”，删除届次创建/启停入口。
+- 用户管理、个人资料、工作台和通知说明不再展示届次；用户编辑仅维护技术方向。
+- 新建/编辑通知与作业受众改为全部学生或按技术方向，历史届次受众 ID 原样兼容保留。
+- 保留数据库、旧 `/admin/cohorts` API 和历史关联，不做破坏性迁移或数据清理。
+
+## 本轮验证结果
+
+- 前端 14 个测试文件、50 项测试通过；ESLint、严格 TypeScript 和 Next.js 生产构建通过。
+- 后端完整 136 项测试、Ruff、格式检查和严格 Mypy 通过。
+- Backend、Worker、Frontend、Nginx 已重建重启，六个 Compose 服务健康；`/health/live`、`/health/ready`、`/health/worker`、`/nginx-health` 和 5000 端口登录页均返回 200。

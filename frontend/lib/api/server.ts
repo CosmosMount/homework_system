@@ -21,7 +21,6 @@ import type {
   AssignmentDetail,
   AssignmentPage,
   AssignmentSubmissionAdminPage,
-  Cohort,
   CompetitionDetail,
   CompetitionPage,
   CompetitionTask,
@@ -88,17 +87,6 @@ export async function getAdminUsers(): Promise<UserPage> {
   const result = await serverApi<UserPage>("/admin/users?page_size=100");
   if (result instanceof Response) {
 
-    if (result.status === 401) {
-      redirect("/login");
-    }
-    redirect("/dashboard");
-  }
-  return result;
-}
-
-export async function getCohorts(): Promise<Cohort[]> {
-  const result = await serverApi<Cohort[]>("/admin/cohorts");
-  if (result instanceof Response) {
     if (result.status === 401) {
       redirect("/login");
     }

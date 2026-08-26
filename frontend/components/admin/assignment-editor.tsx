@@ -13,10 +13,8 @@ import {
 import { ApiError, csrfFetch } from "@/lib/api/client";
 import type {
   AssignmentAdmin,
-  AssignmentAudience,
   AssignmentExtension,
   AssignmentSubmissionAdminItem,
-  Cohort,
   Direction,
 } from "@/lib/api/types";
 import { formatDateTime, formatFileSize } from "@/lib/format";
@@ -170,12 +168,10 @@ function ExtensionControls({
 export function AssignmentEditor({
   initialAssignment,
   initialSubmissions,
-  cohorts,
   directions,
 }: Readonly<{
   initialAssignment: AssignmentAdmin | null;
   initialSubmissions: AssignmentSubmissionAdminItem[];
-  cohorts: Cohort[];
   directions: Direction[];
 }>) {
   const router = useRouter();
@@ -193,15 +189,12 @@ export function AssignmentEditor({
   const [allStudents, setAllStudents] = useState(
     initialAssignment?.audience.all_students ?? true,
   );
-  const [cohortIds, setCohortIds] = useState(
-    initialAssignment?.audience.cohort_ids ?? [],
-  );
+  // 历史作业可能仍带有届次受众；编辑时原样保留，避免覆盖历史受众。
+  const legacyCohortIds = initialAssignment?.audience.cohort_ids ?? [];
   const [directionIds, setDirectionIds] = useState(
     initialAssignment?.audience.direction_ids ?? [],
   );
-  const [audienceMatch, setAudienceMatch] = useState<
-    AssignmentAudience["match"]
-  >(initialAssignment?.audience.match ?? "intersection");
+  const legacyAudienceMatch = initialAssignment?.audience.match ?? "intersection";
   const [allowedExtensions, setAllowedExtensions] = useState(
     initialAssignment?.allowed_extensions.join(", ") ?? "pdf, zip",
   );
@@ -237,8 +230,8 @@ export function AssignmentEditor({
       setError("截止时间必须晚于发布时间。");
       return false;
     }
-    if (!allStudents && cohortIds.length === 0 && directionIds.length === 0) {
-      setError("定向作业至少需要选择一个届次或方向。");
+    if (!allStudents && legacyCohortIds.length === 0 && directionIds.length === 0) {
+      setError("定向作业至少需要选择一个技术方向。");
       return false;
     }
     if (extensionList().length === 0) {
@@ -266,9 +259,9 @@ export function AssignmentEditor({
       submission_instructions: instructions.trim(),
       audience: {
         all_students: allStudents,
-        cohort_ids: allStudents ? [] : cohortIds,
+        cohort_ids: allStudents ? [] : legacyCohortIds,
         direction_ids: allStudents ? [] : directionIds,
-        match: audienceMatch,
+        match: legacyAudienceMatch,
       },
       allowed_extensions: extensionList(),
       max_total_bytes: Number(maxTotalBytes),
@@ -456,27 +449,11 @@ export function AssignmentEditor({
                 onChange={() => setAllStudents(false)}
                 type="radio"
               />
-              按届次或方向
+              按技术方向
             </label>
           </div>
           {!allStudents ? (
-            <div className="grid gap-6 md:grid-cols-2">
-              <fieldset>
-                <legend className="text-sm font-medium">届次</legend>
-                <div className="mt-3 space-y-2">
-                  {cohorts.map((cohort) => (
-                    <label className="flex items-center gap-2 text-sm" key={cohort.id}>
-                      <input
-                        checked={cohortIds.includes(cohort.id)}
-                        disabled={!configurationEditable || !cohort.is_active}
-                        onChange={() => setCohortIds(toggle(cohortIds, cohort.id))}
-                        type="checkbox"
-                      />
-                      {cohort.name}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
+            <div className="grid gap-6">
               <fieldset>
                 <legend className="text-sm font-medium">方向</legend>
                 <div className="mt-3 space-y-2">
@@ -495,22 +472,6 @@ export function AssignmentEditor({
                   ))}
                 </div>
               </fieldset>
-              <label className="text-sm font-medium md:col-span-2">
-                匹配规则
-                <select
-                  className={inputClassName}
-                  disabled={!configurationEditable}
-                  onChange={(event) =>
-                    setAudienceMatch(
-                      event.target.value as AssignmentAudience["match"],
-                    )
-                  }
-                  value={audienceMatch}
-                >
-                  <option value="intersection">交集</option>
-                  <option value="union">并集</option>
-                </select>
-              </label>
             </div>
           ) : null}
         </section>

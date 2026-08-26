@@ -13,8 +13,6 @@ import {
 import { ApiError, csrfFetch } from "@/lib/api/client";
 import type {
   AnnouncementAdmin,
-  AnnouncementAudience,
-  Cohort,
   CompletedFile,
   Direction,
 } from "@/lib/api/types";
@@ -43,11 +41,9 @@ function errorMessage(error: unknown): string {
 
 export function AnnouncementEditor({
   initialAnnouncement,
-  cohorts,
   directions,
 }: Readonly<{
   initialAnnouncement: AnnouncementAdmin | null;
-  cohorts: Cohort[];
   directions: Direction[];
 }>) {
   const router = useRouter();
@@ -60,15 +56,12 @@ export function AnnouncementEditor({
   const [allStudents, setAllStudents] = useState(
     initialAnnouncement?.audience.all_students ?? true,
   );
-  const [cohortIds, setCohortIds] = useState(
-    initialAnnouncement?.audience.cohort_ids ?? [],
-  );
+  // 历史通知可能仍带有届次受众；编辑时原样保留，避免覆盖历史受众。
+  const legacyCohortIds = initialAnnouncement?.audience.cohort_ids ?? [];
   const [directionIds, setDirectionIds] = useState(
     initialAnnouncement?.audience.direction_ids ?? [],
   );
-  const [audienceMatch, setAudienceMatch] = useState<
-    AnnouncementAudience["match"]
-  >(initialAnnouncement?.audience.match ?? "intersection");
+  const legacyAudienceMatch = initialAnnouncement?.audience.match ?? "intersection";
   const [publishAt, setPublishAt] = useState(
     localDateTime(initialAnnouncement?.publish_at ?? null),
   );
@@ -94,9 +87,9 @@ export function AnnouncementEditor({
       body_markdown: bodyMarkdown.trim(),
       audience: {
         all_students: allStudents,
-        cohort_ids: allStudents ? [] : cohortIds,
+        cohort_ids: allStudents ? [] : legacyCohortIds,
         direction_ids: allStudents ? [] : directionIds,
-        match: audienceMatch,
+        match: legacyAudienceMatch,
       },
       attachment_file_ids: attachmentIds,
       publish_at: apiDateTime(publishAt),
@@ -110,8 +103,8 @@ export function AnnouncementEditor({
       setError("标题、摘要和正文不能为空。");
       return false;
     }
-    if (!allStudents && cohortIds.length === 0 && directionIds.length === 0) {
-      setError("定向通知至少需要选择一个届次或方向。");
+    if (!allStudents && legacyCohortIds.length === 0 && directionIds.length === 0) {
+      setError("定向通知至少需要选择一个技术方向。");
       return false;
     }
     return true;
@@ -324,27 +317,11 @@ export function AnnouncementEditor({
                 onChange={() => setAllStudents(false)}
                 type="radio"
               />
-              按届次或方向
+              按技术方向
             </label>
           </div>
           {!allStudents ? (
-            <div className="grid gap-6 md:grid-cols-2">
-              <fieldset>
-                <legend className="text-sm font-medium">届次</legend>
-                <div className="mt-3 space-y-2">
-                  {cohorts.map((cohort) => (
-                    <label className="flex items-center gap-2 text-sm" key={cohort.id}>
-                      <input
-                        checked={cohortIds.includes(cohort.id)}
-                        disabled={!editable || !cohort.is_active}
-                        onChange={() => setCohortIds(toggle(cohortIds, cohort.id))}
-                        type="checkbox"
-                      />
-                      {cohort.name}{cohort.is_active ? "" : "（停用）"}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
+            <div className="grid gap-6">
               <fieldset>
                 <legend className="text-sm font-medium">方向</legend>
                 <div className="mt-3 space-y-2">
@@ -363,22 +340,6 @@ export function AnnouncementEditor({
                   ))}
                 </div>
               </fieldset>
-              <label className="text-sm font-medium md:col-span-2">
-                多维匹配规则
-                <select
-                  className={inputClassName}
-                  disabled={!editable}
-                  onChange={(event) =>
-                    setAudienceMatch(
-                      event.target.value as AnnouncementAudience["match"],
-                    )
-                  }
-                  value={audienceMatch}
-                >
-                  <option value="intersection">交集：同时满足所选维度</option>
-                  <option value="union">并集：满足任一所选分类</option>
-                </select>
-              </label>
             </div>
           ) : null}
         </section>

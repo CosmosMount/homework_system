@@ -1,11 +1,10 @@
 import { AnnouncementEditor } from "@/components/admin/announcement-editor";
 import { AppShell } from "@/components/layout/app-shell";
-import { getCohorts, getDirections, requireAdmin } from "@/lib/api/server";
+import { getDirections, requireAdmin } from "@/lib/api/server";
 
 export default async function NewAnnouncementPage() {
-  const [admin, cohorts, directions] = await Promise.all([
+  const [admin, directions] = await Promise.all([
     requireAdmin(),
-    getCohorts(),
     getDirections(),
   ]);
   return (
@@ -18,7 +17,6 @@ export default async function NewAnnouncementPage() {
         首次保存会建立草稿上下文；之后即可上传并绑定附件。
       </p>
       <AnnouncementEditor
-        cohorts={cohorts}
         directions={directions}
         initialAnnouncement={null}
       />

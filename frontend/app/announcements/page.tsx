@@ -58,7 +58,7 @@ export default async function AnnouncementsPage({
       </p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">通知中心</h1>
       <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-        这里只显示已经发布且与你届次、方向匹配的通知；归档内容不会出现在默认列表中。
+        这里只显示已经发布且与你技术方向匹配的通知；归档内容不会出现在默认列表中。
       </p>
 
       <form className="mt-8 grid gap-4 border border-[var(--color-border)] bg-[var(--color-surface)] p-5 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-end">

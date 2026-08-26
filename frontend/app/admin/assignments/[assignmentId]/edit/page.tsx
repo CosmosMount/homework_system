@@ -5,7 +5,6 @@ import { AppShell } from "@/components/layout/app-shell";
 import {
   getAdminAssignment,
   getAdminAssignmentSubmissions,
-  getCohorts,
   getDirections,
   requireAdmin,
 } from "@/lib/api/server";
@@ -18,10 +17,9 @@ export default async function EditAssignmentPage({
   params,
 }: EditAssignmentPageProps) {
   const { assignmentId } = await params;
-  const [admin, assignment, cohorts, directions] = await Promise.all([
+  const [admin, assignment, directions] = await Promise.all([
     requireAdmin(),
     getAdminAssignment(assignmentId),
-    getCohorts(),
     getDirections(),
   ]);
   if (assignment === null) {
@@ -42,7 +40,6 @@ export default async function EditAssignmentPage({
         修改使用 revision；受众快照、正式版本和私密评语均由后端最终授权。
       </p>
       <AssignmentEditor
-        cohorts={cohorts}
         directions={directions}
         initialAssignment={assignment}
         initialSubmissions={submissions.items}

@@ -24,7 +24,7 @@ export default async function DashboardPage() {
             {user.full_name}，欢迎回来
           </h1>
           <p className="mt-4 max-w-2xl text-[var(--color-text-secondary)]">
-            从这里查看与你届次和方向匹配的校内通知与近期作业。赛事区域只呈现已经上线的真实数据。
+            从这里查看与你技术方向匹配的校内通知与近期作业。赛事区域只呈现已经上线的真实数据。
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
@@ -51,10 +51,6 @@ export default async function DashboardPage() {
             <div>
               <dt className="text-[var(--color-text-muted)]">账号</dt>
               <dd className="mt-1 text-[var(--color-success)]">已激活</dd>
-            </div>
-            <div>
-              <dt className="text-[var(--color-text-muted)]">届次</dt>
-              <dd className="mt-1">{user.cohort?.name ?? "未设置"}</dd>
             </div>
             <div>
               <dt className="text-[var(--color-text-muted)]">方向</dt>

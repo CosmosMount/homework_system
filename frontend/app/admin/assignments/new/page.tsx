@@ -1,11 +1,10 @@
 import { AssignmentEditor } from "@/components/admin/assignment-editor";
 import { AppShell } from "@/components/layout/app-shell";
-import { getCohorts, getDirections, requireAdmin } from "@/lib/api/server";
+import { getDirections, requireAdmin } from "@/lib/api/server";
 
 export default async function NewAssignmentPage() {
-  const [admin, cohorts, directions] = await Promise.all([
+  const [admin, directions] = await Promise.all([
     requireAdmin(),
-    getCohorts(),
     getDirections(),
   ]);
 
@@ -19,7 +18,6 @@ export default async function NewAssignmentPage() {
         发布事务会固化逐学生受众；发布后仅允许修正文案和延长截止。
       </p>
       <AssignmentEditor
-        cohorts={cohorts}
         directions={directions}
         initialAssignment={null}
         initialSubmissions={[]}

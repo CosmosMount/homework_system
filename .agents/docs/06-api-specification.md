@@ -88,7 +88,7 @@
 | --- | --- | --- |
 | `POST /auth/login` | `{identifier,password}` → `{user}` 并设置 Session Cookie；暂时兼容旧 `{email,password}` 请求 | AUTH-004、AUTH-006、AUTH-009 |
 | `POST /auth/logout` | 撤销当前 Session，返回 204 | AUTH-006 |
-| `GET /auth/me` | 当前用户、可空届次/方向、真实角色、状态和当前 Session 的 `student_view` 标记 | AUTH-004、AUTH-007 |
+| `GET /auth/me` | 当前用户、可空技术方向、真实角色、状态和当前 Session 的 `student_view` 标记；届次字段仅为历史兼容 | AUTH-004、AUTH-007 |
 | `GET /auth/csrf` | `{csrf_token}` 并刷新 CSRF Cookie | NFR-002 |
 | `GET /auth/sessions` | 当前用户的 Session 列表 | AUTH-006 |
 | `DELETE /auth/sessions/{session_id}` | 撤销指定本人 Session | AUTH-006 |
@@ -167,7 +167,9 @@
 }
 ```
 
-创建时不传 `revision`。受众必须满足：`all_students=true` 时其他集合为空；否则至少选择一个届次或方向。`match=intersection` 表示同时满足非空维度。
+上方示例保留 `cohort_ids` 仅用于说明历史兼容字段；新产品页面不会生成非空届次 ID。
+
+创建时不传 `revision`。产品端受众必须满足：`all_students=true` 时其他集合为空；否则至少选择一个技术方向。`match=intersection` 表示同时满足所选方向。请求中的 `cohort_ids` 仅为历史客户端/资源兼容字段，新建页面始终发送空数组。
 
 ## 作业接口
 
@@ -175,7 +177,7 @@
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /assignments` | `status,query,page,page_size`；普通学生返回固定受众快照中的作业与最新提交摘要；管理员当前 Session 开启学生视图时，按该账号届次/方向对已发布作业执行只读受众预览，不写入或改变快照 | HW-002、HW-003、HW-006、AUTH-011 |
+| `GET /assignments` | `status,query,page,page_size`；普通学生返回固定受众快照中的作业与最新提交摘要；管理员当前 Session 开启学生视图时，按该账号技术方向对新规则作业执行只读受众预览，不写入或改变快照，历史届次受众仍按原快照兼容 | HW-002、HW-003、HW-006、AUTH-011 |
 | `GET /assignments/{assignment_id}` | 返回要求、外链、有效截止、附件规则、本人提交摘要和优秀作业摘要；管理员当前 Session 开启学生视图时按临时受众预览读取 | HW-001、HW-004、HW-006、SHOW-002、AUTH-011 |
 | `POST /assignments/{assignment_id}/submission-versions` | 创建本人正式版本；管理员当前 Session 开启学生视图时允许以自身账号创建个人版本，普通管理员视图仍禁止代交 | SUB-001～SUB-005、FILE-001、AUTH-011 |
 | `GET /assignments/{assignment_id}/submission` | 返回本人提交聚合、版本和评语 | SUB-003、SUB-005～SUB-007 |
@@ -207,7 +209,7 @@
 | `POST /admin/assignments/{id}/archive` | 归档 | HW-003 |
 | `PUT /admin/assignments/{id}/extensions/{user_id}` | `{extended_deadline,reason}` | HW-004 |
 | `DELETE /admin/assignments/{id}/extensions/{user_id}` | 截止前移除尚未使用的延期 | HW-004 |
-| `GET /admin/assignments/{id}/submissions` | 按届次、方向、提交/反馈状态列出目标学生 | HW-005 |
+| `GET /admin/assignments/{id}/submissions` | 按方向、提交/反馈状态列出目标学生；历史届次快照仍可读取 | HW-005 |
 | `POST /admin/assignments/{id}/excellent-submissions/{version_id}` | 把本作业版本标记为优秀作业 | SHOW-001～SHOW-003 |
 | `DELETE /admin/assignments/{id}/excellent-submissions/{version_id}` | 取消优秀标记 | SHOW-004 |
 
@@ -338,13 +340,13 @@
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /admin/users` | 按状态、可选届次/方向和角色搜索账号 | AUTH-007～AUTH-008 |
+| `GET /admin/users` | 按状态、技术方向和角色搜索账号；历史 `cohort_id` 查询参数保留兼容 | AUTH-007～AUTH-008 |
 | `POST /admin/users/{id}/disable` | `{reason}` 并撤销 Session | AUTH-007 |
 | `POST /admin/users/{id}/restore` | `{reason}` | AUTH-007 |
-| `PATCH /admin/users/{id}` | 调整姓名、学号、邮箱、可空届次/方向 | AUTH-007、AUTH-010 |
+| `PATCH /admin/users/{id}` | 调整姓名、学号、邮箱和可空技术方向；历史 `cohort_id` 字段保留兼容 | AUTH-007、AUTH-010 |
 | `POST /admin/users/{id}/role` | `{role,reason}`，禁止撤销最后一个管理员 | AUTH-008 |
-| `GET/POST /admin/cohorts` | 列表/创建可选届次 | AUTH-007 |
-| `PATCH /admin/cohorts/{id}` | 修改名称或启用状态 | AUTH-007 |
+| `GET/POST /admin/cohorts` | 历史兼容的届次列表/创建接口，不再作为产品入口 | AUTH-007 |
+| `PATCH /admin/cohorts/{id}` | 历史兼容接口，修改名称或启用状态；不由新前端调用 | AUTH-007 |
 | `GET/POST /admin/directions` | 列表/创建可选方向 | AUTH-007 |
 | `PATCH /admin/directions/{id}` | 修改名称或启用状态 | AUTH-007 |
 

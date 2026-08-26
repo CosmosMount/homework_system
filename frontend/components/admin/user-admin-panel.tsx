@@ -8,7 +8,7 @@ import {
   inputClassName,
 } from "@/components/ui/form-controls";
 import { ApiError, csrfFetch } from "@/lib/api/client";
-import type { Cohort, Direction, User } from "@/lib/api/types";
+import type { Direction, User } from "@/lib/api/types";
 
 function replaceUser(users: User[], nextUser: User): User[] {
   return users.map((user) => (user.id === nextUser.id ? nextUser : user));
@@ -16,11 +16,9 @@ function replaceUser(users: User[], nextUser: User): User[] {
 
 export function UserAdminPanel({
   initialUsers,
-  cohorts,
   directions,
 }: Readonly<{
   initialUsers: User[];
-  cohorts: Cohort[];
   directions: Direction[];
 }>) {
   const [users, setUsers] = useState(initialUsers);
@@ -77,16 +75,12 @@ export function UserAdminPanel({
     const fullName = String(data.get("full_name") ?? "").trim();
     const studentNumber = String(data.get("student_number") ?? "").trim();
     const email = String(data.get("email") ?? "").trim();
-    const cohortId = String(data.get("cohort_id") ?? "");
     const directionId = String(data.get("direction_id") ?? "");
     if (fullName !== user.full_name) patch.full_name = fullName;
     if (studentNumber !== user.student_number) {
       patch.student_number = studentNumber;
     }
     if (email.toLowerCase() !== user.email.toLowerCase()) patch.email = email;
-    if (cohortId !== (user.cohort?.id ?? "")) {
-      patch.cohort_id = cohortId || null;
-    }
     if (directionId !== (user.direction?.id ?? "")) {
       patch.direction_id = directionId || null;
     }
@@ -169,15 +163,9 @@ export function UserAdminPanel({
                 </span>
               </div>
             </div>
-            <div className="mt-5 grid gap-4 text-sm sm:grid-cols-2">
-              <div>
-                <span className="text-[var(--color-text-muted)]">届次：</span>
-                {user.cohort?.name ?? "未设置"}
-              </div>
-              <div>
-                <span className="text-[var(--color-text-muted)]">方向：</span>
-                {user.direction?.name ?? "未设置"}
-              </div>
+            <div className="mt-5 text-sm">
+              <span className="text-[var(--color-text-muted)]">方向：</span>
+              {user.direction?.name ?? "未设置"}
             </div>
             <details className="mt-5 border-t border-[var(--color-border)] pt-4">
               <summary className="cursor-pointer font-medium">编辑与高风险操作</summary>
@@ -213,22 +201,6 @@ export function UserAdminPanel({
                       required
                       type="email"
                     />
-                  </label>
-                  <label className="text-sm">
-                    届次
-                    <select
-                      className={inputClassName}
-                      defaultValue={user.cohort?.id ?? ""}
-                      name="cohort_id"
-                    >
-                      <option value="">未设置</option>
-                      {cohorts.map((cohort) => (
-                        <option key={cohort.id} value={cohort.id}>
-                          {cohort.name}
-                          {cohort.is_active ? "" : "（停用）"}
-                        </option>
-                      ))}
-                    </select>
                   </label>
                   <label className="text-sm">
                     方向

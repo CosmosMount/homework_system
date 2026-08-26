@@ -11,7 +11,6 @@ export default async function ProfilePage() {
     ["校园邮箱", user.email],
     ["角色", isAdminView(user) ? "管理员" : "学生"],
     ["账号状态", user.status === "active" ? "已激活" : user.status],
-    ["届次", user.cohort?.name ?? "未设置"],
     ["技术方向", user.direction?.name ?? "未设置"],
   ];
   return (
@@ -23,7 +22,7 @@ export default async function ProfilePage() {
       <p className="mt-3 text-[var(--color-text-secondary)]">
         {isAdminView(user)
           ? "管理员可以维护自己的姓名、学号和校园邮箱；修改邮箱后需要重新验证。"
-          : "邮箱、学号、届次和方向由管理员维护；未分类不会影响登录。"}
+          : "邮箱、学号和技术方向由管理员维护；未设置方向不会影响登录。"}
       </p>
       <dl className="mt-8 grid gap-px border border-[var(--color-border)] bg-[var(--color-border)] sm:grid-cols-2">
         {items.map(([label, value]) => (

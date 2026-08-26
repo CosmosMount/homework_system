@@ -62,6 +62,7 @@ erDiagram
 `id`, `code`, `name`, `start_year`, `is_active`, `created_at`, `updated_at`, `revision`。
 
 - `code` 全局唯一且不可复用；历史引用存在时只能停用。
+- 届次设置已从产品入口移除；表结构和数据保留，用于历史通知/作业受众、快照及旧 API 兼容，不在本次变更中物理删除。
 
 ### `directions`
 
@@ -78,12 +79,12 @@ erDiagram
 - `email_normalized` 和 `student_number` 分别唯一。
 - Connect 用户名由 `email_normalized` 的 local-part 派生，不新增用户名列、独立唯一约束或可编辑用户名；旧域名存量账号不启用前缀登录。
 - 数据库 CHECK 允许 `@hkust-gz.edu.cn` 存量行与 `@connect.hkust-gz.edu.cn` 新行共存；公开注册和管理员邮箱修改的 Service 只允许 Connect 域名。
-- 任一 `active` 账号必须具有 `email_verified_at`；`cohort_id` 和 `direction_id` 均可空且不参与登录条件。
+- 任一 `active` 账号必须具有 `email_verified_at`；`cohort_id` 和 `direction_id` 均可空且不参与登录条件。新产品只维护 `direction_id`，`cohort_id` 仅保留历史兼容。
 - 公开注册先创建 `pending_email student`；验证事务在固定 advisory lock 内确认没有任何 `active` 用户时把首个账号设为 `admin`，其余账号保持 `student`。同一事务锁也用于登录时确认不存在其他用户行；唯一的已验证 `active student` 必须提升为 `admin`、增加 revision、撤销旧 Session 并写审计。
 - `password_hash` 只存 Argon2id 编码结果。
 - 角色变更和状态变更均写 `audit_logs`。
 
-索引：`(status, created_at)`、`(cohort_id, direction_id, status)`、`(role, status)`。
+索引：`(status, created_at)`、`(cohort_id, direction_id, status)`、`(role, status)`。届次索引暂保留，供历史受众查询使用。
 
 ### `sessions`
 
@@ -115,12 +116,12 @@ erDiagram
 `id`, `title`, `summary`, `body_markdown`, `body_html`, `status`, `all_students`, `audience_match`, `publish_at`, `published_at`, `pinned_until`, `send_email`, `created_by`, `updated_by`, `archived_at`, `created_at`, `updated_at`, `revision`。
 
 - `body_html` 是经统一策略清洗后的缓存。
-- `all_students=true` 时不得存在届次/方向关联。
+- `all_students=true` 时不得存在届次/方向关联。新建产品流程只写方向关联；历史届次关联继续保留。
 - `scheduled` 必须有未来 `publish_at`；`published` 必须有 `published_at`。
 
 ### `announcement_cohorts`、`announcement_directions`
 
-分别包含 `(announcement_id, cohort_id)` 和 `(announcement_id, direction_id)` 复合主键。用于配置受众；发布时另外生成逐用户通知记录作为发送快照。
+分别包含 `(announcement_id, cohort_id)` 和 `(announcement_id, direction_id)` 复合主键。用于配置受众；发布时另外生成逐用户通知记录作为发送快照。新建通知不再写入 `announcement_cohorts`，历史关联只读兼容。
 
 ### `announcement_files`
 
@@ -145,13 +146,13 @@ erDiagram
 
 ### `assignment_cohorts`、`assignment_directions`
 
-保存发布前的受众配置，结构与通知关联表相同。
+保存发布前的受众配置，结构与通知关联表相同。新建作业不再写入 `assignment_cohorts`，历史关联只读兼容。
 
 ### `assignment_audience_users`
 
 `assignment_id`, `user_id`, `cohort_id_at_publish`, `direction_id_at_publish`, `created_at`，复合主键 `(assignment_id, user_id)`。
 
-- 发布事务中生成，是 HW-002 的固定受众快照。
+- 发布事务中生成，是 HW-002 的固定受众快照。新规则按方向生成；`cohort_id_at_publish` 为历史快照兼容字段。
 - 学生后续调整方向不修改此表。
 
 ### `assignment_extensions`
@@ -325,7 +326,7 @@ CHECK (
 
 | 需求域 | 核心表 |
 | --- | --- |
-| AUTH | `users`, `sessions`, `one_time_tokens`, `auth_security_events`, `cohorts`, `directions` |
+| AUTH | `users`, `sessions`, `one_time_tokens`, `auth_security_events`, `directions`；`cohorts` 仅历史兼容 |
 | NEWS、MAIL | `announcements`, 受众关联表, `student_notifications`, `outbox_jobs` |
 | HW | `assignments`, 受众配置与快照, `assignment_extensions` |
 | COMP、TEAM | `competitions`, `competition_registrations`, `teams`, `team_members`；`competition_tasks` 仅保留历史兼容数据 |

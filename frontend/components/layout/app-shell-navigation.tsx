@@ -37,7 +37,7 @@ function itemsForUser(user: User, unreadCount: number): NavigationItem[] {
           { href: "/admin/assignments", label: "作业管理", icon: "assignment" },
           { href: "/admin/competitions", label: "赛事管理", icon: "competition" },
           { href: "/admin/users", label: "用户管理", icon: "users" },
-          { href: "/admin/categories", label: "届次与方向", icon: "categories" },
+          { href: "/admin/categories", label: "方向设置", icon: "categories" },
           { href: "/admin/sessions", label: "登录人员", icon: "monitor" },
           { href: "/admin/mail", label: "邮件任务", icon: "mail" },
           { href: "/admin/audit", label: "审计日志", icon: "audit" },

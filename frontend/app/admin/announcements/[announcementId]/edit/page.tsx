@@ -4,7 +4,6 @@ import { AnnouncementEditor } from "@/components/admin/announcement-editor";
 import { AppShell } from "@/components/layout/app-shell";
 import {
   getAdminAnnouncement,
-  getCohorts,
   getDirections,
   requireAdmin,
 } from "@/lib/api/server";
@@ -17,10 +16,9 @@ export default async function EditAnnouncementPage({
   params,
 }: EditAnnouncementPageProps) {
   const { announcementId } = await params;
-  const [admin, announcement, cohorts, directions] = await Promise.all([
+  const [admin, announcement, directions] = await Promise.all([
     requireAdmin(),
     getAdminAnnouncement(announcementId),
-    getCohorts(),
     getDirections(),
   ]);
   if (announcement === null) {
@@ -36,7 +34,6 @@ export default async function EditAnnouncementPage({
         所有写入都携带 revision；发布、更新提醒和附件完成均使用幂等请求。
       </p>
       <AnnouncementEditor
-        cohorts={cohorts}
         directions={directions}
         initialAnnouncement={announcement}
       />

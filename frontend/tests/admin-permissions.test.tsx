@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import AdminAnnouncementsPage from "@/app/admin/announcements/page";
+import AdminCategoriesPage from "@/app/admin/categories/page";
 import AdminAssignmentsPage from "@/app/admin/assignments/page";
 import AdminSessionsPage from "@/app/admin/sessions/page";
 import NewAssignmentPage from "@/app/admin/assignments/new/page";
@@ -15,7 +16,6 @@ const {
   getAdminAnnouncementsMock,
   getAdminAssignmentsMock,
   getAdminSessionsMock,
-  getCohortsMock,
   getDirectionsMock,
   requireAdminMock,
   replaceMock,
@@ -24,7 +24,6 @@ const {
   getAdminAnnouncementsMock: vi.fn(),
   getAdminAssignmentsMock: vi.fn(),
   getAdminSessionsMock: vi.fn(),
-  getCohortsMock: vi.fn(),
   getDirectionsMock: vi.fn(),
   requireAdminMock: vi.fn(),
   replaceMock: vi.fn(),
@@ -44,7 +43,6 @@ vi.mock("@/lib/api/server", () => ({
   getAdminAnnouncements: getAdminAnnouncementsMock,
   getAdminAssignments: getAdminAssignmentsMock,
   getAdminSessions: getAdminSessionsMock,
-  getCohorts: getCohortsMock,
   getDirections: getDirectionsMock,
   requireAdmin: requireAdminMock,
 }));
@@ -111,7 +109,6 @@ describe("admin permissions UI", () => {
     replaceMock.mockReset();
     requireAdminMock.mockReset();
     requireAdminMock.mockResolvedValue(admin);
-    getCohortsMock.mockResolvedValue([]);
     getDirectionsMock.mockResolvedValue([]);
     getAdminAnnouncementsMock.mockResolvedValue({ items: [] });
     getAdminAssignmentsMock.mockResolvedValue({ items: [] });
@@ -129,6 +126,11 @@ describe("admin permissions UI", () => {
       "aria-current",
       "page",
     );
+    expect(screen.getByRole("link", { name: "方向设置" })).toHaveAttribute(
+      "href",
+      "/admin/categories",
+    );
+    expect(screen.queryByText("届次与方向")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "登录人员" })).toHaveAttribute(
       "href",
       "/admin/sessions",
@@ -191,11 +193,32 @@ describe("admin permissions UI", () => {
     expect(assignmentLink.className).toContain("h-9");
   });
 
+  it("keeps the classification page focused on directions", async () => {
+    getDirectionsMock.mockResolvedValue([
+      {
+        id: "direction-1",
+        code: "robotics",
+        name: "机器人",
+        description: null,
+        is_active: true,
+        revision: 1,
+      },
+    ]);
+    render(await AdminCategoriesPage());
+
+    expect(screen.getByRole("heading", { name: "方向设置" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "新建方向" })).toBeInTheDocument();
+    expect(screen.queryByText("新建届次")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("起始年份")).not.toBeInTheDocument();
+  });
+
   it("allows an admin to open the new assignment page", async () => {
     render(await NewAssignmentPage());
 
     expect(screen.getByRole("heading", { name: "新建作业" })).toBeInTheDocument();
     expect(screen.getByLabelText("标题")).toBeInTheDocument();
+    expect(screen.getByText("按技术方向")).toBeInTheDocument();
+    expect(screen.queryByText("届次")).not.toBeInTheDocument();
     expect(requireAdminMock).toHaveBeenCalledOnce();
   });
 
@@ -209,7 +232,6 @@ describe("admin permissions UI", () => {
 
     render(
       <AssignmentEditor
-        cohorts={[]}
         directions={[]}
         initialAssignment={draft}
         initialSubmissions={[]}
@@ -245,7 +267,6 @@ describe("admin permissions UI", () => {
 
     render(
       <AssignmentEditor
-        cohorts={[]}
         directions={[]}
         initialAssignment={draft}
         initialSubmissions={[]}
@@ -282,7 +303,6 @@ describe("admin permissions UI", () => {
 
     render(
       <AssignmentEditor
-        cohorts={[]}
         directions={[]}
         initialAssignment={draft}
         initialSubmissions={[]}

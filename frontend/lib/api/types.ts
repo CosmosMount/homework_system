@@ -60,15 +60,6 @@ export type AdminSession = {
   user_agent_summary: string;
   is_current: boolean;
 };
-export type Cohort = {
-  id: string;
-  code: string;
-  name: string;
-  start_year: number;
-  is_active: boolean;
-  revision: number;
-};
-
 export type Direction = {
   id: string;
   code: string;
