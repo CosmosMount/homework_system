@@ -20,6 +20,7 @@
 - **AUTH-008**：空系统首个完成邮箱验证的账号必须在并发安全的事务中成为初始 `admin`；若用户表恰好只有一个账号，且该账号已验证、处于 `active student`，部署修正或其成功登录必须在相同事务锁内把它持久化为 `admin`、撤销旧 Session 并写审计。已有管理员可以将其他已验证账号提升为管理员或恢复为学生，操作必须审计；多账号但无管理员的异常历史库仍走受控恢复。容器内管理命令不是正常首次部署的必经步骤。
 - **AUTH-009**：登录失败对账号不存在、密码错误和不可登录状态返回统一对外文案；系统必须先把用户名或完整邮箱规范化为账号邮箱，再按该邮箱和来源 IP 限流，并记录不含密码的安全事件。
 - **AUTH-010**：邮箱、学号均全局唯一；管理员修改邮箱后，账号必须重新完成邮箱验证才能恢复登录。
+- **AUTH-011**：管理员可以仅在当前 Session 开启“学生视图”。开启后 Session 的有效角色为 `student`，可访问学生工作台、通知、作业、赛事和个人提交操作；所有管理员接口必须返回 403，且前端不显示管理导航。关闭学生视图恢复当前 Session 的管理员权限；真实 `users.role` 始终不变。其他管理员把该账号真实角色改为 `student` 时必须撤销该用户全部 Session，本人重新登录后不能通过学生视图按钮恢复管理员权限。
 
 账号状态机：
 
@@ -49,7 +50,7 @@ stateDiagram-v2
 - **HW-003**：作业状态为 `draft`、`published`、`closed`、`archived`。草稿不可见；到达截止时间后自动关闭；管理员可以提前关闭或归档。
 - **HW-004**：管理员可以为单个目标学生设置个人延期时间，延期只能晚于公共截止时间。没有个人延期时默认禁止截止后提交。
 - **HW-005**：管理员可以查看作业目标人数、未提交人数、已提交人数、最后提交时间和存在反馈的提交数，并按届次、方向和提交状态过滤。
-- **HW-006**：学生只能查看受众快照包含自己的作业。作业详情必须显示上海时区的截止时间、剩余状态、提交要求、资料链接和自己的最新提交情况。
+- **HW-006**：学生只能查看受众快照包含自己的作业。管理员当前 Session 开启学生视图时，为验证学生体验可按当前届次/方向预览已发布作业，但不改变历史受众快照；作业详情必须显示上海时区的截止时间、剩余状态、提交要求、资料链接和自己的最新提交情况。
 - **HW-007**：发布后的作业可以修正文案和延期，但不得缩短到早于任何已有提交时间，也不得改变受众快照或附件规则以使历史版本失效。
 
 ## 提交版本与私密评语
@@ -65,20 +66,20 @@ stateDiagram-v2
 
 ## 校内赛与团队
 
-- **COMP-001**：管理员可以创建赛事，字段包括名称、说明、规则链接、报名开始/结束时间、提交开始/结束时间、队伍最小/最大人数和状态。
+- **COMP-001**：管理员可以创建校内赛公告，字段包括名称、公告说明、规则链接、报名开始/结束时间、赛事结束时间、队伍最小/最大人数和状态。
 - **COMP-002**：赛事状态为 `draft`、`registration_open`、`registration_closed`、`submission_open`、`submission_closed`、`archived`。Worker 按配置时间推进状态，管理员可以提前关闭但不能让状态逆序回退。
 - **COMP-003**：激活学生可以在报名期登记参赛或撤回报名。被管理员取消资格的学生不能重新报名，取消资格原因仅管理员和本人可见。
-- **COMP-004**：管理员可以为赛事创建一个或多个赛题/交付项，每项独立定义说明、外部资料链接、附件规则和提交截止时间，但截止时间不得晚于赛事提交结束时间。
-- **COMP-005**：比赛不提供分数、评委、排名、自动评奖或公开评语。管理员只能对团队的具体提交版本写私密评语。
-- **COMP-006**：赛事归档后，报名、队伍和提交均为只读；管理员仍可查看审计记录。赛事提交不能被标记为优秀作业。
+- **COMP-004**：校内赛不设置赛题、交付项或赛事作品提交；现有赛题 API 仅为历史数据兼容保留，不属于新赛事流程。
+- **COMP-005**：比赛不提供分数、评委、排名、自动评奖、公开评语或作品评审。
+- **COMP-006**：赛事归档后，报名和队伍均为只读；管理员仍可查看审计记录。历史赛事提交数据继续按原权限只读保留。
 
 - **TEAM-001**：已报名学生可以在报名期创建队伍并成为队长，或使用一次输入的邀请码加入已有队伍；邀请凭证在数据库中只保存哈希。
 - **TEAM-002**：同一学生在同一赛事最多属于一支未撤销队伍，由数据库唯一约束保证。
 - **TEAM-003**：队长可以在报名期移除成员、轮换邀请码和转让队长。队长退出前必须转让队长；仅剩一人时可以解散队伍。
-- **TEAM-004**：加入操作不得超过最大人数。报名结束时少于最小人数的队伍标记为 `invalid`，不能提交，管理员可以在提交开始前人工豁免并审计原因。
+- **TEAM-004**：加入操作不得超过最大人数。报名结束时少于最小人数的队伍标记为 `invalid`，管理员可以在赛事结束前人工豁免并审计原因。
 - **TEAM-005**：报名结束后队伍自动进入 `locked`，普通成员关系不可再修改；管理员可以进行带原因的补录、移除或队长变更。
-- **TEAM-006**：只有 `locked` 且有效的队伍可以在提交期提交赛事作品；只有当前队长可以创建正式版本，全部当前成员可以查看版本和私密评语。
-- **TEAM-007**：非队长的提交请求返回 `403 TEAM_CAPTAIN_REQUIRED`；重复入队返回 `409 ALREADY_IN_COMPETITION_TEAM`。
+- **TEAM-006**：报名结束后，`locked` 且有效的队伍作为参赛队伍只读展示；本产品不创建赛事作品版本或赛事评语。
+- **TEAM-007**：重复入队返回 `409 ALREADY_IN_COMPETITION_TEAM`；历史赛事提交接口仍按兼容路径执行原有队长权限校验。
 
 赛事和队伍状态关系：
 
@@ -97,7 +98,7 @@ stateDiagram-v2
 ## 优秀作业
 
 - **SHOW-001**：管理员可以把一个不可变的作业提交版本标记为优秀作业；赛事提交版本不得标记。
-- **SHOW-002**：优秀作业只出现在对应作业详情的“优秀作业”区块，不建立独立列表、详情导航或跨作业展示；只有该作业受众和管理员可见。
+- **SHOW-002**：优秀作业只出现在对应作业详情的“优秀作业”区块，不建立独立列表、详情导航或跨作业展示；只有该作业受众和管理员可见。管理员当前 Session 开启学生视图时，按学生视图的受众预览规则读取。
 - **SHOW-003**：优秀作业直接引用源提交版本，不复制文本或附件；标记存在期间，源版本和附件禁止删除。
 - **SHOW-004**：管理员可以取消优秀标记；取消后立即从作业详情隐藏，源提交和审计记录保持不变。
 - **SHOW-005**：优秀作业展示提交者姓名、该版本的 Markdown 文本、外部链接和附件，但永远不展示私密评语、内部审计或其他版本内容。
@@ -158,12 +159,12 @@ stateDiagram-v2
 
 | 需求 | 页面 | API | 数据实体/约束 | 验收场景 |
 | --- | --- | --- | --- | --- |
-| AUTH-001～AUTH-010 | 注册、邮箱验证、登录、管理员用户、个人 Session | `/auth/*`、`/admin/users/*` | `users`、`sessions`、`one_time_tokens`、`auth_security_events`、可选届次/方向、审计 | AUTH-T01～AUTH-T13、SEC-T01、SEC-T03 |
+| AUTH-001～AUTH-011 | 注册、邮箱验证、登录、管理员用户、个人 Session | `/auth/*`、`/admin/users/*` | `users`、`sessions`、`one_time_tokens`、`auth_security_events`、可选届次/方向、审计 | AUTH-T01～AUTH-T14、SEC-T01、SEC-T03 |
 | NEWS-001～NEWS-008 | 学生工作台、通知列表/详情、管理员通知 | `/announcements*`、`/admin/announcements*`、`/notifications*` | `announcements`、通知受众关联、`announcement_files`、`student_notifications`、Outbox | NEWS-T01～NEWS-T07 |
 | HW-001～HW-007 | 作业列表/详情、个人版本、管理员作业/提交 | `/assignments*`、`/admin/assignments*` | `assignments`、受众配置、`assignment_audience_users`、`assignment_extensions` | HW-T01～HW-T13 |
-| SUB-001～SUB-008 | 作业版本、赛题提交、管理员提交反馈 | `/submission-versions`、`/submissions/*`、管理员反馈接口 | `submissions`、`submission_versions`、`version_files`、`feedback` | HW-T04～HW-T09、HW-T13、TEAM-T06～TEAM-T07 |
-| COMP-001～COMP-006 | 赛事列表/详情/赛题、管理员赛事 | `/competitions*`、`/admin/competitions*` | `competitions`、`competition_tasks`、`competition_registrations` | COMP-T01～COMP-T04、TEAM-T04～TEAM-T07 |
-| TEAM-001～TEAM-007 | 我的队伍、赛题提交、管理员队伍 | `/teams*`、`/competitions/*/my-team`、`/admin/teams*` | `teams`、`team_members`、报名表与一赛一队部分唯一索引 | TEAM-T01～TEAM-T07 |
+| SUB-001～SUB-008 | 作业版本、管理员提交反馈 | `/submission-versions`、`/submissions/*`、管理员反馈接口 | `submissions`、`submission_versions`、`version_files`、`feedback` | HW-T04～HW-T09、HW-T13 |
+| COMP-001～COMP-006 | 校内赛公告/报名、管理员赛事 | `/competitions*`、`/admin/competitions*` | `competitions`、`competition_registrations`（`competition_tasks` 仅兼容历史数据） | COMP-T01～COMP-T04 |
+| TEAM-001～TEAM-007 | 我的队伍、管理员队伍 | `/teams*`、`/competitions/*/my-team`、`/admin/teams*` | `teams`、`team_members`、报名表与一赛一队部分唯一索引 | TEAM-T01～TEAM-T05 |
 | SHOW-001～SHOW-005 | 作业详情的优秀作业区块、管理员提交详情 | `/assignments/*/excellent-submissions*`、管理员标记接口 | `assignment_excellent_submissions`、作业/版本外键和删除保护 | SHOW-T01～SHOW-T05 |
 | FILE-001～FILE-007 | 作业/赛题上传器、通知附件、授权下载 | `/uploads*`、`/files/*/download-url` | `files`、`upload_sessions`、`upload_parts`、正式资源附件关联 | FILE-T01～FILE-T09 |
 | MAIL-001～MAIL-005 | 认证邮件提示、通知发布结果、管理员邮件任务 | 认证邮件触发接口、通知发布、`/admin/mail-outbox*` | `outbox_jobs`、`student_notifications`、唯一事件键 | MAIL-T01～MAIL-T04、NEWS-T03 |

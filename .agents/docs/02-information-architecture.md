@@ -28,7 +28,7 @@
 ├── /competitions
 │   └── /competitions/[competitionId]
 │       ├── /competitions/[competitionId]/team
-│       └── /competitions/[competitionId]/tasks/[taskId]
+│       └── 旧赛题路径重定向回赛事详情
 ├── /profile
 │   └── /profile/sessions
 └── /admin
@@ -50,7 +50,7 @@
     └── /admin/audit
 ```
 
-根路径 `/` 根据状态跳转：未登录跳转 `/login`，已登录学生跳转 `/dashboard`，已登录管理员跳转 `/admin/dashboard`。`pending_email` 用户只能访问邮箱验证、重新发送验证和登录提示页面。
+根路径 `/` 根据状态跳转：未登录跳转 `/login`，已登录学生跳转 `/dashboard`，已登录且有效角色为管理员的 Session 跳转 `/admin/dashboard`；管理员学生视图按学生有效角色跳转 `/dashboard`。`pending_email` 用户只能访问邮箱验证、重新发送验证和登录提示页面。
 
 ## 学生全局布局
 
@@ -71,7 +71,7 @@
 
 ## 管理员全局布局
 
-桌面使用左侧栏，依次包含概览、用户、届次与方向、通知、作业、赛事、邮件任务和审计日志。学生入口通过顶栏“查看学生视图”访问，但不改变后端权限。
+桌面使用左侧栏，依次包含概览、用户、届次与方向、通知、作业、赛事、邮件任务和审计日志。管理员真实角色保持 `admin`，可通过侧栏底部“查看学生视图”切换当前 Session 的有效角色；学生视图隐藏管理入口，但后端仍独立鉴权，真实角色不会改变。
 
 移动端管理员页面使用可折叠抽屉；数据表切换为卡片或水平滚动，关键管理操作不隐藏在仅鼠标可发现的交互中。
 
@@ -84,8 +84,6 @@ flowchart TD
     Dashboard --> Competition[赛事详情]
     Assignment --> Submission[个人版本与评语]
     Competition --> Team[我的队伍]
-    Competition --> Task[赛题/交付项]
-    Task --> TeamSubmission[团队版本与评语]
     Assignment --> ExcellentWork[优秀作业]
 ```
 
@@ -99,9 +97,9 @@ flowchart TD
 
 `工作台待办 → 作业详情 → 填写文本/链接 → 分片上传附件 → 核对清单 → 确认正式提交 → 查看版本历史 → 查看私密评语 → 截止前提交新版本`。
 
-### 赛事组队与提交
+### 赛事公告与组队
 
-`赛事列表 → 赛事详情 → 报名 → 创建队伍或输入邀请码 → 队伍成形 → 报名结束自动锁定 → 查看赛题 → 队长提交 → 全体成员查看版本与评语`。
+`赛事列表 → 阅读校内赛公告 → 报名 → 创建队伍或输入邀请码 → 队伍成形 → 报名结束自动锁定`。
 
 ### 优秀作业标记
 
@@ -133,9 +131,9 @@ flowchart TD
 
 | 路由组 | 主要需求 |
 | --- | --- |
-| 注册、验证与账号管理 | AUTH-001～AUTH-010 |
+| 注册、验证与账号管理 | AUTH-001～AUTH-011 |
 | 工作台、通知 | NEWS-001～NEWS-008、MAIL-001 |
 | 作业、个人提交 | HW-001～HW-007、SUB-001～SUB-008、FILE-001～FILE-007 |
-| 赛事、队伍、团队提交 | COMP-001～COMP-006、TEAM-001～TEAM-007、FILE-001～FILE-007 |
+| 赛事、队伍 | COMP-001～COMP-006、TEAM-001～TEAM-005 |
 | 作业内优秀作业 | SHOW-001～SHOW-005 |
 | 管理后台 | AUTH-007～AUTH-008、NEWS-001～NEWS-007、HW-001～HW-007、COMP-001～COMP-006、MAIL-002～MAIL-005、NFR-006 |

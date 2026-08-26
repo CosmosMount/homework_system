@@ -88,13 +88,17 @@
 | --- | --- | --- |
 | `POST /auth/login` | `{identifier,password}` → `{user}` 并设置 Session Cookie；暂时兼容旧 `{email,password}` 请求 | AUTH-004、AUTH-006、AUTH-009 |
 | `POST /auth/logout` | 撤销当前 Session，返回 204 | AUTH-006 |
-| `GET /auth/me` | 当前用户、可空届次/方向、角色、状态 | AUTH-004、AUTH-007 |
+| `GET /auth/me` | 当前用户、可空届次/方向、真实角色、状态和当前 Session 的 `student_view` 标记 | AUTH-004、AUTH-007 |
 | `GET /auth/csrf` | `{csrf_token}` 并刷新 CSRF Cookie | NFR-002 |
 | `GET /auth/sessions` | 当前用户的 Session 列表 | AUTH-006 |
 | `DELETE /auth/sessions/{session_id}` | 撤销指定本人 Session | AUTH-006 |
 | `GET /auth/admin/sessions` | 管理员查看当前所有活跃登录会话的脱敏用户与设备摘要 | AUTH-007、AUTH-008、NFR-006 |
+| `POST /auth/student-view` | 当前真实角色为 `admin` 时把当前 Session 标记为学生视图，返回 `user` 且 `student_view: true` | AUTH-011 |
+| `DELETE /auth/student-view` | 清除当前 Session 的学生视图标记，返回 `user` 且 `student_view: false` | AUTH-011 |
 
 `identifier` 可以是 Connect 邮箱前缀用户名或完整邮箱；用户名先补全为当前 Connect 域名，完整邮箱按原域名规范化，因此旧域名存量账号仍须输入完整邮箱。用户名和对应 Connect 完整邮箱映射到同一账号及同一邮箱限流维度。兼容字段 `email` 只用于旧客户端请求解析，新 OpenAPI 契约和前端统一使用 `identifier`。
+
+`GET /auth/me` 和登录响应中的 `user` 始终返回真实 `role`；管理员学生视图通过 `student_view: true` 表示当前 Session 的有效角色为学生。学生视图请求管理员接口（包括 `/admin/*` 与管理员会话列表）返回 403；学生通知、作业、赛事、个人提交和上传接口按有效角色执行，关闭后恢复管理员权限。
 
 登录对账号不存在、密码错误、`pending_email` 和 `disabled` 统一返回 401 `INVALID_CREDENTIALS`，响应状态、文案和主体不暴露账号是否存在或当前状态。成功登录唯一的已验证 active student 时，服务端在事务锁内把其持久化为 admin、撤销旧 Session、写审计，再返回管理员用户并创建新的 4 小时空闲 Session；多账号用户不触发该修正。系统不存在注册审批状态；用户在注册成功页或统一重发验证接口继续邮箱验证流程。
 
@@ -171,12 +175,12 @@
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /assignments` | `status,query,page,page_size`；返回本人受众作业与最新提交摘要 | HW-002、HW-003、HW-006 |
-| `GET /assignments/{assignment_id}` | 返回要求、外链、有效截止、附件规则、本人提交摘要和优秀作业摘要 | HW-001、HW-004、HW-006、SHOW-002 |
-| `POST /assignments/{assignment_id}/submission-versions` | 创建本人正式版本 | SUB-001～SUB-005、FILE-001 |
+| `GET /assignments` | `status,query,page,page_size`；普通学生返回固定受众快照中的作业与最新提交摘要；管理员当前 Session 开启学生视图时，按该账号届次/方向对已发布作业执行只读受众预览，不写入或改变快照 | HW-002、HW-003、HW-006、AUTH-011 |
+| `GET /assignments/{assignment_id}` | 返回要求、外链、有效截止、附件规则、本人提交摘要和优秀作业摘要；管理员当前 Session 开启学生视图时按临时受众预览读取 | HW-001、HW-004、HW-006、SHOW-002、AUTH-011 |
+| `POST /assignments/{assignment_id}/submission-versions` | 创建本人正式版本；管理员当前 Session 开启学生视图时允许以自身账号创建个人版本，普通管理员视图仍禁止代交 | SUB-001～SUB-005、FILE-001、AUTH-011 |
 | `GET /assignments/{assignment_id}/submission` | 返回本人提交聚合、版本和评语 | SUB-003、SUB-005～SUB-007 |
-| `GET /assignments/{assignment_id}/excellent-submissions` | 返回该作业已标记的优秀版本摘要 | SHOW-001～SHOW-005 |
-| `GET /assignments/{assignment_id}/excellent-submissions/{version_id}` | 返回优秀版本正文、链接、附件和作者姓名，不含评语 | SHOW-002～SHOW-005 |
+| `GET /assignments/{assignment_id}/excellent-submissions` | 返回该作业已标记的优秀版本摘要；学生视图管理员按临时受众预览规则读取 | SHOW-001～SHOW-005、AUTH-011 |
+| `GET /assignments/{assignment_id}/excellent-submissions/{version_id}` | 返回优秀版本正文、链接、附件和作者姓名，不含评语；学生视图管理员按临时受众预览规则读取 | SHOW-002～SHOW-005、AUTH-011 |
 
 正式版本请求必须带 `Idempotency-Key`：
 
@@ -226,7 +230,7 @@
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
 | `GET /competitions` | 按阶段搜索可见赛事并返回本人状态 | COMP-001～COMP-003 |
-| `GET /competitions/{competition_id}` | 返回赛事、时间轴、赛题、报名和队伍摘要 | COMP-001～COMP-004 |
+| `GET /competitions/{competition_id}` | 返回校内赛公告、时间轴、报名和队伍摘要；历史赛题字段仅为兼容保留 | COMP-001～COMP-003、COMP-006 |
 | `POST /competitions/{competition_id}/registration` | 登记本人参赛 | COMP-003 |
 | `DELETE /competitions/{competition_id}/registration` | 报名期撤回；已入队时禁止 | COMP-003、TEAM-002 |
 
@@ -242,13 +246,15 @@
 | `POST /teams/{team_id}/captain-transfer` | `{new_captain_user_id}` | TEAM-003 |
 | `POST /teams/{team_id}/dissolve` | 解散仅剩或已清空成员的形成中队伍 | TEAM-003 |
 
-### 赛题提交
+### 历史赛事赛题兼容接口
+
+新创建的赛事不设置赛题或作品提交。以下接口仅为兼容历史赛事数据保留，前端不提供入口；新产品流程不依赖这些接口。
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /competitions/{competition_id}/tasks/{task_id}` | 返回赛题、有效截止、团队提交摘要 | COMP-004、TEAM-006 |
-| `POST /competitions/{competition_id}/tasks/{task_id}/submission-versions` | 当前队长创建团队正式版本 | TEAM-006～TEAM-007、SUB-001～SUB-003 |
-| `GET /competitions/{competition_id}/tasks/{task_id}/submission` | 当前团队成员查看版本和评语 | TEAM-006、COMP-005 |
+| `GET /competitions/{competition_id}/tasks/{task_id}` | 返回历史赛事赛题、有效截止、团队提交摘要 | 兼容路径 |
+| `POST /competitions/{competition_id}/tasks/{task_id}/submission-versions` | 按历史规则由当前队长创建团队正式版本 | 兼容路径 |
+| `GET /competitions/{competition_id}/tasks/{task_id}/submission` | 按历史规则由当前团队成员查看版本和评语 | 兼容路径 |
 
 版本请求与作业版本结构相同。队伍非 `locked`、人数无效、被取消资格或不在提交期均返回具体 409 错误。
 
@@ -264,8 +270,8 @@
 | `POST /admin/competitions/{id}/close-registration` | 提前关报名并锁队 | COMP-002、TEAM-004～TEAM-005 |
 | `POST /admin/competitions/{id}/close-submissions` | 提前关提交 | COMP-002 |
 | `POST /admin/competitions/{id}/archive` | 归档 | COMP-006 |
-| `POST /admin/competitions/{id}/tasks` | 创建赛题草稿 | COMP-004 |
-| `PATCH /admin/competition-tasks/{task_id}` | 修改赛题 | COMP-004 |
+| `POST /admin/competitions/{id}/tasks` | 创建历史兼容赛题（新赛事不使用） | 兼容路径 |
+| `PATCH /admin/competition-tasks/{task_id}` | 修改历史兼容赛题（新赛事不使用） | 兼容路径 |
 | `GET /admin/competitions/{id}/teams` | 筛选队伍、人数和提交状态 | TEAM-004～TEAM-006 |
 | `POST /admin/teams/{team_id}/members` | `{user_id,reason}` 补录 | TEAM-005 |
 | `GET /admin/competitions/{id}/registrations` | 返回个人报名记录、状态、当前队伍和管理员可见的取消资格原因 | COMP-003 |
@@ -276,13 +282,13 @@
 | `POST /admin/teams/{team_id}/waive-min-size` | `{reason}` 人数豁免 | TEAM-004 |
 | `POST /admin/teams/{team_id}/disqualify` | `{reason}` 取消资格 | COMP-003、TEAM-006 |
 
-赛事时间必须满足：`registration_start < registration_end <= submission_start < submission_end`。赛题截止处于提交窗口内。
+赛事时间必须满足：`registration_start < registration_end <= submission_start < submission_end`；现有字段用于兼容状态机，其中 submission_start 表示组队锁定时间，submission_end 表示赛事结束时间。新赛事不校验赛题截止。
 个人取消资格原因只返回管理员和对应学生本人；联动队伍的 `disqualification_reason` 使用不含个人原因的固定通用说明。管理员补录使 `invalid` 队伍达到最低人数时恢复 `locked`；从 `locked` 队伍移除成员后低于最低人数且没有豁免时转为 `invalid`。所有上述纠错请求必须提供非空原因并写审计。
 
 
 ## 优秀作业接口
 
-优秀作业接口全部嵌套在作业资源下，不提供 `/showcases` 或赛事来源。标记请求无正文；服务端必须验证版本属于指定作业、不是赛事提交且尚未标记。读取权限复用作业受众快照，响应展示提交者姓名和该版本的文本、链接、附件，不返回评语、内部提交聚合 ID 或其他版本。
+优秀作业接口全部嵌套在作业资源下，不提供 `/showcases` 或赛事来源。标记请求无正文；服务端必须验证版本属于指定作业、不是赛事提交且尚未标记。普通学生读取权限复用作业受众快照；管理员当前 Session 开启学生视图时按当前作业受众配置临时预览。响应展示提交者姓名和该版本的文本、链接、附件，不返回评语、内部提交聚合 ID 或其他版本。
 
 ## 上传与下载接口
 

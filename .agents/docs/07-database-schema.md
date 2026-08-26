@@ -87,11 +87,12 @@ erDiagram
 
 ### `sessions`
 
-`id`, `user_id`, `token_hash`, `csrf_secret_hash`, `created_at`, `last_seen_at`, `idle_expires_at`, `absolute_expires_at`, `revoked_at`, `ip_prefix`, `user_agent_summary`。
+`id`, `user_id`, `token_hash`, `csrf_secret_hash`, `created_at`, `last_seen_at`, `idle_expires_at`, `absolute_expires_at`, `revoked_at`, `student_view`, `ip_prefix`, `user_agent_summary`。
 
 - `token_hash` 唯一；只存随机 Session 令牌的哈希。
 - 读取使用 `token_hash` 索引，并过滤未撤销和未过期记录。
 - 用户禁用、密码重置和角色敏感变更时批量撤销。
+- `student_view` 为非空布尔值，默认 `false`，只表示当前 Session 的临时有效角色，不修改 `users.role`；管理员切换开关时写入 `audit_logs`。真实角色变更必须撤销该用户全部 Session，因此降级后不能由本人恢复管理员视图。
 
 ### `one_time_tokens`
 
@@ -179,11 +180,11 @@ erDiagram
 - `(competition_id, user_id)` 唯一；重新报名复用记录并校验状态。
 - 索引 `(competition_id, status)`。
 
-### `competition_tasks`
+### `competition_tasks`（历史兼容）
 
 `id`, `competition_id`, `title`, `description_markdown`, `description_html`, `resource_url`, `allowed_extensions`, `max_total_bytes`, `deadline`, `display_order`, `created_at`, `updated_at`, `revision`。
 
-- `deadline` 位于赛事提交窗口内。
+- `deadline` 位于历史赛事提交窗口内；新赛事不创建该实体。
 - `(competition_id, display_order)` 唯一。
 
 ### `teams`
@@ -327,7 +328,7 @@ CHECK (
 | AUTH | `users`, `sessions`, `one_time_tokens`, `auth_security_events`, `cohorts`, `directions` |
 | NEWS、MAIL | `announcements`, 受众关联表, `student_notifications`, `outbox_jobs` |
 | HW | `assignments`, 受众配置与快照, `assignment_extensions` |
-| COMP、TEAM | `competitions`, `competition_tasks`, `competition_registrations`, `teams`, `team_members` |
+| COMP、TEAM | `competitions`, `competition_registrations`, `teams`, `team_members`；`competition_tasks` 仅保留历史兼容数据 |
 | SUB | `submissions`, `submission_versions`, `version_files`, `feedback` |
 | SHOW | `assignment_excellent_submissions`、作业与版本外键、源附件删除保护 |
 | FILE | `files`, `upload_sessions`, `upload_parts` |
@@ -342,3 +343,4 @@ CHECK (
 4. 生产迁移前完成 PostgreSQL 备份；不可逆迁移必须给出经过测试的前滚恢复方案。
 5. 迁移测试从空库升级到最新，也从上一个发布版本升级到最新，并验证全部检查、唯一和外键约束。
 6. 数据修正迁移 `20260825_0007` 不改变结构，只在用户表恰好一行且该行是已验证 `active student` 时提升为管理员、撤销旧 Session 并追加审计；降级保留已授予角色，避免系统重新失去管理员。
+7. 认证增量迁移 `20260826_0008` 为 `sessions.student_view` 增加可回滚的非空布尔列，默认关闭；降级仅删除该列，不恢复已撤销 Session 或审计记录。

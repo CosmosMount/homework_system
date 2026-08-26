@@ -106,6 +106,7 @@ PostgreSQL / MinIO / SMTP Adapter
 - 登录标识在认证 Service 入口规范化：不含 `@` 的值补全当前 Connect 域名，完整邮箱保留其域名并统一小写；Repository 始终只按规范化完整邮箱查询，不持久化独立用户名。
 - Service 在一个显式事务中完成业务写入、审计和 Outbox 入队。
 - Repository 不决定“谁能做什么”，只实现具名查询和持久化。
+- `AuthenticatedContext` 同时保留真实用户角色与当前 Session 的有效角色。管理员开启学生视图只写 `sessions.student_view`；学生业务按有效角色授权，`AdminContextDependency` 必须要求真实 `admin` 且未开启学生视图。角色服务把账号降为学生时在同一事务撤销全部 Session，临时视图不能绕过真实降级。
 - ORM 模型不直接作为 API 响应；Pydantic 请求/响应模型与数据库模型分离。
 - 所有时间从可注入时钟获取，便于测试截止和定时状态推进。
 - 对队伍加入、提交版本号、发布和 Outbox 领取使用数据库约束与行锁，不能只依赖前端禁用按钮。
@@ -114,11 +115,11 @@ PostgreSQL / MinIO / SMTP Adapter
 
 | 模块 | 核心职责 | 主要需求 |
 | --- | --- | --- |
-| `auth` | 密码、Session、一次性令牌、CSRF、限流 | AUTH-001～AUTH-010 |
+| `auth` | 密码、Session、一次性令牌、CSRF、限流 | AUTH-001～AUTH-011 |
 | `users` | 邮箱验证后激活、角色、可选届次/方向、禁用状态 | AUTH-003、AUTH-007～AUTH-010 |
 | `announcements` | 受众、发布、置顶、归档 | NEWS-001～NEWS-008 |
 | `assignments` | 个人任务、受众快照、截止、延期和优秀作业标记 | HW-001～HW-007、SHOW-001～SHOW-005 |
-| `competitions` | 赛事阶段、报名、队伍、赛题 | COMP-001～COMP-006、TEAM-001～TEAM-007 |
+| `competitions` | 校内赛公告、阶段、报名与队伍 | COMP-001～COMP-006、TEAM-001～TEAM-005 |
 | `submissions` | 两类提交的聚合、不可变版本和私密评语 | SUB-001～SUB-008 |
 | `uploads` | 分片会话、对象校验、下载授权、清理 | FILE-001～FILE-007 |
 | `notifications` | 站内通知、已读、Outbox 和邮件 | NEWS-005～NEWS-006、MAIL-001～MAIL-005 |
@@ -151,7 +152,7 @@ sequenceDiagram
 
 ## 提交流程
 
-1. 客户端创建上传会话，服务端校验作业/赛题、身份、截止和剩余大小。
+1. 客户端创建上传会话，服务端校验作业、身份、截止和剩余大小；赛事上传仅服务历史兼容路径。
 2. 服务端创建 MinIO multipart upload，返回服务端会话 ID。
 3. 客户端按需请求预签名分片 URL，通过 Nginx 直传 MinIO。
 4. 客户端提交分片 ETag 和整体 SHA-256，服务端完成 multipart 并校验对象。
