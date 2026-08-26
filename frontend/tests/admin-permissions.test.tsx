@@ -136,6 +136,15 @@ describe("admin permissions UI", () => {
   });
 
 
+  it("uses SVG icons instead of text glyph placeholders", () => {
+    render(<AppShell user={admin}><p>内容</p></AppShell>);
+
+    expect(screen.getByRole("link", { name: "作业管理" }).querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "查看学生视图" }).querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "个人资料" }).querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "退出登录" }).querySelector("svg")).toBeTruthy();
+  });
+
   it("switches an administrator into the student view", async () => {
     csrfFetchMock.mockResolvedValue({ ...admin, student_view: true });
     render(<AppShell user={admin}><p>内容</p></AppShell>);

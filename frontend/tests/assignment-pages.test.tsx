@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import AssignmentsPage from "@/app/assignments/page";
+import DashboardPage from "@/app/dashboard/page";
 import ExcellentSubmissionPage from "@/app/assignments/[assignmentId]/excellent-submissions/[versionId]/page";
 import type {
   AssignmentPage,
@@ -145,5 +146,26 @@ describe("assignment pages", () => {
       screen.getByText(/不包含作者的私密评语或其他历史版本/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/绝密评语/)).not.toBeInTheDocument();
+  });
+  it("shows a published assignment in the dashboard recent list", async () => {
+    getDashboardMock.mockResolvedValue({
+      ...dashboard,
+      assignments: [
+        {
+          id: "assignment-1",
+          title: "电控第一次作业",
+          deadline: "2026-09-03T14:09:00Z",
+        },
+      ],
+    });
+
+    render(await DashboardPage());
+
+    expect(screen.getByRole("heading", { name: "近期作业" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /电控第一次作业/ })).toHaveAttribute(
+      "href",
+      "/assignments/assignment-1",
+    );
+    expect(screen.queryByText("当前没有已发布作业。")).not.toBeInTheDocument();
   });
 });

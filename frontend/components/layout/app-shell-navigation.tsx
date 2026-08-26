@@ -5,6 +5,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { LogoutButton } from "@/components/auth/logout-button";
+import { AppIcon } from "@/components/ui/app-icon";
+import type { AppIconName } from "@/components/ui/app-icon";
 import { ApiError, csrfFetch } from "@/lib/api/client";
 import { isAdminView } from "@/lib/api/types";
 import type { User } from "@/lib/api/types";
@@ -12,6 +14,7 @@ import type { User } from "@/lib/api/types";
 type NavigationItem = Readonly<{
   href: string;
   label: string;
+  icon: AppIconName;
   match: (pathname: string) => boolean;
   badgeCount?: number;
 }>;
@@ -26,24 +29,24 @@ function matchesPath(pathname: string, href: string): boolean {
 }
 
 function itemsForUser(user: User, unreadCount: number): NavigationItem[] {
-  const primary =
+  const primary: Array<Omit<NavigationItem, "match">> =
     isAdminView(user)
       ? [
-          { href: "/admin/dashboard", label: "管理概览" },
-          { href: "/admin/announcements", label: "通知管理" },
-          { href: "/admin/assignments", label: "作业管理" },
-          { href: "/admin/competitions", label: "赛事管理" },
-          { href: "/admin/users", label: "用户管理" },
-          { href: "/admin/categories", label: "届次与方向" },
-          { href: "/admin/sessions", label: "登录人员" },
-          { href: "/admin/mail", label: "邮件任务" },
-          { href: "/admin/audit", label: "审计日志" },
+          { href: "/admin/dashboard", label: "管理概览", icon: "dashboard" },
+          { href: "/admin/announcements", label: "通知管理", icon: "announcement" },
+          { href: "/admin/assignments", label: "作业管理", icon: "assignment" },
+          { href: "/admin/competitions", label: "赛事管理", icon: "competition" },
+          { href: "/admin/users", label: "用户管理", icon: "users" },
+          { href: "/admin/categories", label: "届次与方向", icon: "categories" },
+          { href: "/admin/sessions", label: "登录人员", icon: "monitor" },
+          { href: "/admin/mail", label: "邮件任务", icon: "mail" },
+          { href: "/admin/audit", label: "审计日志", icon: "audit" },
         ]
       : [
-          { href: "/dashboard", label: "工作台" },
-          { href: "/announcements", label: "通知", badgeCount: unreadCount },
-          { href: "/assignments", label: "作业" },
-          { href: "/competitions", label: "赛事" },
+          { href: "/dashboard", label: "工作台", icon: "dashboard" },
+          { href: "/announcements", label: "通知", icon: "announcement", badgeCount: unreadCount },
+          { href: "/assignments", label: "作业", icon: "assignment" },
+          { href: "/competitions", label: "赛事", icon: "competition" },
         ];
 
   return primary.map((item) => ({
@@ -96,13 +99,13 @@ function NavigationLinks({
             <span
               aria-hidden="true"
               className={
-                "flex size-7 shrink-0 items-center justify-center rounded-lg text-[0.7rem] font-semibold transition-colors " +
+                "flex size-7 shrink-0 items-center justify-center rounded-lg transition-colors " +
                 (active
                   ? "bg-[var(--color-accent-fill)] text-white shadow-[var(--shadow-button)]"
                   : "bg-[var(--color-surface-raised)] text-[var(--color-accent)] group-hover:bg-[var(--color-action-fill)]")
               }
             >
-              {item.label.slice(0, 1)}
+              <AppIcon name={item.icon} size={16} />
             </span>
             <span className={collapsed ? "sr-only" : "min-w-0 truncate"}>
               {item.label}
@@ -168,7 +171,9 @@ function StudentViewToggle({
         title={collapsed ? label : undefined}
         type="button"
       >
-        <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--color-action-fill)] text-xs font-semibold text-[var(--color-action-text)]">{viewingStudent ? "返" : "学"}</span>
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--color-action-fill)] text-[var(--color-action-text)]">
+          <AppIcon name={viewingStudent ? "chevron-left" : "eye"} size={16} />
+        </span>
         <span className={collapsed ? "sr-only" : ""}>{pending ? "切换中…" : label}</span>
       </button>
       {error && !collapsed ? <p className="px-3 text-xs text-[var(--color-danger)]" role="alert">{error}</p> : null}
@@ -197,8 +202,8 @@ function NavigationFooter({
   return (
     <div className="mt-auto space-y-1 border-t border-[var(--color-border)] p-3">
       <div className={"mb-2 flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] " + (collapsed ? "justify-center p-2" : "p-3")}>
-        <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-action-fill)] text-sm font-semibold text-[var(--color-action-text)]">
-          {user.full_name.slice(0, 1)}
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-action-fill)] text-[var(--color-action-text)]">
+          <AppIcon name="profile" size={17} />
         </span>
         <div className={collapsed ? "sr-only" : "min-w-0"}>
           <p className="truncate text-sm font-semibold">{user.full_name}</p>
@@ -215,7 +220,9 @@ function NavigationFooter({
         onClick={onNavigate}
         title={collapsed ? "个人资料" : undefined}
       >
-        <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--color-surface-raised)] text-xs font-semibold text-[var(--color-accent)]">我</span>
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--color-surface-raised)] text-[var(--color-accent)]">
+          <AppIcon name="profile" size={16} />
+        </span>
         <span className={collapsed ? "sr-only" : ""}>个人资料</span>
       </Link>
       <Link
@@ -227,7 +234,9 @@ function NavigationFooter({
         onClick={onNavigate}
         title={collapsed ? "登录设备" : undefined}
       >
-        <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--color-surface-raised)] text-xs font-semibold text-[var(--color-accent)]">设</span>
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--color-surface-raised)] text-[var(--color-accent)]">
+          <AppIcon name="monitor" size={16} />
+        </span>
         <span className={collapsed ? "sr-only" : ""}>登录设备</span>
       </Link>
       <div className={collapsed ? "flex justify-center" : ""} onClick={onNavigate}>
@@ -240,7 +249,7 @@ function NavigationFooter({
           onClick={onToggle}
           type="button"
         >
-          <span aria-hidden="true">{collapsed ? "›" : "‹"}</span>
+          <AppIcon name={collapsed ? "chevron-right" : "chevron-left"} size={17} />
           <span className={collapsed ? "sr-only" : ""}>折叠导航</span>
         </button>
       ) : null}
@@ -271,7 +280,9 @@ export function AppShellNavigation({
       >
         <div className="flex h-20 shrink-0 items-center border-b border-[var(--color-border)] px-4">
           <Link className="flex min-w-0 items-center gap-3" href={homeHref}>
-            <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-sm font-bold text-white shadow-[var(--shadow-button)]">P</span>
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-white shadow-[var(--shadow-button)]">
+              <AppIcon name="atom" size={21} />
+            </span>
             <span className={collapsed ? "sr-only" : "truncate font-mono text-sm tracking-[0.14em]"}>
               PNX / TRAINING HUB
             </span>
@@ -283,7 +294,9 @@ export function AppShellNavigation({
 
       <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 shadow-[0_3px_14px_rgba(32,91,145,0.05)] lg:hidden">
         <Link className="flex min-w-0 items-center gap-3" href={homeHref}>
-          <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-sm font-bold text-white shadow-[var(--shadow-button)]">P</span>
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-white shadow-[var(--shadow-button)]">
+            <AppIcon name="atom" size={21} />
+          </span>
           <span className="truncate font-mono text-xs tracking-[0.12em]">PNX / TRAINING HUB</span>
         </Link>
         <button
@@ -292,7 +305,7 @@ export function AppShellNavigation({
           onClick={() => setMobileOpen(true)}
           type="button"
         >
-          ☰
+          <AppIcon name="menu" size={18} />
         </button>
       </div>
 
@@ -310,7 +323,9 @@ export function AppShellNavigation({
           >
             <div className="flex h-20 shrink-0 items-center justify-between border-b border-[var(--color-border)] px-4">
               <Link className="flex min-w-0 items-center gap-3" href={homeHref} onClick={() => setMobileOpen(false)}>
-                <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-sm font-bold text-white shadow-[var(--shadow-button)]">P</span>
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-white shadow-[var(--shadow-button)]">
+                  <AppIcon name="atom" size={21} />
+                </span>
                 <span className="truncate font-mono text-sm tracking-[0.14em]">PNX / TRAINING HUB</span>
               </Link>
               <button
@@ -319,7 +334,7 @@ export function AppShellNavigation({
                 onClick={() => setMobileOpen(false)}
                 type="button"
               >
-                ×
+                <AppIcon name="close" size={18} />
               </button>
             </div>
             <NavigationLinks

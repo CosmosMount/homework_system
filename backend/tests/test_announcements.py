@@ -6,13 +6,17 @@ from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.announcements import service as announcement_service_module
 from app.announcements.models import Announcement
+from app.announcements.repository import AnnouncementRepository
 from app.announcements.schemas import AnnouncementAudience
 from app.announcements.service import AnnouncementAuditContext, AnnouncementService
 from app.auth.service import AuthenticatedContext
 from app.notifications.mailer import render_mail
 from app.notifications.models import OutboxJob
+from app.notifications.repository import StudentNotificationRepository
 from app.notifications.service import OutboxProcessor
 from app.uploads.object_store import ObjectInspection
 from app.uploads.service import FileValidationError, detect_media_type, normalize_file_name
@@ -110,6 +114,76 @@ def test_audience_matching_covers_all_union_intersection_and_unclassified() -> N
         make_student(cohort_id=None, direction_id=None),
         {cohort_id},
         {direction_id},
+    )
+
+
+@pytest.mark.asyncio
+async def test_dashboard_includes_published_assignment_for_admin_student_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+    user = make_student(cohort_id=None, direction_id=None)
+    user.role = "admin"
+    assignment_id = uuid4()
+    assignment_record = SimpleNamespace(
+        assignment=SimpleNamespace(
+            id=assignment_id,
+            title="电控第一次作业",
+            deadline=datetime(2026, 9, 3, 14, 9, tzinfo=UTC),
+        ),
+        extension=None,
+    )
+    assignment_repository = SimpleNamespace(
+        list_for_student=AsyncMock(return_value=([assignment_record], 1)),
+    )
+    competition_repository = SimpleNamespace(
+        dashboard_competitions=AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        announcement_service_module,
+        "AssignmentRepository",
+        lambda _session: assignment_repository,
+    )
+    monkeypatch.setattr(
+        announcement_service_module,
+        "CompetitionRepository",
+        lambda _session: competition_repository,
+    )
+    service = AnnouncementService(
+        cast(AsyncSession, SimpleNamespace()),
+        clock=lambda: now,
+    )
+    service._announcements = cast(
+        AnnouncementRepository,
+        SimpleNamespace(
+            list_for_student=AsyncMock(return_value=([], 0)),
+            unread_target_ids=AsyncMock(return_value=set()),
+            announcement_ids_with_attachments=AsyncMock(return_value=set()),
+        ),
+    )
+    service._notifications = cast(
+        StudentNotificationRepository,
+        SimpleNamespace(unread_count=AsyncMock(return_value=0)),
+    )
+    context = cast(
+        AuthenticatedContext,
+        SimpleNamespace(user=user, effective_role="student", is_student_view=True),
+    )
+
+    result = await service.dashboard(context=context)
+
+    assert [(item.id, item.title) for item in result.assignments] == [
+        (assignment_id, "电控第一次作业"),
+    ]
+    assignment_repository.list_for_student.assert_awaited_once_with(
+        user_id=user.id,
+        preview_user=user,
+        page=1,
+        page_size=5,
+        status=None,
+        query=None,
+        now=now,
+        limit=5,
     )
 
 

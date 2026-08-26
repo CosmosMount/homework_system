@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { AppIcon } from "@/components/ui/app-icon";
 import { clearCsrfToken, csrfFetch } from "@/lib/api/client";
 
 export function LogoutButton({ collapsed = false }: Readonly<{ collapsed?: boolean }>) {
@@ -27,7 +28,9 @@ export function LogoutButton({ collapsed = false }: Readonly<{ collapsed?: boole
       onClick={logout}
       type="button"
     >
-      <span aria-hidden="true" className="w-7 shrink-0 text-center text-sm">↪</span>
+      <span className="flex w-7 shrink-0 justify-center text-[var(--color-accent)]">
+        <AppIcon name="log-out" size={16} />
+      </span>
       <span className={collapsed ? "sr-only" : ""}>{pending ? "退出中…" : "退出登录"}</span>
     </button>
   );

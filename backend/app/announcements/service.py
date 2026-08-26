@@ -878,6 +878,7 @@ class AnnouncementService:
         if context_effective_role(context) == "student":
             records, _ = await AssignmentRepository(self._session).list_for_student(
                 user_id=context.user.id,
+                preview_user=context.user if getattr(context, "is_student_view", False) else None,
                 page=1,
                 page_size=5,
                 status=None,

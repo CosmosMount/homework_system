@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { AppIcon } from "@/components/ui/app-icon";
+
 type AuthShellProps = Readonly<{
   eyebrow: string;
   title: string;
@@ -18,11 +20,8 @@ export function AuthShell({
       <section className="hidden min-h-[calc(100vh-6rem)] flex-col justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-10 shadow-[var(--shadow-soft)] lg:flex">
         <div>
           <div className="flex items-center gap-3">
-            <span
-              aria-hidden="true"
-              className="flex size-9 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-sm font-bold text-white shadow-[var(--shadow-button)]"
-            >
-              P
+            <span className="flex size-9 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-white shadow-[var(--shadow-button)]">
+              <AppIcon name="atom" size={21} />
             </span>
             <span className="font-mono text-sm tracking-[0.2em] text-[var(--color-text-secondary)]">
               PNX / TRAINING HUB
@@ -56,11 +55,8 @@ export function AuthShell({
       <section className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-lg items-center">
         <div className="w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-panel)] sm:p-8">
           <div className="mb-10 flex items-center gap-3 lg:hidden">
-            <span
-              aria-hidden="true"
-              className="flex size-9 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-sm font-bold text-white shadow-[var(--shadow-button)]"
-            >
-              P
+            <span className="flex size-9 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-white shadow-[var(--shadow-button)]">
+              <AppIcon name="atom" size={21} />
             </span>
             <span className="font-mono text-sm tracking-[0.2em] text-[var(--color-text-secondary)]">
               PNX / TRAINING HUB
