@@ -10,6 +10,7 @@ const { getOptionalUserMock, redirectMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   redirect: redirectMock,
 }));
 

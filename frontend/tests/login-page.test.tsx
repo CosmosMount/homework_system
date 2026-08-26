@@ -13,6 +13,7 @@ const { apiFetchMock, clearCsrfTokenMock, refreshMock, replaceMock } =
   }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({ refresh: refreshMock, replace: replaceMock }),
 }));
 

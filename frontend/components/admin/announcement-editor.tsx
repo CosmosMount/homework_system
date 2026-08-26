@@ -4,7 +4,7 @@ import { type FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { AnnouncementUploader } from "@/components/announcements/announcement-uploader";
-import { SafeHtml } from "@/components/announcements/safe-html";
+import { RenderedMarkdown } from "@/components/announcements/safe-html";
 import {
   buttonClassName,
   FormMessage,
@@ -512,14 +512,11 @@ export function AnnouncementEditor({
           </dl>
           {announcement?.body_html ? (
             <div className="mt-6 border-t border-[var(--color-border)] pt-5">
-              <p className="mb-4 font-mono text-xs text-[var(--color-text-muted)]">
-                SAVED PREVIEW
-              </p>
-              <SafeHtml sanitizedHtml={announcement.body_html} />
+              <RenderedMarkdown sanitizedHtml={announcement.body_html} />
             </div>
           ) : (
             <p className="mt-6 text-xs text-[var(--color-text-muted)]">
-              保存后由后端生成与学生详情一致的安全预览。
+              保存后会生成与学生详情一致的内容。
             </p>
           )}
         </section>

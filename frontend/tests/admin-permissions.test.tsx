@@ -29,6 +29,7 @@ const {
 }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/admin/assignments",
   useRouter: () => ({ refresh: vi.fn(), replace: vi.fn() }),
 }));
 
@@ -121,6 +122,10 @@ describe("admin permissions UI", () => {
       "href",
       "/admin/assignments",
     );
+    expect(screen.getByRole("link", { name: "作业管理" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     expect(screen.getByRole("link", { name: "登录人员" })).toHaveAttribute(
       "href",
       "/admin/sessions",
@@ -150,7 +155,7 @@ describe("admin permissions UI", () => {
     expect(requireAdminMock).toHaveBeenCalledOnce();
   });
 
-  it("renders saved Markdown as a sanitized HTML preview", () => {
+  it("keeps Markdown editing visible and renders the saved document without internal labels", () => {
     const draft: AssignmentAdmin = {
       ...assignment(),
       description_markdown: "# Electric Control Homework 1\n\n- task1\n- task2",
@@ -167,14 +172,16 @@ describe("admin permissions UI", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("heading", { name: "Markdown 渲染预览" }),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Markdown 作业说明")).toHaveValue(
+      "# Electric Control Homework 1\n\n- task1\n- task2",
+    );
     expect(
       screen.getByRole("heading", { name: "Electric Control Homework 1" }),
     ).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
     expect(screen.queryByText("# Electric Control Homework 1")).not.toBeInTheDocument();
+    expect(screen.queryByText("Markdown 渲染预览")).not.toBeInTheDocument();
+    expect(screen.queryByText("已清洗 HTML")).not.toBeInTheDocument();
   });
 
   it("publishes an assignment over HTTP when randomUUID is unavailable", async () => {

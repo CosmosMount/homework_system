@@ -1,0 +1,257 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useState } from "react";
+
+import { LogoutButton } from "@/components/auth/logout-button";
+import type { User } from "@/lib/api/types";
+
+type NavigationItem = Readonly<{
+  href: string;
+  label: string;
+  match: (pathname: string) => boolean;
+  badgeCount?: number;
+}>;
+
+type AppShellNavigationProps = Readonly<{
+  user: User;
+  unreadCount: number;
+}>;
+
+function matchesPath(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(href + "/");
+}
+
+function itemsForUser(user: User, unreadCount: number): NavigationItem[] {
+  const primary =
+    user.role === "admin"
+      ? [
+          { href: "/admin/dashboard", label: "管理概览" },
+          { href: "/admin/announcements", label: "通知管理" },
+          { href: "/admin/assignments", label: "作业管理" },
+          { href: "/admin/competitions", label: "赛事管理" },
+          { href: "/admin/users", label: "用户管理" },
+          { href: "/admin/categories", label: "届次与方向" },
+          { href: "/admin/sessions", label: "登录人员" },
+          { href: "/admin/mail", label: "邮件任务" },
+          { href: "/admin/audit", label: "审计日志" },
+        ]
+      : [
+          { href: "/dashboard", label: "工作台" },
+          { href: "/announcements", label: "通知", badgeCount: unreadCount },
+          { href: "/assignments", label: "作业" },
+          { href: "/competitions", label: "赛事" },
+        ];
+
+  return primary.map((item) => ({
+    ...item,
+    match: (pathname: string) => matchesPath(pathname, item.href),
+  }));
+}
+
+function NavigationLinks({
+  items,
+  pathname,
+  collapsed,
+  onNavigate,
+}: Readonly<{
+  items: NavigationItem[];
+  pathname: string;
+  collapsed: boolean;
+  onNavigate?: () => void;
+}>) {
+  return (
+    <nav aria-label="主要导航" className="min-w-0 flex-1 space-y-1 overflow-y-auto p-3">
+      {items.map((item) => {
+        const active = item.match(pathname);
+        const accessibleLabel =
+          item.badgeCount && item.badgeCount > 0
+            ? `${item.label}，${item.badgeCount} 条未读`
+            : item.label;
+        return (
+          <Link
+            aria-current={active ? "page" : undefined}
+            aria-label={accessibleLabel}
+            className={
+              "group relative flex h-10 min-w-0 items-center gap-3 rounded-lg px-3 text-sm font-medium text-[var(--color-text-secondary)] outline-none transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] " +
+              (active
+                ? "bg-[var(--color-surface-hover)] text-[var(--color-accent-hover)]"
+                : "") +
+              (collapsed ? " justify-center px-0" : "")
+            }
+            href={item.href}
+            key={item.href}
+            onClick={onNavigate}
+            title={collapsed ? accessibleLabel : undefined}
+          >
+            {active ? (
+              <span
+                aria-hidden="true"
+                className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-[var(--color-accent-fill)]"
+              />
+            ) : null}
+            <span aria-hidden="true" className="w-4 shrink-0 text-center text-xs text-[var(--color-accent)]">
+              {active ? "◆" : "•"}
+            </span>
+            <span className={collapsed ? "sr-only" : "min-w-0 truncate"}>
+              {item.label}
+            </span>
+            {item.badgeCount && item.badgeCount > 0 ? (
+              <span
+                aria-hidden="true"
+                className={
+                  "ml-auto min-w-5 rounded-full bg-[var(--color-accent-fill)] px-1.5 text-center font-mono text-xs text-white" +
+                  (collapsed ? " absolute right-1 top-1 size-2 min-w-0 overflow-hidden p-0 text-transparent" : "")
+                }
+              >
+                {item.badgeCount > 99 ? "99+" : item.badgeCount}
+              </span>
+            ) : null}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+function NavigationFooter({
+  collapsed,
+  onNavigate,
+  onToggle,
+}: Readonly<{
+  collapsed: boolean;
+  onNavigate?: () => void;
+  onToggle?: () => void;
+}>) {
+  return (
+    <div className="mt-auto space-y-1 border-t border-[var(--color-border)] p-3">
+      <Link
+        className={
+          "flex h-10 items-center gap-3 rounded-lg px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] " +
+          (collapsed ? "justify-center px-0" : "")
+        }
+        href="/profile"
+        onClick={onNavigate}
+        title={collapsed ? "个人资料" : undefined}
+      >
+        <span aria-hidden="true" className="w-4 shrink-0 text-center text-xs">●</span>
+        <span className={collapsed ? "sr-only" : ""}>个人资料</span>
+      </Link>
+      <Link
+        className={
+          "flex h-10 items-center gap-3 rounded-lg px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] " +
+          (collapsed ? "justify-center px-0" : "")
+        }
+        href="/sessions"
+        onClick={onNavigate}
+        title={collapsed ? "登录设备" : undefined}
+      >
+        <span aria-hidden="true" className="w-4 shrink-0 text-center text-xs">◌</span>
+        <span className={collapsed ? "sr-only" : ""}>登录设备</span>
+      </Link>
+      <div className={collapsed ? "flex justify-center" : ""} onClick={onNavigate}>
+        <LogoutButton />
+      </div>
+      {onToggle ? (
+        <button
+          aria-label={collapsed ? "展开主要导航" : "折叠主要导航"}
+          className="mt-1 flex h-10 w-full items-center justify-center gap-2 rounded-lg text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+          onClick={onToggle}
+          type="button"
+        >
+          <span aria-hidden="true">{collapsed ? "›" : "‹"}</span>
+          <span className={collapsed ? "sr-only" : ""}>折叠导航</span>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+export function AppShellNavigation({
+  user,
+  unreadCount,
+}: AppShellNavigationProps) {
+  const pathname = usePathname();
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const items = itemsForUser(user, unreadCount);
+  const homeHref = user.role === "admin" ? "/admin/dashboard" : "/dashboard";
+
+  return (
+    <>
+      <aside
+        aria-label="主要导航侧栏"
+        className={
+          "sticky top-0 hidden h-screen shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur transition-[width] duration-200 lg:flex " +
+          (collapsed ? "w-20" : "w-64")
+        }
+        data-state={collapsed ? "collapsed" : "expanded"}
+        data-testid="app-shell-sidebar"
+      >
+        <div className="flex h-20 shrink-0 items-center border-b border-[var(--color-border)] px-4">
+          <Link className="flex min-w-0 items-center gap-3" href={homeHref}>
+            <span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-sm bg-[var(--color-accent-fill)]" />
+            <span className={collapsed ? "sr-only" : "truncate font-mono text-sm tracking-[0.14em]"}>
+              PNX / TRAINING HUB
+            </span>
+          </Link>
+        </div>
+        <NavigationLinks collapsed={collapsed} items={items} pathname={pathname} />
+        <NavigationFooter collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)} />
+      </aside>
+
+      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 px-4 backdrop-blur lg:hidden">
+        <Link className="flex min-w-0 items-center gap-3" href={homeHref}>
+          <span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-sm bg-[var(--color-accent-fill)]" />
+          <span className="truncate font-mono text-xs tracking-[0.12em]">PNX / TRAINING HUB</span>
+        </Link>
+        <button
+          aria-label="打开主要导航"
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border-strong)] text-lg text-[var(--color-accent)] hover:bg-[var(--color-surface-hover)]"
+          onClick={() => setMobileOpen(true)}
+          type="button"
+        >
+          ☰
+        </button>
+      </div>
+
+      {mobileOpen ? (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <button
+            aria-label="关闭主要导航"
+            className="absolute inset-0 bg-[var(--color-text-primary)]/30"
+            onClick={() => setMobileOpen(false)}
+            type="button"
+          />
+          <aside
+            aria-label="主要导航侧栏"
+            className="relative flex h-full w-[min(20rem,calc(100vw-2rem))] flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-soft)]"
+          >
+            <div className="flex h-20 shrink-0 items-center justify-between border-b border-[var(--color-border)] px-4">
+              <Link className="flex min-w-0 items-center gap-3" href={homeHref} onClick={() => setMobileOpen(false)}>
+                <span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-sm bg-[var(--color-accent-fill)]" />
+                <span className="truncate font-mono text-sm tracking-[0.14em]">PNX / TRAINING HUB</span>
+              </Link>
+              <button
+                aria-label="关闭主要导航"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)]"
+                onClick={() => setMobileOpen(false)}
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+            <NavigationLinks
+              collapsed={false}
+              items={items}
+              onNavigate={() => setMobileOpen(false)}
+              pathname={pathname}
+            />
+            <NavigationFooter collapsed={false} onNavigate={() => setMobileOpen(false)} />
+          </aside>
+        </div>
+      ) : null}
+    </>
+  );
+}

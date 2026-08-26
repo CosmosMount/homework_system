@@ -7,6 +7,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import type { AnnouncementAdmin, User } from "@/lib/api/types";
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/announcements",
   useRouter: () => ({ refresh: vi.fn(), replace: vi.fn() }),
 }));
 
@@ -67,8 +68,35 @@ describe("announcement UI", () => {
       "href",
       "/announcements",
     );
+    expect(screen.getByRole("link", { name: /通知/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     expect(screen.getByText("3")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "用户管理" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("app-shell-sidebar")).toHaveAttribute(
+      "data-state",
+      "expanded",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "折叠主要导航" }));
+    expect(screen.getByTestId("app-shell-sidebar")).toHaveAttribute(
+      "data-state",
+      "collapsed",
+    );
+    expect(screen.getByRole("button", { name: "展开主要导航" })).toBeInTheDocument();
+  });
+
+  it("opens the sidebar drawer on narrow layouts", () => {
+    render(
+      <AppShell user={student}>
+        <p>内容</p>
+      </AppShell>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "打开主要导航" }));
+    expect(screen.getAllByRole("complementary", { name: "主要导航侧栏" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "关闭主要导航" })).toHaveLength(2);
   });
 
   it("renders backend-sanitized HTML as document structure", () => {

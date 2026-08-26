@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { type FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { MarkdownPreview } from "@/components/announcements/safe-html";
+import { RenderedMarkdown } from "@/components/announcements/safe-html";
 
 import {
   buttonClassName,
@@ -408,7 +408,9 @@ export function AssignmentEditor({
               value={descriptionMarkdown}
             />
           </label>
-          <MarkdownPreview sanitizedHtml={assignment?.description_html ?? null} />
+          <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4 shadow-[var(--shadow-soft)] sm:p-5">
+            <RenderedMarkdown sanitizedHtml={assignment?.description_html ?? null} />
+          </div>
           <label className="block text-sm font-medium">
             培训资料链接
             <input

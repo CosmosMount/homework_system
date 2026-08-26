@@ -13,6 +13,7 @@ const { csrfFetchMock, pushMock, refreshMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useRouter: () => ({
     push: pushMock,
     refresh: refreshMock,

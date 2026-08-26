@@ -7,13 +7,16 @@
 ### Changed
 - 管理员通知、作业和赛事列表页参考 `management_system` 的 `PageCommandBar`，统一使用紧凑页头与浅蓝创建按钮；新增 `AdminPageHeader`，不改变业务路由或权限。
 - 新增 `commandButtonClassName` 和 `commandLinkClassName`，创建入口统一为 `h-9`、`rounded-lg`、浅蓝底深蓝字，表单主按钮保持既有样式。
+- 登录后页面改用共享响应式侧边栏；桌面端可折叠，移动端可打开抽屉，管理员和学生沿用各自入口并显示当前 active 状态。
 
 ### Fixed
 - 修复 CI 严格 Mypy 对 `list_admin_sessions` 测试上下文的 `SimpleNamespace` 类型错误，以及通知测试中 `MailSender.calls` 属性推断的两个错误；修复范围仅限测试类型标注。
+- Markdown 编辑表单保留源文本输入，其他页面统一通过 `SafeHtml` 展示服务端安全 HTML；移除预览标题、清洗标记等内部实现文案，管理员编辑区与用户详情复用同一渲染路径。
 
 ### Operations
 - 后端认证/通知定向测试 14 项、Ruff 检查/格式检查、严格 Mypy 127 个源文件通过；前端 14 个测试文件 42 项测试、ESLint、严格 TypeScript 和 Next.js 生产构建通过。
 - 未修改 API 契约、权限规则、数据库结构、迁移或运行时业务逻辑。
+- 前端 14 个测试文件 43 项测试、ESLint、严格 TypeScript 和 Next.js 生产构建通过。
 
 ## 2026-08-25
 
