@@ -964,6 +964,14 @@ class CompetitionService:
         audit_context: CompetitionAuditContext,
     ) -> CompetitionDetailResponse:
         self._require_admin(audit_context.actor)
+        await self._competitions.acquire_campus_competition_lock()
+        current = await self._competitions.current_competition(for_update=True)
+        if current is not None:
+            await self._session.rollback()
+            raise self._conflict(
+                "CAMPUS_COMPETITION_EXISTS",
+                "当前校内赛已经存在，不能创建第二条未归档赛事。",
+            )
         now = self._clock()
         competition = Competition(
             id=uuid7(),

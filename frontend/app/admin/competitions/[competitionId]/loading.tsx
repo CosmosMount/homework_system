@@ -2,7 +2,7 @@ export default function AdminCompetitionLoading() {
   return (
     <main
       aria-busy="true"
-      aria-label="正在加载赛事管理页"
+      aria-label="正在加载校内赛管理页"
       className="mx-auto w-full max-w-7xl px-5 py-12 sm:px-8"
     >
       <div className="h-4 w-52 animate-pulse bg-[var(--color-surface-hover)]" />

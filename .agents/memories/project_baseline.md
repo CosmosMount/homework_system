@@ -24,3 +24,10 @@
 浏览器端作业/通知发布、正式版本和上传幂等操作已统一兼容普通局域网 HTTP：原生 `crypto.randomUUID()` 缺失时使用 Web Crypto `getRandomValues()` 生成 UUID v4。Frontend 新镜像和 Nginx 已重启，真实 Chromium 环境能力与回归测试一致。
 
 当前没有进行中的仓库开发任务；局域网 HTTP 作业发布兼容修复已完成并部署。现场上线仍须部署方提供受信域名/证书、异机加密备份目标、独立告警接收方和学校数据留存/灾难恢复制度，不能把临时 CA、本机目录或未经投递验收的 SMTP 配置当作已完成；只有用户表恰好一行且唯一账号已验证、处于 `active` 时才允许自动修正管理员，多账号无管理员的历史库仍必须走受控恢复。
+
+
+## 2026-08-27 增量记忆
+
+- 管理员所有页面统一使用 `AdminPageHeader`，通知、作业、校内赛及详情页共享返回入口、标题层级和操作区。
+- 赛事管理产品入口固定为“校内赛”：首页直接列出当前未归档赛事的队伍；首次配置路由只在没有当前赛事时可用。
+- `CompetitionRepository` 使用事务级 advisory lock 配合未归档查询，`CompetitionService.create_competition` 在已有当前赛事时返回 `CAMPUS_COMPETITION_EXISTS`；归档历史赛事和赛题兼容数据不删除。

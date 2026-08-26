@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminTeamCorrectionPanel } from "@/components/admin/team-correction-panel";
 import { AppShell } from "@/components/layout/app-shell";
 import {
@@ -28,19 +28,13 @@ export default async function AdminTeamPage({
 
   return (
     <AppShell user={admin}>
-      <Link
-        className="text-sm text-[var(--color-info)]"
-        href={"/admin/competitions/" + competitionId}
-      >
-        ← 返回赛事管理
-      </Link>
-      <p className="mt-6 font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
-        ADMIN / COMPETITIONS / TEAM
-      </p>
-      <h1 className="mt-3 text-3xl font-semibold tracking-tight">队伍详情</h1>
-      <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-        补录、移除、队长变更、人数豁免和取消资格都必须填写原因并进入审计。
-      </p>
+      <AdminPageHeader
+        backHref="/admin/competitions"
+        backLabel="返回校内赛"
+        eyebrow="ADMIN / CAMPUS COMPETITION / TEAM"
+        title="队伍详情"
+        description="补录、移除、队长变更、人数豁免和取消资格都必须填写原因并进入审计。"
+      />
       <AdminTeamCorrectionPanel initialTeam={team} users={users.items} />
     </AppShell>
   );

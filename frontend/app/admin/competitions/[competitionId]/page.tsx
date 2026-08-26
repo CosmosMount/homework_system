@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { CompetitionEditor } from "@/components/admin/competition-editor";
 import { AdminCompetitionRegistrationPanel } from "@/components/admin/competition-registration-panel";
 import { AppShell } from "@/components/layout/app-shell";
@@ -30,15 +31,13 @@ export default async function AdminCompetitionPage({
 
   return (
     <AppShell user={admin}>
-      <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
-        ADMIN / COMPETITIONS / DETAIL
-      </p>
-      <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-        编辑赛事
-      </h1>
-      <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-        revision 防止并发覆盖；锁队、人数失效和管理员纠错均由后端事务与审计保证。
-      </p>
+      <AdminPageHeader
+        backHref="/admin/competitions"
+        backLabel="返回校内赛"
+        eyebrow="ADMIN / CAMPUS COMPETITION / DETAIL"
+        title="校内赛设置"
+        description="revision 防止并发覆盖；锁队、人数失效和管理员纠错均由后端事务与审计保证。"
+      />
       <CompetitionEditor
         initialCompetition={competition}
         initialTeams={teams.items}

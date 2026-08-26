@@ -35,7 +35,7 @@ function itemsForUser(user: User, unreadCount: number): NavigationItem[] {
           { href: "/admin/dashboard", label: "管理概览", icon: "dashboard" },
           { href: "/admin/announcements", label: "通知管理", icon: "announcement" },
           { href: "/admin/assignments", label: "作业管理", icon: "assignment" },
-          { href: "/admin/competitions", label: "赛事管理", icon: "competition" },
+          { href: "/admin/competitions", label: "校内赛", icon: "competition" },
           { href: "/admin/users", label: "用户管理", icon: "users" },
           { href: "/admin/categories", label: "方向设置", icon: "categories" },
           { href: "/admin/sessions", label: "登录人员", icon: "monitor" },

@@ -262,6 +262,57 @@ async def test_archiving_preserves_ineligible_team_statuses() -> None:
 
 
 @pytest.mark.asyncio
+async def test_admin_cannot_create_second_current_campus_competition() -> None:
+    now = datetime.now(UTC)
+    admin_id = uuid4()
+    existing = make_competition(now, status="draft")
+    session = AsyncMock(spec=AsyncSession)
+    service = CompetitionService(
+        cast(AsyncSession, session),
+        Settings(app_env="test"),
+        clock=lambda: now,
+    )
+    service._competitions = cast(
+        CompetitionRepository,
+        SimpleNamespace(
+            acquire_campus_competition_lock=AsyncMock(),
+            current_competition=AsyncMock(return_value=existing),
+        ),
+    )
+    admin = cast(
+        AuthenticatedContext,
+        SimpleNamespace(
+            user=SimpleNamespace(id=admin_id, role="admin"),
+            session=object(),
+        ),
+    )
+    payload = CompetitionCreateRequest(
+        name="第二条赛事",
+        description_markdown="说明",
+        registration_start=now,
+        registration_end=now + timedelta(hours=1),
+        submission_start=now + timedelta(hours=1),
+        submission_end=now + timedelta(hours=2),
+        min_team_size=2,
+        max_team_size=4,
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.create_competition(
+            payload,
+            audit_context=CompetitionAuditContext(
+                actor=admin,
+                request_id="duplicate-campus-competition",
+                ip_prefix="127.0.0.0/24",
+            ),
+        )
+
+    assert blocked.value.status_code == 409
+    assert blocked.value.code == "CAMPUS_COMPETITION_EXISTS"
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_admin_can_publish_announcement_only_competition_without_tasks() -> None:
     now = datetime.now(UTC)
     admin_id = uuid4()

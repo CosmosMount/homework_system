@@ -15,6 +15,9 @@ from app.competitions.models import (
 from app.submissions.models import Submission
 from app.users.models import User
 
+_PNX_ADVISORY_LOCK_NAMESPACE = 5_267_800
+_CAMPUS_COMPETITION_RESOURCE = 2
+
 
 @dataclass(frozen=True, slots=True)
 class TeamMemberRecord:
@@ -66,6 +69,35 @@ class CompetitionRepository:
         self, competition_id: UUID, *, for_update: bool = False
     ) -> Competition | None:
         statement = select(Competition).where(Competition.id == competition_id)
+        if for_update:
+            statement = statement.with_for_update()
+        result: Competition | None = await self._session.scalar(statement)
+        return result
+
+    async def acquire_campus_competition_lock(self) -> None:
+        """Serialize creation of the single current campus competition."""
+        await self._session.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    _PNX_ADVISORY_LOCK_NAMESPACE,
+                    _CAMPUS_COMPETITION_RESOURCE,
+                )
+            )
+        )
+
+    async def current_competition(self, *, for_update: bool = False) -> Competition | None:
+        """Return the single non-archived campus competition, if configured.
+
+        Archived competitions remain available as historical records. The
+        product exposes only one current campus competition, so creation uses
+        this lookup before inserting another row.
+        """
+        statement = (
+            select(Competition)
+            .where(Competition.status != "archived")
+            .order_by(Competition.created_at.desc(), Competition.id.desc())
+            .limit(1)
+        )
         if for_update:
             statement = statement.with_for_update()
         result: Competition | None = await self._session.scalar(statement)

@@ -42,8 +42,8 @@
     │   ├── /admin/assignments/new
     │   └── /admin/assignments/[assignmentId]
     ├── /admin/submissions/[submissionId]
-    ├── /admin/competitions
-    │   ├── /admin/competitions/new
+    ├── /admin/competitions（当前校内赛与队伍）
+    │   ├── /admin/competitions/new（仅首次配置且无当前赛事时）
     │   ├── /admin/competitions/[competitionId]
     │   └── /admin/competitions/[competitionId]/teams/[teamId]
     ├── /admin/mail
@@ -71,7 +71,7 @@
 
 ## 管理员全局布局
 
-桌面使用左侧栏，依次包含概览、用户、方向设置、通知、作业、赛事、邮件任务和审计日志。管理员真实角色保持 `admin`，可通过侧栏底部“查看学生视图”切换当前 Session 的有效角色；学生视图隐藏管理入口，但后端仍独立鉴权，真实角色不会改变。
+桌面使用左侧栏，依次包含概览、用户、方向设置、通知、作业、校内赛、邮件任务和审计日志。校内赛入口直接展示当前未归档校内赛及队伍，不提供多赛事创建。管理员真实角色保持 `admin`，可通过侧栏底部“查看学生视图”切换当前 Session 的有效角色；学生视图隐藏管理入口，但后端仍独立鉴权，真实角色不会改变。
 
 移动端管理员页面使用可折叠抽屉；数据表切换为卡片或水平滚动，关键管理操作不隐藏在仅鼠标可发现的交互中。
 

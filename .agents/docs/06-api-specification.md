@@ -264,8 +264,8 @@
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /admin/competitions` | 搜索全部赛事和阶段统计 | COMP-001～COMP-006 |
-| `POST /admin/competitions` | 创建赛事草稿 | COMP-001～COMP-002 |
+| `GET /admin/competitions` | 搜索赛事和阶段统计；管理端前端默认只展示当前未归档校内赛，归档赛事保留为历史兼容记录 | COMP-001～COMP-006 |
+| `POST /admin/competitions` | 首次创建校内赛草稿；已有未归档校内赛时返回 `409 CAMPUS_COMPETITION_EXISTS` | COMP-001～COMP-002 |
 | `GET /admin/competitions/{id}` | 读取赛事、报名、队伍和提交汇总 | COMP-001～COMP-006 |
 | `PATCH /admin/competitions/{id}` | 修改尚未生效或允许延后的字段 | COMP-001～COMP-004 |
 | `POST /admin/competitions/{id}/publish` | 发布并按时间进入正确阶段 | COMP-002 |
