@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
+
 import { AssignmentEditor } from "@/components/admin/assignment-editor";
 import { AppShell } from "@/components/layout/app-shell";
 import {
@@ -32,13 +34,13 @@ export default async function EditAssignmentPage({
 
   return (
     <AppShell user={admin}>
-      <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
-        ADMIN / ASSIGNMENTS / EDIT
-      </p>
-      <h1 className="mt-3 text-3xl font-semibold tracking-tight">编辑作业</h1>
-      <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-        修改使用 revision；受众快照、正式版本和私密评语均由后端最终授权。
-      </p>
+      <AdminPageHeader
+        backHref="/admin/assignments"
+        backLabel="返回作业管理"
+        eyebrow="ADMIN / ASSIGNMENTS / EDIT"
+        title="编辑作业"
+        description="修改使用 revision；受众快照、正式版本和私密评语均由后端最终授权。"
+      />
       <AssignmentEditor
         directions={directions}
         initialAssignment={assignment}

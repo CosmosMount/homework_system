@@ -1,3 +1,4 @@
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AppShell } from "@/components/layout/app-shell";
 import { getAdminSessions, requireAdmin } from "@/lib/api/server";
 import type { AdminSession } from "@/lib/api/types";
@@ -34,9 +35,11 @@ export default async function AdminSessionsPage() {
   const [admin, sessions] = await Promise.all([requireAdmin(), getAdminSessions()]);
   return (
     <AppShell user={admin}>
-      <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">ADMIN / SESSIONS</p>
-      <h1 className="mt-3 text-3xl font-semibold tracking-tight">登录人员</h1>
-      <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">查看当前已登录的学生和管理员。仅展示脱敏设备、IP 网段和活动时间，不展示会话令牌。</p>
+      <AdminPageHeader
+        eyebrow="ADMIN / SESSIONS"
+        title="登录人员"
+        description="查看当前已登录的学生和管理员。仅展示脱敏设备、IP 网段和活动时间，不展示会话令牌。"
+      />
       <div className="mt-8 space-y-4">
         {sessions.map((session) => <SessionRow key={session.id} session={session} />)}
         {sessions.length === 0 ? <p className="border border-dashed border-[var(--color-border-strong)] p-8 text-center text-[var(--color-text-muted)]">当前没有活跃登录。</p> : null}

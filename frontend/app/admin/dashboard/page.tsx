@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
+
 import { AppShell } from "@/components/layout/app-shell";
 import {
   getAdminAnnouncements,
@@ -41,13 +43,11 @@ export default async function AdminDashboardPage() {
 
   return (
     <AppShell user={admin}>
-      <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
-        ADMIN / DASHBOARD
-      </p>
-      <h1 className="mt-3 text-3xl font-semibold tracking-tight">管理概览</h1>
-      <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-        汇总当前已落地的用户、通知、作业、可靠邮件与审计状态。这里不展示尚未实现的赛事假数据。
-      </p>
+      <AdminPageHeader
+        eyebrow="ADMIN / DASHBOARD"
+        title="管理概览"
+        description="汇总当前已落地的用户、通知、作业、可靠邮件与审计状态。这里不展示尚未实现的赛事假数据。"
+      />
 
       <section className="mt-8 grid gap-px border border-[var(--color-border)] bg-[var(--color-border)] sm:grid-cols-2 xl:grid-cols-3">
         {[

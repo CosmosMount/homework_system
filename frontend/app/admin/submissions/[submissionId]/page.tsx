@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 
+import { AdminPageHeader } from "@/components/admin/admin-page-header";
+
 import { SubmissionReview } from "@/components/admin/submission-review";
 import { AppShell } from "@/components/layout/app-shell";
 import {
@@ -42,15 +44,13 @@ export default async function AdminSubmissionPage({
 
   return (
     <AppShell user={admin}>
-      <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
-        ADMIN / SUBMISSIONS / REVIEW
-      </p>
-      <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-        {submission.assignment_id === null ? "审阅团队提交" : "审阅个人提交"}
-      </h1>
-      <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-        正式版本不可变；私密评语仅对个人所有者或当前团队成员与管理员可见，赛事版本不提供优秀标记。
-      </p>
+      <AdminPageHeader
+        backHref="/admin/dashboard"
+        backLabel="返回管理概览"
+        eyebrow="ADMIN / SUBMISSIONS / REVIEW"
+        title={submission.assignment_id === null ? "审阅团队提交" : "审阅个人提交"}
+        description="正式版本不可变；私密评语仅对个人所有者或当前团队成员与管理员可见，赛事版本不提供优秀标记。"
+      />
       <SubmissionReview
         assignmentTitle={resourceTitle}
         initialExcellent={excellent}
