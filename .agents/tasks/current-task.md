@@ -2,12 +2,12 @@
 
 ## 状态
 
-已完成：Markdown 展示统一、蓝白圆角主题换肤、管理员命令栏统一、侧边栏导航及 CI 类型检查修复。
+已完成：Markdown 展示统一、蓝白圆角主题换肤、纯白背景与整体 UI 优化、管理员命令栏统一、侧边栏导航及 CI 类型检查修复。
 
 ## 完成内容
 
 - 管理员作业编辑页保留 Markdown 源文本框，保存后的说明通过与用户详情相同的安全 HTML 渲染展示，不暴露内部实现标签。
-- 全局切换为蓝白配色，增加浅蓝背景、蓝色主操作、蓝灰边框、圆角控件/容器和柔和层次阴影。
+- 全局切换为蓝白配色，使用纯白页面背景、浅蓝交互表面、蓝色主操作、蓝灰边框、圆角控件/容器和柔和层次阴影。
 - 富文本预览补充标题、列表、链接、表格、代码块和引用样式，继续通过 `SafeHtml` 呈现，不新增前端 Markdown 解析器。
 - 增加管理员页面回归测试，覆盖预览结构、作业入口、个人资料保存和登录人员视图。
 
@@ -50,6 +50,18 @@
 - 管理员界面回归测试 7 项、完整前端 14 个测试文件 43 项测试、ESLint、严格 TypeScript 和 Next.js 生产构建均通过。
 - Frontend 镜像已重建并替换，Frontend 与 Nginx 已重启；Backend、Worker、PostgreSQL、MinIO 保持健康。
 - `/health/live`、`/health/ready`、`/health/worker`、`/nginx-health` 均返回 200；匿名访问 `/admin/assignments/new` 正确重定向到 `/login`。
+
+## 本次追加：纯白背景与整体 UI 优化
+
+- 页面根背景和 HTML 根节点改为纯白，移除网格/径向渐变，避免影响通知、作业与 Markdown 阅读。
+- 调整蓝灰色令牌、浅蓝主按钮、输入焦点环、卡片阴影、侧栏和认证页圆角，统一页面层级并保持管理员与学生共用布局。
+- 参考 `../management_system` 的轻边框、白色表面和紧凑层次，不修改业务 API、权限、数据库或 Markdown 清洗。
+
+## 本轮验证结果
+
+- 前端 14 个测试文件、47 项测试、ESLint、严格 TypeScript 和 Next.js 生产构建通过。
+- Frontend 已重建并替换，Frontend/Nginx 已重启；六个 Compose 服务健康，/health/live、/health/ready、/health/worker、/nginx-health 和 5000 端口登录页均返回 200。
+
 
 ## 正式计划
 

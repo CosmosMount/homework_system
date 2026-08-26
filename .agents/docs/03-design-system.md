@@ -2,7 +2,7 @@
 
 ## 视觉方向
 
-系统采用明亮的蓝白主色和清晰的信息层次，保留 PNX 的技术感与网格细节；蓝色承担主操作与链接，状态色保持语义区分，避免大面积霓虹、粒子尾迹、强烈 3D 和无边界装饰。
+系统采用明亮的蓝白主色和清晰的信息层次，使用纯白页面背景与轻量蓝灰层次表达分组；蓝色承担主操作与链接，状态色保持语义区分，避免大面积霓虹、粒子尾迹、强烈 3D 和无边界装饰。
 
 ## 设计令牌
 
@@ -10,21 +10,21 @@
 
 | 令牌 | 值 | 用途 |
 | --- | --- | --- |
-| `color.bg` | `#EEF6FF` | 页面背景 |
+| `color.bg` | `#FFFFFF` | 页面背景（纯白） |
 | `color.surface` | `#FFFFFF` | 主容器、侧栏 |
 | `color.surfaceRaised` | `#F8FBFF` | 卡片、弹窗 |
-| `color.surfaceHover` | `#E8F2FF` | 悬停状态 |
-| `color.textPrimary` | `#12314D` | 标题与正文 |
-| `color.textSecondary` | `#45647E` | 辅助信息 |
-| `color.textMuted` | `#6E8498` | 禁用和元数据 |
-| `color.border` | `rgba(31,91,145,0.16)` | 普通边框 |
-| `color.borderStrong` | `rgba(31,91,145,0.32)` | 强调边框 |
+| `color.surfaceHover` | `#EDF7FF` | 悬停状态 |
+| `color.textPrimary` | `#102F4A` | 标题与正文 |
+| `color.textSecondary` | `#48657D` | 辅助信息 |
+| `color.textMuted` | `#71869A` | 禁用和元数据 |
+| `color.border` | `rgba(31,91,145,0.14)` | 普通边框 |
+| `color.borderStrong` | `rgba(31,91,145,0.28)` | 强调边框 |
 | `color.accent` | `#1F6FB4` | 主操作、当前状态 |
 | `color.accentHover` | `#155995` | 主操作悬停 |
-| `color.actionFill` | #5BA2D9 | 浅蓝主按钮背景 |
-| `color.actionFillHover` | #4F96C9 | 主按钮悬停背景 |
+| `color.actionFill` | `#C9E5F8` | 浅蓝主按钮背景 |
+| `color.actionFillHover` | `#B2D9F2` | 主按钮悬停背景 |
 | `color.actionText` | #12314D | 主按钮文字 |
-| `color.actionBorder` | rgba(31,91,145,0.28) | 主按钮边框 |
+| `color.actionBorder` | `rgba(31,91,145,0.24)` | 主按钮边框 |
 | `color.success` | `#177D63` | 成功、已提交 |
 | `color.warning` | `#A56708` | 临近截止、等待文件校验 |
 | `color.danger` | `#B63848` | 错误、危险操作 |
@@ -41,6 +41,8 @@
 - 正文默认 16 px/1.7；数据表 14 px/1.5；辅助文本不小于 12 px。
 
 ### 尺寸
+
+- 页面根背景固定为纯白；卡片、侧栏和提示区域使用白色或极浅蓝表面，通过低对比度蓝灰边框与阴影建立层次。
 
 - 内容最大宽度：1440 px；普通阅读正文最大宽度：820 px。
 - 间距采用 4 px 基线：4、8、12、16、24、32、48、64。

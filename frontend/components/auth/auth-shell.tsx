@@ -15,7 +15,7 @@ export function AuthShell({
 }: AuthShellProps) {
   return (
     <main className="min-h-screen px-5 py-8 sm:px-8 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(420px,560px)] lg:gap-8 lg:px-12 lg:py-12">
-      <section className="hidden min-h-[calc(100vh-6rem)] flex-col justify-between border border-[var(--color-border)] bg-[var(--color-surface)] p-10 lg:flex">
+      <section className="hidden min-h-[calc(100vh-6rem)] flex-col justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-10 shadow-[var(--shadow-soft)] lg:flex">
         <div>
           <div className="flex items-center gap-3">
             <span
@@ -35,7 +35,7 @@ export function AuthShell({
             统一承载内部通知、培训作业、私密反馈与校内赛协作。培训知识库继续保持独立。
           </p>
         </div>
-        <div className="grid grid-cols-3 gap-px border border-[var(--color-border)] bg-[var(--color-border)]">
+        <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-border)]">
           {[
             ["01", "信息发布"],
             ["02", "版本提交"],

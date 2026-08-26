@@ -13,7 +13,7 @@ export function AppShell({
   unreadCount?: number;
 }>) {
   return (
-    <div className="min-h-screen lg:flex">
+    <div className="min-h-screen bg-[var(--color-bg)] lg:flex">
       <AppShellNavigation unreadCount={unreadCount} user={user} />
       <main className="min-w-0 flex-1">
         <div className="mx-auto w-full max-w-7xl px-5 py-8 sm:px-8 sm:py-12">

@@ -114,13 +114,13 @@ export function LoginForm() {
         {pending ? "正在登录…" : "登录"}
       </button>
       <div className="flex flex-wrap justify-between gap-3 text-sm text-[var(--color-text-secondary)]">
-        <Link className="hover:text-white" href="/register">
+        <Link className="hover:text-[var(--color-accent-hover)]" href="/register">
           注册账号
         </Link>
-        <Link className="hover:text-white" href="/forgot-password">
+        <Link className="hover:text-[var(--color-accent-hover)]" href="/forgot-password">
           忘记密码
         </Link>
-        <Link className="hover:text-white" href="/resend-verification">
+        <Link className="hover:text-[var(--color-accent-hover)]" href="/resend-verification">
           重新发送验证邮件
         </Link>
       </div>
@@ -225,7 +225,7 @@ export function RegisterForm() {
       </button>
       <p className="text-sm text-[var(--color-text-secondary)]">
         已有账号？{" "}
-        <Link className="text-white underline underline-offset-4" href="/login">
+        <Link className="text-[var(--color-info)] underline underline-offset-4 hover:text-[var(--color-accent-hover)]" href="/login">
           返回登录
         </Link>
       </p>

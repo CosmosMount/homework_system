@@ -239,7 +239,7 @@ export function AppShellNavigation({
       <aside
         aria-label="主要导航侧栏"
         className={
-          "sticky top-0 hidden h-screen shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur transition-[width] duration-200 lg:flex " +
+          "sticky top-0 hidden h-screen shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] shadow-[4px_0_24px_rgba(32,91,145,0.04)] transition-[width] duration-200 lg:flex " +
           (collapsed ? "w-20" : "w-64")
         }
         data-state={collapsed ? "collapsed" : "expanded"}
@@ -257,7 +257,7 @@ export function AppShellNavigation({
         <NavigationFooter user={user} collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)} />
       </aside>
 
-      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 px-4 backdrop-blur lg:hidden">
+      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 shadow-[0_3px_14px_rgba(32,91,145,0.05)] lg:hidden">
         <Link className="flex min-w-0 items-center gap-3" href={homeHref}>
           <span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-sm bg-[var(--color-accent-fill)]" />
           <span className="truncate font-mono text-xs tracking-[0.12em]">PNX / TRAINING HUB</span>

@@ -1,32 +1,32 @@
 @import "tailwindcss";
 
 :root {
-  --color-bg: #eef6ff;
+  --color-bg: #ffffff;
   --color-surface: #ffffff;
   --color-surface-raised: #f8fbff;
-  --color-surface-hover: #e8f2ff;
-  --color-text-primary: #12314d;
-  --color-text-secondary: #45647e;
-  --color-text-muted: #6e8498;
-  --color-border: rgba(31, 91, 145, 0.16);
-  --color-border-strong: rgba(31, 91, 145, 0.32);
+  --color-surface-hover: #edf7ff;
+  --color-text-primary: #102f4a;
+  --color-text-secondary: #48657d;
+  --color-text-muted: #71869a;
+  --color-border: rgba(31, 91, 145, 0.14);
+  --color-border-strong: rgba(31, 91, 145, 0.28);
   --color-accent: #1f6fb4;
   --color-accent-hover: #155995;
   --color-accent-fill: #216db3;
   --color-accent-fill-hover: #185a99;
-  --color-action-fill: #5ba2d9;
-  --color-action-fill-hover: #4f96c9;
+  --color-action-fill: #c9e5f8;
+  --color-action-fill-hover: #b2d9f2;
   --color-action-text: #12314d;
-  --color-action-border: rgba(31, 91, 145, 0.28);
+  --color-action-border: rgba(31, 91, 145, 0.24);
   --color-success: #177d63;
   --color-warning: #a56708;
   --color-danger: #b63848;
   --color-info: #1d70b8;
   --focus-ring: #125b9a;
-  --shadow-soft: 0 10px 30px rgba(32, 91, 145, 0.1);
-  --shadow-card: 0 4px 18px rgba(32, 91, 145, 0.07);
-  --shadow-button: 0 4px 12px rgba(32, 91, 145, 0.14);
-  --shadow-button-hover: 0 8px 18px rgba(32, 91, 145, 0.2);
+  --shadow-soft: 0 16px 40px rgba(32, 91, 145, 0.12);
+  --shadow-card: 0 4px 18px rgba(32, 91, 145, 0.06);
+  --shadow-button: 0 3px 10px rgba(32, 91, 145, 0.11);
+  --shadow-button-hover: 0 7px 18px rgba(32, 91, 145, 0.17);
 }
 
 * {
@@ -35,22 +35,19 @@
 
 html {
   color-scheme: light;
-  background: var(--color-bg);
+  background: #ffffff;
 }
 
 body {
   min-height: 100vh;
   margin: 0;
   color: var(--color-text-primary);
-  background:
-    linear-gradient(rgba(44, 111, 171, 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(44, 111, 171, 0.06) 1px, transparent 1px),
-    radial-gradient(circle at 82% 8%, rgba(93, 170, 225, 0.24), transparent 32rem),
-    var(--color-bg);
-  background-size: 32px 32px, 32px 32px, auto, auto;
+  background: #ffffff;
   font-family:
     Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 a {
@@ -63,6 +60,24 @@ select,
 textarea {
   font: inherit;
   border-radius: 0.75rem;
+}
+
+input,
+select,
+textarea {
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--color-accent-fill);
+}
+
+textarea {
+  line-height: 1.65;
 }
 
 button {
@@ -86,6 +101,20 @@ button {
 :focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
+}
+
+:where(input, select, textarea):focus-visible {
+  outline: none;
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px rgba(18, 91, 154, 0.14);
+}
+
+:where(
+  section[class*="bg-[var(--color-surface)]"],
+  article[class*="bg-[var(--color-surface)]"],
+  aside[class*="bg-[var(--color-surface)]"]
+) {
+  box-shadow: var(--shadow-card);
 }
 
 ::selection {
