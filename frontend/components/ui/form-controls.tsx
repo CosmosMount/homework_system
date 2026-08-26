@@ -1,7 +1,7 @@
 import type { InputHTMLAttributes, ReactNode } from "react";
 
 export const inputClassName =
-  "mt-2 min-h-11 w-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] disabled:cursor-not-allowed disabled:opacity-60";
+  "mt-2 min-h-11 w-full border border-[var(--color-border-strong)] bg-[var(--color-surface-raised)] px-3 text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] hover:border-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-60";
 
 export const buttonClassName =
   "inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[var(--color-action-border)] bg-[var(--color-action-fill)] px-5 font-semibold text-[var(--color-action-text)] shadow-[var(--shadow-button)] transition duration-200 hover:-translate-y-0.5 hover:bg-[var(--color-action-fill-hover)] hover:shadow-[var(--shadow-button-hover)] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 disabled:hover:shadow-[var(--shadow-button)]";

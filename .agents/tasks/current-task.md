@@ -2,7 +2,7 @@
 
 ## 状态
 
-已完成：Markdown 展示统一、蓝白圆角主题换肤、纯白背景与整体 UI 优化、管理员命令栏统一、侧边栏导航及 CI 类型检查修复。
+已完成：Markdown 展示统一、蓝白圆角主题换肤、纯白背景与共享布局视觉细化、管理员命令栏统一、侧边栏导航及 CI 类型检查修复。
 
 ## 完成内容
 
@@ -63,6 +63,17 @@
 - Frontend 已重建并替换，Frontend/Nginx 已重启；六个 Compose 服务健康，/health/live、/health/ready、/health/worker、/nginx-health 和 5000 端口登录页均返回 200。
 
 
+## 本次追加：共享布局与视觉层次细化
+
+- 共享侧栏改用首字母圆角导航图标与 active 卡片状态，底部增加姓名和有效角色身份卡；退出、学生视图、个人资料和登录设备入口统一触控尺寸与交互反馈。
+- 认证页增加白色圆角表单卡片和 PNX 品牌标识；面板、输入控件、标题排版与滚动条细节统一为纯白背景下的蓝白视觉层次。
+- 不修改 API、权限、数据库、Markdown 清洗或业务状态机。
+
+## 本轮验证结果
+
+- 前端 14 个测试文件、47 项测试、ESLint、严格 TypeScript 和 Next.js 生产构建通过。
+- Frontend/Nginx 已重建重启；Backend、Worker、PostgreSQL、MinIO、Frontend 和 Nginx 六个 Compose 服务健康，健康端点与 5000 端口登录页均返回 200。
+
 ## 正式计划
 
 - .agents/plans/plan_markdown_preview_blue_white_theme.md
@@ -70,6 +81,7 @@
 - .agents/plans/plan_sidebar_markdown_rendering.md
 - .agents/plans/plan_assignment_editor_visibility.md
 - .agents/plans/plan_admin_student_view.md
+- .agents/plans/plan_ui_visual_refinement.md
 
 ## 本次追加：赛事公告与组队简化
 

@@ -64,7 +64,7 @@ function NavigationLinks({
   onNavigate?: () => void;
 }>) {
   return (
-    <nav aria-label="主要导航" className="min-w-0 flex-1 space-y-1 overflow-y-auto p-3">
+    <nav aria-label="主要导航" className="min-w-0 flex-1 space-y-1.5 overflow-y-auto p-3">
       {items.map((item) => {
         const active = item.match(pathname);
         const accessibleLabel =
@@ -76,9 +76,9 @@ function NavigationLinks({
             aria-current={active ? "page" : undefined}
             aria-label={accessibleLabel}
             className={
-              "group relative flex h-10 min-w-0 items-center gap-3 rounded-lg px-3 text-sm font-medium text-[var(--color-text-secondary)] outline-none transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] " +
+              "group relative flex h-11 min-w-0 items-center gap-3 rounded-xl border border-transparent px-3 text-sm font-medium text-[var(--color-text-secondary)] outline-none transition-[color,background-color,border-color,box-shadow,transform] duration-150 hover:-translate-y-px hover:border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] " +
               (active
-                ? "bg-[var(--color-surface-hover)] text-[var(--color-accent-hover)]"
+                ? "border-[var(--color-border)] bg-[var(--color-surface-hover)] text-[var(--color-accent-hover)] shadow-[var(--shadow-card)]"
                 : "") +
               (collapsed ? " justify-center px-0" : "")
             }
@@ -93,8 +93,16 @@ function NavigationLinks({
                 className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-[var(--color-accent-fill)]"
               />
             ) : null}
-            <span aria-hidden="true" className="w-4 shrink-0 text-center text-xs text-[var(--color-accent)]">
-              {active ? "◆" : "•"}
+            <span
+              aria-hidden="true"
+              className={
+                "flex size-7 shrink-0 items-center justify-center rounded-lg text-[0.7rem] font-semibold transition-colors " +
+                (active
+                  ? "bg-[var(--color-accent-fill)] text-white shadow-[var(--shadow-button)]"
+                  : "bg-[var(--color-surface-raised)] text-[var(--color-accent)] group-hover:bg-[var(--color-action-fill)]")
+              }
+            >
+              {item.label.slice(0, 1)}
             </span>
             <span className={collapsed ? "sr-only" : "min-w-0 truncate"}>
               {item.label}
@@ -152,7 +160,7 @@ function StudentViewToggle({
       <button
         aria-label={label}
         className={
-          "flex h-10 w-full items-center gap-3 rounded-lg px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-50 " +
+          "flex h-10 w-full items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-50 " +
           (collapsed ? "justify-center px-0" : "")
         }
         disabled={pending}
@@ -160,7 +168,7 @@ function StudentViewToggle({
         title={collapsed ? label : undefined}
         type="button"
       >
-        <span aria-hidden="true" className="w-4 shrink-0 text-center text-xs">{viewingStudent ? "↩" : "◇"}</span>
+        <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--color-action-fill)] text-xs font-semibold text-[var(--color-action-text)]">{viewingStudent ? "返" : "学"}</span>
         <span className={collapsed ? "sr-only" : ""}>{pending ? "切换中…" : label}</span>
       </button>
       {error && !collapsed ? <p className="px-3 text-xs text-[var(--color-danger)]" role="alert">{error}</p> : null}
@@ -179,40 +187,56 @@ function NavigationFooter({
   onNavigate?: () => void;
   onToggle?: () => void;
 }>) {
+  const roleLabel =
+    user.role === "admin"
+      ? user.student_view
+        ? "学生视图"
+        : "管理员"
+      : "学生";
+
   return (
     <div className="mt-auto space-y-1 border-t border-[var(--color-border)] p-3">
+      <div className={"mb-2 flex items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] " + (collapsed ? "justify-center p-2" : "p-3")}>
+        <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-action-fill)] text-sm font-semibold text-[var(--color-action-text)]">
+          {user.full_name.slice(0, 1)}
+        </span>
+        <div className={collapsed ? "sr-only" : "min-w-0"}>
+          <p className="truncate text-sm font-semibold">{user.full_name}</p>
+          <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">{roleLabel}</p>
+        </div>
+      </div>
       <StudentViewToggle collapsed={collapsed} user={user} />
       <Link
         className={
-          "flex h-10 items-center gap-3 rounded-lg px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] " +
+          "flex h-11 items-center gap-3 rounded-xl px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] " +
           (collapsed ? "justify-center px-0" : "")
         }
         href="/profile"
         onClick={onNavigate}
         title={collapsed ? "个人资料" : undefined}
       >
-        <span aria-hidden="true" className="w-4 shrink-0 text-center text-xs">●</span>
+        <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--color-surface-raised)] text-xs font-semibold text-[var(--color-accent)]">我</span>
         <span className={collapsed ? "sr-only" : ""}>个人资料</span>
       </Link>
       <Link
         className={
-          "flex h-10 items-center gap-3 rounded-lg px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] " +
+          "flex h-11 items-center gap-3 rounded-xl px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] " +
           (collapsed ? "justify-center px-0" : "")
         }
         href="/sessions"
         onClick={onNavigate}
         title={collapsed ? "登录设备" : undefined}
       >
-        <span aria-hidden="true" className="w-4 shrink-0 text-center text-xs">◌</span>
+        <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[var(--color-surface-raised)] text-xs font-semibold text-[var(--color-accent)]">设</span>
         <span className={collapsed ? "sr-only" : ""}>登录设备</span>
       </Link>
       <div className={collapsed ? "flex justify-center" : ""} onClick={onNavigate}>
-        <LogoutButton />
+        <LogoutButton collapsed={collapsed} />
       </div>
       {onToggle ? (
         <button
           aria-label={collapsed ? "展开主要导航" : "折叠主要导航"}
-          className="mt-1 flex h-10 w-full items-center justify-center gap-2 rounded-lg text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+          className="mt-1 flex h-10 w-full items-center justify-center gap-2 rounded-xl text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
           onClick={onToggle}
           type="button"
         >
@@ -247,7 +271,7 @@ export function AppShellNavigation({
       >
         <div className="flex h-20 shrink-0 items-center border-b border-[var(--color-border)] px-4">
           <Link className="flex min-w-0 items-center gap-3" href={homeHref}>
-            <span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-sm bg-[var(--color-accent-fill)]" />
+            <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-sm font-bold text-white shadow-[var(--shadow-button)]">P</span>
             <span className={collapsed ? "sr-only" : "truncate font-mono text-sm tracking-[0.14em]"}>
               PNX / TRAINING HUB
             </span>
@@ -259,7 +283,7 @@ export function AppShellNavigation({
 
       <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 shadow-[0_3px_14px_rgba(32,91,145,0.05)] lg:hidden">
         <Link className="flex min-w-0 items-center gap-3" href={homeHref}>
-          <span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-sm bg-[var(--color-accent-fill)]" />
+          <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-sm font-bold text-white shadow-[var(--shadow-button)]">P</span>
           <span className="truncate font-mono text-xs tracking-[0.12em]">PNX / TRAINING HUB</span>
         </Link>
         <button
@@ -286,7 +310,7 @@ export function AppShellNavigation({
           >
             <div className="flex h-20 shrink-0 items-center justify-between border-b border-[var(--color-border)] px-4">
               <Link className="flex min-w-0 items-center gap-3" href={homeHref} onClick={() => setMobileOpen(false)}>
-                <span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-sm bg-[var(--color-accent-fill)]" />
+                <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-sm font-bold text-white shadow-[var(--shadow-button)]">P</span>
                 <span className="truncate font-mono text-sm tracking-[0.14em]">PNX / TRAINING HUB</span>
               </Link>
               <button

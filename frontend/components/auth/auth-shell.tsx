@@ -14,14 +14,16 @@ export function AuthShell({
   children,
 }: AuthShellProps) {
   return (
-    <main className="min-h-screen px-5 py-8 sm:px-8 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(420px,560px)] lg:gap-8 lg:px-12 lg:py-12">
+    <main className="min-h-screen bg-[var(--color-bg)] px-5 py-8 sm:px-8 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(420px,560px)] lg:gap-8 lg:px-12 lg:py-12">
       <section className="hidden min-h-[calc(100vh-6rem)] flex-col justify-between rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-10 shadow-[var(--shadow-soft)] lg:flex">
         <div>
           <div className="flex items-center gap-3">
             <span
               aria-hidden="true"
-              className="h-3 w-3 bg-[var(--color-accent-fill)]"
-            />
+              className="flex size-9 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-sm font-bold text-white shadow-[var(--shadow-button)]"
+            >
+              P
+            </span>
             <span className="font-mono text-sm tracking-[0.2em] text-[var(--color-text-secondary)]">
               PNX / TRAINING HUB
             </span>
@@ -52,12 +54,14 @@ export function AuthShell({
       </section>
 
       <section className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-lg items-center">
-        <div className="w-full">
+        <div className="w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-panel)] sm:p-8">
           <div className="mb-10 flex items-center gap-3 lg:hidden">
             <span
               aria-hidden="true"
-              className="h-3 w-3 bg-[var(--color-accent-fill)]"
-            />
+              className="flex size-9 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-sm font-bold text-white shadow-[var(--shadow-button)]"
+            >
+              P
+            </span>
             <span className="font-mono text-sm tracking-[0.2em] text-[var(--color-text-secondary)]">
               PNX / TRAINING HUB
             </span>
