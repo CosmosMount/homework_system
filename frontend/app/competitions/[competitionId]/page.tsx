@@ -9,11 +9,12 @@ import {
   getDashboard,
   requireUser,
 } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 import {
   competitionStatusLabel,
   statusTagClass,
 } from "@/lib/competition-labels";
-import { formatDateTime, formatFileSize } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 
 type CompetitionDetailPageProps = Readonly<{
   params: Promise<{ competitionId: string }>;
@@ -27,7 +28,7 @@ export default async function CompetitionDetailPage({
     requireUser(),
     getDashboard(),
   ]);
-  if (user.role === "admin") {
+  if (isAdminView(user)) {
     redirect("/admin/competitions/" + competitionId);
   }
   const competition = await getCompetition(competitionId);
@@ -67,7 +68,7 @@ export default async function CompetitionDetailPage({
               </dd>
             </div>
             <div>
-              <dt className="text-[var(--color-text-muted)]">提交窗口</dt>
+              <dt className="text-[var(--color-text-muted)]">赛事时间</dt>
               <dd className="mt-1">
                 {formatDateTime(competition.submission_start)}
                 <br />至 {formatDateTime(competition.submission_end)}
@@ -101,61 +102,9 @@ export default async function CompetitionDetailPage({
 
       <div className="mx-auto mt-10 max-w-4xl">
         <CompetitionRegistrationActions competition={competition} />
-
-        <section className="mt-8">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <h2 className="text-2xl font-semibold">赛题 / 交付项</h2>
-              <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-                各赛题截止独立；正式版本不可修改，当前团队成员均可查看团队评语。
-              </p>
-            </div>
-            <span className="font-mono text-xs text-[var(--color-text-muted)]">
-              {competition.tasks.length} tasks
-            </span>
-          </div>
-          {competition.tasks.length ? (
-            <div className="mt-4 space-y-3">
-              {competition.tasks.map((task) => (
-                <Link
-                  className="block border border-[var(--color-border)] bg-[var(--color-surface)] p-5"
-                  href={
-                    "/competitions/" +
-                    competition.id +
-                    "/tasks/" +
-                    task.id
-                  }
-                  key={task.id}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div>
-                      <p className="font-medium">{task.title}</p>
-                      <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-                        {task.allowed_extensions.join(", ")} ·{" "}
-                        {formatFileSize(task.max_total_bytes)}
-                      </p>
-                      {task.submission_id ? (
-                        <span className="mt-3 inline-block border border-[var(--color-success)] px-2 py-0.5 font-mono text-xs text-[var(--color-success)]">
-                          已有团队正式版本
-                        </span>
-                      ) : null}
-                    </div>
-                    <time
-                      className="font-mono text-xs text-[var(--color-text-muted)]"
-                      dateTime={task.deadline}
-                    >
-                      截止 {formatDateTime(task.deadline)}
-                    </time>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-4 border border-dashed border-[var(--color-border-strong)] p-6 text-center text-[var(--color-text-muted)]">
-              尚未配置赛题。
-            </p>
-          )}
-        </section>
+        <p className="mt-8 border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-secondary)]">
+          本赛事仅用于发布校内赛公告和完成报名组队，不设置赛题或作品提交。
+        </p>
       </div>
     </AppShell>
   );

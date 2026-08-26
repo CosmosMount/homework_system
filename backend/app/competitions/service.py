@@ -1112,12 +1112,6 @@ class CompetitionService:
         if competition.status != "draft":
             await self._session.rollback()
             raise self._conflict("STATE_CONFLICT", "赛事已经发布。")
-        if not await self._competitions.tasks(competition.id):
-            await self._session.rollback()
-            raise self._conflict(
-                "COMPETITION_TASK_REQUIRED",
-                "发布赛事前至少需要一个赛题。",
-            )
         now = self._clock()
         competition.published_at = now
         competition.status = "registration_open"

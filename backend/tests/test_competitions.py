@@ -262,6 +262,50 @@ async def test_archiving_preserves_ineligible_team_statuses() -> None:
 
 
 @pytest.mark.asyncio
+async def test_admin_can_publish_announcement_only_competition_without_tasks() -> None:
+    now = datetime.now(UTC)
+    admin_id = uuid4()
+    competition = make_competition(now, status="draft")
+    session = AsyncMock(spec=AsyncSession)
+    service = CompetitionService(
+        cast(AsyncSession, session),
+        Settings(app_env="test"),
+        clock=lambda: now,
+    )
+    service._competitions = cast(
+        CompetitionRepository,
+        SimpleNamespace(
+            get_competition=AsyncMock(return_value=competition),
+            tasks=AsyncMock(return_value=[]),
+            get_registration=AsyncMock(return_value=None),
+            team_for_user=AsyncMock(return_value=None),
+        ),
+    )
+    service._audit = cast(AuditRepository, SimpleNamespace(add=Mock()))
+    admin = cast(
+        AuthenticatedContext,
+        SimpleNamespace(
+            user=SimpleNamespace(id=admin_id, role="admin"),
+            session=object(),
+        ),
+    )
+
+    result = await service.publish_competition(
+        competition.id,
+        audit_context=CompetitionAuditContext(
+            actor=admin,
+            request_id="publish-announcement-only",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    assert result.id == competition.id
+    assert competition.status == "registration_open"
+    assert competition.published_at == now
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_admin_registration_disqualification_blocks_reregistration_and_team() -> None:
     now = datetime.now(UTC)
     admin_id = uuid4()

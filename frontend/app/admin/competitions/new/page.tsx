@@ -11,7 +11,7 @@ export default async function NewCompetitionPage() {
       </p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">新建赛事</h1>
       <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-        先保存赛事草稿，再创建至少一个赛题并发布；所有阶段只能单向推进。
+        填写公告、报名时间和组队人数后即可发布；赛事阶段只能单向推进。
       </p>
       <CompetitionEditor initialCompetition={null} initialTeams={[]} />
     </AppShell>

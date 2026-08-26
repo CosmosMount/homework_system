@@ -14,12 +14,16 @@ export type User = {
   full_name: string;
   role: Role;
   status: UserStatus;
+  student_view?: boolean;
   cohort: CategorySummary | null;
   direction: CategorySummary | null;
   email_verified_at: string | null;
   created_at: string;
   revision: number;
 };
+export function isAdminView(user: User): boolean {
+  return user.role === "admin" && user.student_view !== true;
+}
 
 export type UserPage = {
   items: User[];

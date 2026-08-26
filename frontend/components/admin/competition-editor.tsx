@@ -14,14 +14,13 @@ import type {
   AdminCompetitionDetail,
   AdminTeamListItem,
   CompetitionDetail,
-  CompetitionTask,
 } from "@/lib/api/types";
 import {
   competitionStatusLabel,
   statusTagClass,
   teamStatusLabel,
 } from "@/lib/competition-labels";
-import { formatDateTime, formatFileSize } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 
 function localDateTime(value: string | null): string {
   if (value === null) return "";
@@ -34,187 +33,11 @@ function apiDateTime(value: string): string {
   return new Date(value).toISOString();
 }
 
-function extensionList(value: string): string[] {
-  return value
-    .split(",")
-    .map((extension) => extension.trim().toLowerCase().replace(/^\./, ""))
-    .filter(Boolean);
-}
 
 function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "操作失败，请稍后重试。";
 }
 
-function TaskEditor({
-  task,
-  editable,
-  onSaved,
-}: Readonly<{
-  task: CompetitionTask;
-  editable: boolean;
-  onSaved: (task: CompetitionTask) => void;
-}>) {
-  const [title, setTitle] = useState(task.title);
-  const [description, setDescription] = useState(task.description_markdown);
-  const [resourceUrl, setResourceUrl] = useState(task.resource_url ?? "");
-  const [extensions, setExtensions] = useState(
-    task.allowed_extensions.join(", "),
-  );
-  const [maxBytes, setMaxBytes] = useState(String(task.max_total_bytes));
-  const [deadline, setDeadline] = useState(localDateTime(task.deadline));
-  const [displayOrder, setDisplayOrder] = useState(String(task.display_order));
-  const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
-  async function save() {
-    const parsedExtensions = extensionList(extensions);
-    const parsedBytes = Number(maxBytes);
-    const parsedOrder = Number(displayOrder);
-    if (
-      !title.trim() ||
-      !description.trim() ||
-      !deadline ||
-      parsedExtensions.length === 0 ||
-      !Number.isSafeInteger(parsedBytes) ||
-      parsedBytes < 1 ||
-      parsedBytes > 2_147_483_648 ||
-      !Number.isSafeInteger(parsedOrder) ||
-      parsedOrder < 0
-    ) {
-      setMessage("请完整填写赛题字段，并检查附件限制和显示顺序。");
-      return;
-    }
-    setPending(true);
-    setMessage(null);
-    try {
-      const saved = await csrfFetch<CompetitionTask>(
-        "/admin/competition-tasks/" + task.id,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            title: title.trim(),
-            description_markdown: description.trim(),
-            resource_url: resourceUrl.trim() || null,
-            allowed_extensions: parsedExtensions,
-            max_total_bytes: parsedBytes,
-            deadline: apiDateTime(deadline),
-            display_order: parsedOrder,
-            revision: task.revision,
-          }),
-        },
-      );
-      onSaved(saved);
-      setMessage("赛题已保存。");
-    } catch (nextError) {
-      setMessage(errorMessage(nextError));
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <details className="border border-[var(--color-border)] p-4">
-      <summary className="cursor-pointer font-medium">
-        {task.title}
-        <span className="ml-3 font-mono text-xs text-[var(--color-text-muted)]">
-          order {task.display_order} · revision {task.revision}
-        </span>
-      </summary>
-      <div className="mt-5 grid gap-4 md:grid-cols-2">
-        <label className="text-sm md:col-span-2">
-          标题
-          <input
-            className={inputClassName}
-            disabled={!editable || pending}
-            maxLength={200}
-            onChange={(event) => setTitle(event.target.value)}
-            value={title}
-          />
-        </label>
-        <label className="text-sm md:col-span-2">
-          Markdown 说明
-          <textarea
-            className={inputClassName + " min-h-40 py-3 font-mono text-sm"}
-            disabled={!editable || pending}
-            maxLength={200000}
-            onChange={(event) => setDescription(event.target.value)}
-            value={description}
-          />
-        </label>
-        <label className="text-sm">
-          资料链接
-          <input
-            className={inputClassName}
-            disabled={!editable || pending}
-            onChange={(event) => setResourceUrl(event.target.value)}
-            type="url"
-            value={resourceUrl}
-          />
-        </label>
-        <label className="text-sm">
-          允许扩展名
-          <input
-            className={inputClassName}
-            disabled={!editable || pending}
-            onChange={(event) => setExtensions(event.target.value)}
-            value={extensions}
-          />
-        </label>
-        <label className="text-sm">
-          附件上限（字节）
-          <input
-            className={inputClassName}
-            disabled={!editable || pending}
-            max={2147483648}
-            min={1}
-            onChange={(event) => setMaxBytes(event.target.value)}
-            type="number"
-            value={maxBytes}
-          />
-        </label>
-        <label className="text-sm">
-          截止时间
-          <input
-            className={inputClassName}
-            disabled={!editable || pending}
-            onChange={(event) => setDeadline(event.target.value)}
-            type="datetime-local"
-            value={deadline}
-          />
-        </label>
-        <label className="text-sm">
-          显示顺序
-          <input
-            className={inputClassName}
-            disabled={!editable || pending}
-            min={0}
-            onChange={(event) => setDisplayOrder(event.target.value)}
-            type="number"
-            value={displayOrder}
-          />
-        </label>
-        <div className="flex items-end">
-          <button
-            className={buttonClassName}
-            disabled={!editable || pending}
-            onClick={save}
-            type="button"
-          >
-            {pending ? "保存中…" : "保存赛题"}
-          </button>
-        </div>
-        {message ? (
-          <p
-            aria-live="polite"
-            className="text-sm text-[var(--color-text-muted)] md:col-span-2"
-          >
-            {message}
-          </p>
-        ) : null}
-      </div>
-    </details>
-  );
-}
 
 export function CompetitionEditor({
   initialCompetition,
@@ -227,7 +50,6 @@ export function CompetitionEditor({
   const [competition, setCompetition] = useState<CompetitionDetail | null>(
     initialCompetition,
   );
-  const [tasks, setTasks] = useState(initialCompetition?.tasks ?? []);
   const [name, setName] = useState(initialCompetition?.name ?? "");
   const [description, setDescription] = useState(
     initialCompetition?.description_markdown ?? "",
@@ -253,13 +75,6 @@ export function CompetitionEditor({
   const [maxTeamSize, setMaxTeamSize] = useState(
     String(initialCompetition?.max_team_size ?? 4),
   );
-  const [newTaskTitle, setNewTaskTitle] = useState("");
-  const [newTaskDescription, setNewTaskDescription] = useState("");
-  const [newTaskResourceUrl, setNewTaskResourceUrl] = useState("");
-  const [newTaskExtensions, setNewTaskExtensions] = useState("pdf, zip");
-  const [newTaskMaxBytes, setNewTaskMaxBytes] = useState("2147483648");
-  const [newTaskDeadline, setNewTaskDeadline] = useState("");
-  const [newTaskOrder, setNewTaskOrder] = useState(String(tasks.length));
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -285,7 +100,7 @@ export function CompetitionEditor({
         new Date(submissionStart) < new Date(submissionEnd)
       )
     ) {
-      setError("时间必须满足报名开始 < 报名结束 ≤ 提交开始 < 提交结束。");
+      setError("时间必须满足报名开始 < 报名结束 ≤ 组队锁定时间 < 赛事结束时间。");
       return false;
     }
     if (
@@ -335,7 +150,6 @@ export function CompetitionEditor({
       },
     );
     setCompetition(saved);
-    setTasks(saved.tasks);
     if (current === null) {
       router.replace("/admin/competitions/" + saved.id);
     }
@@ -373,8 +187,8 @@ export function CompetitionEditor({
         {
           publish: "确认发布赛事？Worker 会按时间单向推进阶段。",
           "close-registration": "确认提前关闭报名并立即锁定全部成形队伍？",
-          "close-submissions": "确认提前关闭赛事提交？",
-          archive: "确认归档？报名、队伍和提交将全部只读。",
+          "close-submissions": "确认提前结束赛事？",
+          archive: "确认归档？报名和队伍将全部只读。",
         }[action],
       )
     ) {
@@ -389,67 +203,7 @@ export function CompetitionEditor({
         { method: "POST" },
       );
       setCompetition(result);
-      setTasks(result.tasks);
       setMessage("赛事状态已更新为“" + competitionStatusLabel(result.status) + "”。");
-      router.refresh();
-    } catch (nextError) {
-      setError(errorMessage(nextError));
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function createTask() {
-    if (competition === null) {
-      setError("请先保存赛事草稿，再创建赛题。");
-      return;
-    }
-    const extensions = extensionList(newTaskExtensions);
-    const maxBytes = Number(newTaskMaxBytes);
-    const order = Number(newTaskOrder);
-    if (
-      !newTaskTitle.trim() ||
-      !newTaskDescription.trim() ||
-      !newTaskDeadline ||
-      extensions.length === 0 ||
-      !Number.isSafeInteger(maxBytes) ||
-      maxBytes < 1 ||
-      maxBytes > 2_147_483_648 ||
-      !Number.isSafeInteger(order) ||
-      order < 0
-    ) {
-      setError("请完整填写新赛题，并检查附件上限和显示顺序。");
-      return;
-    }
-    setPending(true);
-    setMessage(null);
-    setError(null);
-    try {
-      const created = await csrfFetch<CompetitionTask>(
-        "/admin/competitions/" + competition.id + "/tasks",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            title: newTaskTitle.trim(),
-            description_markdown: newTaskDescription.trim(),
-            resource_url: newTaskResourceUrl.trim() || null,
-            allowed_extensions: extensions,
-            max_total_bytes: maxBytes,
-            deadline: apiDateTime(newTaskDeadline),
-            display_order: order,
-          }),
-        },
-      );
-      setTasks((current) =>
-        [...current, created].sort(
-          (left, right) => left.display_order - right.display_order,
-        ),
-      );
-      setNewTaskTitle("");
-      setNewTaskDescription("");
-      setNewTaskResourceUrl("");
-      setNewTaskOrder(String(order + 1));
-      setMessage("赛题已创建。");
       router.refresh();
     } catch (nextError) {
       setError(errorMessage(nextError));
@@ -460,11 +214,6 @@ export function CompetitionEditor({
 
   const editable = competition?.status !== "archived";
   const rulesEditable = competition === null || competition.status === "draft";
-  const tasksEditable =
-    competition === null ||
-    ["draft", "registration_open", "registration_closed"].includes(
-      competition.status,
-    );
 
   return (
     <div className="mt-8 grid gap-8 xl:grid-cols-[minmax(0,1fr)_22rem]">
@@ -474,7 +223,7 @@ export function CompetitionEditor({
 
         <section className="space-y-5 border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-xl font-semibold">赛事配置</h2>
+            <h2 className="text-xl font-semibold">校内赛公告与组队</h2>
             {competition ? (
               <span
                 className={
@@ -498,7 +247,7 @@ export function CompetitionEditor({
             />
           </label>
           <label className="block text-sm">
-            Markdown 说明
+            公告（Markdown）
             <textarea
               className={inputClassName + " min-h-64 py-3 font-mono text-sm"}
               disabled={!editable}
@@ -520,7 +269,7 @@ export function CompetitionEditor({
         </section>
 
         <section className="grid gap-5 border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:grid-cols-2 sm:p-6">
-          <h2 className="text-xl font-semibold sm:col-span-2">时间与人数</h2>
+          <h2 className="text-xl font-semibold sm:col-span-2">报名与组队规则</h2>
           <label className="text-sm">
             报名开始
             <input
@@ -542,7 +291,7 @@ export function CompetitionEditor({
             />
           </label>
           <label className="text-sm">
-            提交开始
+            组队锁定时间
             <input
               className={inputClassName}
               disabled={!editable}
@@ -552,7 +301,7 @@ export function CompetitionEditor({
             />
           </label>
           <label className="text-sm">
-            提交结束
+            赛事结束时间
             <input
               className={inputClassName}
               disabled={!editable}
@@ -621,7 +370,7 @@ export function CompetitionEditor({
               onClick={() => transition("close-submissions")}
               type="button"
             >
-              提前关闭提交
+              提前结束赛事
             </button>
           ) : null}
           {competition?.status === "submission_closed" ? (
@@ -635,131 +384,6 @@ export function CompetitionEditor({
             </button>
           ) : null}
         </div>
-
-        {competition ? (
-          <section className="space-y-4 border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
-            <h2 className="text-xl font-semibold">赛题</h2>
-            {tasks.map((task) => (
-              <TaskEditor
-                editable={tasksEditable}
-                key={task.id}
-                onSaved={(saved) =>
-                  setTasks((current) =>
-                    current
-                      .map((item) => (item.id === saved.id ? saved : item))
-                      .sort(
-                        (left, right) =>
-                          left.display_order - right.display_order,
-                      ),
-                  )
-                }
-                task={task}
-              />
-            ))}
-            {tasks.length === 0 ? (
-              <p className="text-sm text-[var(--color-text-muted)]">
-                尚未创建赛题；发布前至少需要一个。
-              </p>
-            ) : null}
-            {tasksEditable ? (
-              <details className="border border-dashed border-[var(--color-border-strong)] p-4">
-                <summary className="cursor-pointer font-medium">创建新赛题</summary>
-                <div className="mt-5 grid gap-4 md:grid-cols-2">
-                  <label className="text-sm md:col-span-2">
-                    标题
-                    <input
-                      className={inputClassName}
-                      disabled={pending}
-                      onChange={(event) => setNewTaskTitle(event.target.value)}
-                      value={newTaskTitle}
-                    />
-                  </label>
-                  <label className="text-sm md:col-span-2">
-                    Markdown 说明
-                    <textarea
-                      className={inputClassName + " min-h-40 py-3 font-mono text-sm"}
-                      disabled={pending}
-                      onChange={(event) =>
-                        setNewTaskDescription(event.target.value)
-                      }
-                      value={newTaskDescription}
-                    />
-                  </label>
-                  <label className="text-sm">
-                    资料链接
-                    <input
-                      className={inputClassName}
-                      disabled={pending}
-                      onChange={(event) =>
-                        setNewTaskResourceUrl(event.target.value)
-                      }
-                      type="url"
-                      value={newTaskResourceUrl}
-                    />
-                  </label>
-                  <label className="text-sm">
-                    允许扩展名
-                    <input
-                      className={inputClassName}
-                      disabled={pending}
-                      onChange={(event) =>
-                        setNewTaskExtensions(event.target.value)
-                      }
-                      value={newTaskExtensions}
-                    />
-                  </label>
-                  <label className="text-sm">
-                    附件上限（字节）
-                    <input
-                      className={inputClassName}
-                      disabled={pending}
-                      max={2147483648}
-                      min={1}
-                      onChange={(event) =>
-                        setNewTaskMaxBytes(event.target.value)
-                      }
-                      type="number"
-                      value={newTaskMaxBytes}
-                    />
-                  </label>
-                  <label className="text-sm">
-                    截止时间
-                    <input
-                      className={inputClassName}
-                      disabled={pending}
-                      onChange={(event) =>
-                        setNewTaskDeadline(event.target.value)
-                      }
-                      type="datetime-local"
-                      value={newTaskDeadline}
-                    />
-                  </label>
-                  <label className="text-sm">
-                    显示顺序
-                    <input
-                      className={inputClassName}
-                      disabled={pending}
-                      min={0}
-                      onChange={(event) => setNewTaskOrder(event.target.value)}
-                      type="number"
-                      value={newTaskOrder}
-                    />
-                  </label>
-                  <div className="flex items-end">
-                    <button
-                      className={buttonClassName}
-                      disabled={pending}
-                      onClick={createTask}
-                      type="button"
-                    >
-                      创建赛题
-                    </button>
-                  </div>
-                </div>
-              </details>
-            ) : null}
-          </section>
-        ) : null}
 
         {competition && initialTeams.length ? (
           <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
@@ -783,7 +407,7 @@ export function CompetitionEditor({
                     </p>
                   </div>
                   <span className="font-mono text-xs text-[var(--color-info)]">
-                    {team.latest_submission_count} 个赛题已提交 →
+                    查看队伍详情 →
                   </span>
                 </Link>
               ))}
@@ -818,17 +442,12 @@ export function CompetitionEditor({
           <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-secondary)]">
             <p>报名截止：{formatDateTime(competition.registration_end)}</p>
             <p className="mt-2">
-              提交结束：{formatDateTime(competition.submission_end)}
+              赛事结束：{formatDateTime(competition.submission_end)}
             </p>
             <p className="mt-2">
               队伍人数：{competition.min_team_size}–
               {competition.max_team_size}
             </p>
-            {tasks[0] ? (
-              <p className="mt-2">
-                首个赛题上限：{formatFileSize(tasks[0].max_total_bytes)}
-              </p>
-            ) : null}
           </section>
         ) : null}
       </aside>

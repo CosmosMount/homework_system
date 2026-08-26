@@ -8,8 +8,8 @@ const competitionLabels: Record<CompetitionStatus, string> = {
   draft: "草稿",
   registration_open: "报名中",
   registration_closed: "报名已结束",
-  submission_open: "提交中",
-  submission_closed: "提交已结束",
+  submission_open: "赛事进行中",
+  submission_closed: "赛事已结束",
   archived: "已归档",
 };
 

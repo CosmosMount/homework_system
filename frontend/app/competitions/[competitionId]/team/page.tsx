@@ -9,6 +9,7 @@ import {
   getDashboard,
   requireUser,
 } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 
 type CompetitionTeamPageProps = Readonly<{
   params: Promise<{ competitionId: string }>;
@@ -22,7 +23,7 @@ export default async function CompetitionTeamPage({
     requireUser(),
     getDashboard(),
   ]);
-  if (user.role === "admin") {
+  if (isAdminView(user)) {
     redirect("/admin/competitions/" + competitionId);
   }
   const [competition, team] = await Promise.all([

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -143,7 +142,7 @@ export function AdminTeamCorrectionPanel({
     if (!begin()) return;
     if (
       action === "disqualify" &&
-      !window.confirm("确认取消整支队伍参赛资格？该队将不能继续提交。")
+      !window.confirm("确认取消整支队伍参赛资格？该队将不能继续参赛。")
     ) {
       setPending(false);
       return;
@@ -232,36 +231,6 @@ export function AdminTeamCorrectionPanel({
           </div>
         </section>
 
-        <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
-          <h2 className="text-xl font-semibold">赛题提交</h2>
-          <div className="mt-4 space-y-3">
-            {team.submissions.map((submission) => (
-              <article
-                className="flex flex-wrap items-center justify-between gap-4 border border-[var(--color-border)] p-4"
-                key={submission.task_id}
-              >
-                <div>
-                  <p className="font-medium">{submission.task_title}</p>
-                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-                    截止 {formatDateTime(submission.deadline)}
-                  </p>
-                </div>
-                {submission.submission_id ? (
-                  <Link
-                    className="text-sm text-[var(--color-info)]"
-                    href={"/admin/submissions/" + submission.submission_id}
-                  >
-                    审阅版本与团队评语 →
-                  </Link>
-                ) : (
-                  <span className="text-sm text-[var(--color-text-muted)]">
-                    未提交
-                  </span>
-                )}
-              </article>
-            ))}
-          </div>
-        </section>
       </div>
 
       <aside>

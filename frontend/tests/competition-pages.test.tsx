@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import CompetitionDetailPage from "@/app/competitions/[competitionId]/page";
 import CompetitionTaskPage from "@/app/competitions/[competitionId]/tasks/[taskId]/page";
 import type {
   CompetitionDetail,
@@ -17,6 +18,7 @@ const {
   getCompetitionTeamMock,
   getDashboardMock,
   requireUserMock,
+  redirectMock,
 } = vi.hoisted(() => ({
   getCompetitionMock: vi.fn(),
   getCompetitionSubmissionMock: vi.fn(),
@@ -24,12 +26,13 @@ const {
   getCompetitionTeamMock: vi.fn(),
   getDashboardMock: vi.fn(),
   requireUserMock: vi.fn(),
+  redirectMock: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/",
   notFound: vi.fn(),
-  redirect: vi.fn(),
+  redirect: redirectMock,
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));
 
@@ -149,6 +152,7 @@ const team: Team = {
 
 describe("competition task page", () => {
   beforeEach(() => {
+    redirectMock.mockReset();
     requireUserMock.mockResolvedValue(student);
     getDashboardMock.mockResolvedValue(dashboard);
     getCompetitionMock.mockResolvedValue(competition);
@@ -157,21 +161,35 @@ describe("competition task page", () => {
     getCompetitionSubmissionMock.mockResolvedValue(null);
   });
 
-  it("keeps a normal team member read-only while allowing version history access", async () => {
+  it("redirects legacy task URLs to the announcement and team page", async () => {
+    await CompetitionTaskPage({
+      params: Promise.resolve({
+        competitionId: competition.id,
+        taskId: task.id,
+      }),
+    });
+
+    expect(redirectMock).toHaveBeenCalledWith("/competitions/" + competition.id);
+  });
+});
+
+describe("announcement-only competition page", () => {
+  beforeEach(() => {
+    requireUserMock.mockResolvedValue(student);
+    getDashboardMock.mockResolvedValue(dashboard);
+    getCompetitionMock.mockResolvedValue(competition);
+  });
+
+  it("focuses on the announcement and team registration without a task section", async () => {
     render(
-      await CompetitionTaskPage({
-        params: Promise.resolve({
-          competitionId: competition.id,
-          taskId: task.id,
-        }),
+      await CompetitionDetailPage({
+        params: Promise.resolve({ competitionId: competition.id }),
       }),
     );
 
     expect(
-      screen.getByText(/只有当前队长可以代表团队创建正式版本/),
+      screen.getByText("本赛事仅用于发布校内赛公告和完成报名组队，不设置赛题或作品提交。"),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "确认并创建正式版本" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /赛题|交付项/ })).not.toBeInTheDocument();
   });
 });

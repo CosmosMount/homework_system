@@ -21,7 +21,7 @@ export default async function AdminCompetitionsPage() {
       <AdminPageHeader
         eyebrow="ADMIN / COMPETITIONS"
         title="赛事管理"
-        description="管理赛事阶段、赛题、报名队伍、带原因纠错和团队私密评语。"
+        description="发布校内赛公告、管理报名队伍，并处理带原因的成员纠错。"
         actions={
           <Link
             className={commandLinkClassName + " group"}
@@ -59,7 +59,7 @@ export default async function AdminCompetitionsPage() {
               <div className="text-right font-mono text-xs text-[var(--color-text-muted)]">
                 <p>报名截止 {formatDateTime(competition.registration_end)}</p>
                 <p className="mt-2">
-                  提交结束 {formatDateTime(competition.submission_end)}
+                  赛事结束 {formatDateTime(competition.submission_end)}
                 </p>
               </div>
             </div>

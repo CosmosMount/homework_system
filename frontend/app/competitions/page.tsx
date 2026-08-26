@@ -8,6 +8,7 @@ import {
   getDashboard,
   requireUser,
 } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 import {
   competitionStatusLabel,
   registrationStatusLabel,
@@ -37,7 +38,7 @@ export default async function CompetitionsPage({
     getDashboard(),
     searchParams,
   ]);
-  if (user.role === "admin") {
+  if (isAdminView(user)) {
     redirect("/admin/competitions");
   }
 
@@ -74,7 +75,7 @@ export default async function CompetitionsPage({
       </p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">校内赛</h1>
       <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-        报名后创建或加入队伍；报名结束自动锁队，提交期仅当前队长能代表团队创建正式版本。
+        阅读校内赛公告，报名后创建或加入队伍；报名结束自动锁定队伍。
       </p>
 
       <form className="mt-8 grid gap-4 border border-[var(--color-border)] bg-[var(--color-surface)] p-5 md:grid-cols-[minmax(0,1fr)_14rem_auto] md:items-end">
@@ -95,8 +96,8 @@ export default async function CompetitionsPage({
             <option value="all">全部</option>
             <option value="registration_open">报名中</option>
             <option value="registration_closed">报名已结束</option>
-            <option value="submission_open">提交中</option>
-            <option value="submission_closed">提交已结束</option>
+            <option value="submission_open">赛事进行中</option>
+            <option value="submission_closed">赛事已结束</option>
             <option value="archived">已归档</option>
           </select>
         </label>
@@ -161,7 +162,7 @@ export default async function CompetitionsPage({
                   >
                     {competition.status === "registration_open"
                       ? "报名截止 "
-                      : "提交结束 "}
+                      : "赛事结束 "}
                     {formatDateTime(keyTime)}
                   </time>
                 </div>
