@@ -40,8 +40,20 @@
 
 - 前端 14 个测试文件、43 项测试通过；ESLint、严格 TypeScript 和 Next.js 生产构建通过。
 
+## 本次追加：作业源码默认收起
+
+- 管理员作业编辑页对已有安全 HTML 的作业先展示渲染结果，Markdown 源文改为通过“编辑 Markdown 源文”按需展开；新建或尚未生成 HTML 的草稿仍默认显示编辑框。
+- 用户详情页和管理员已保存内容继续复用同一 `RenderedMarkdown`/`SafeHtml` 渲染路径，未修改 API、权限或数据结构。
+
+## 本轮验证结果
+
+- 管理员界面回归测试 7 项、完整前端 14 个测试文件 43 项测试、ESLint、严格 TypeScript 和 Next.js 生产构建均通过。
+- Frontend 镜像已重建并替换，Frontend 与 Nginx 已重启；Backend、Worker、PostgreSQL、MinIO 保持健康。
+- `/health/live`、`/health/ready`、`/health/worker`、`/nginx-health` 均返回 200；匿名访问 `/admin/assignments/new` 正确重定向到 `/login`。
+
 ## 正式计划
 
 - .agents/plans/plan_markdown_preview_blue_white_theme.md
 - .agents/plans/plan_button_visual_polish.md
 - .agents/plans/plan_sidebar_markdown_rendering.md
+- .agents/plans/plan_assignment_editor_visibility.md

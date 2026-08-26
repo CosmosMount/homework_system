@@ -155,7 +155,7 @@ describe("admin permissions UI", () => {
     expect(requireAdminMock).toHaveBeenCalledOnce();
   });
 
-  it("keeps Markdown editing visible and renders the saved document without internal labels", () => {
+  it("shows the saved document first and keeps Markdown source collapsed", () => {
     const draft: AssignmentAdmin = {
       ...assignment(),
       description_markdown: "# Electric Control Homework 1\n\n- task1\n- task2",
@@ -172,13 +172,16 @@ describe("admin permissions UI", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Markdown 作业说明")).toHaveValue(
-      "# Electric Control Homework 1\n\n- task1\n- task2",
-    );
+    expect(screen.queryByLabelText("Markdown 作业说明")).not.toBeInTheDocument();
+    expect(screen.getByText("编辑 Markdown 源文")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Electric Control Homework 1" }),
     ).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    fireEvent.click(screen.getByText("编辑 Markdown 源文"));
+    expect(screen.getByLabelText("Markdown 作业说明")).toHaveValue(
+      "# Electric Control Homework 1\n\n- task1\n- task2",
+    );
     expect(screen.queryByText("# Electric Control Homework 1")).not.toBeInTheDocument();
     expect(screen.queryByText("Markdown 渲染预览")).not.toBeInTheDocument();
     expect(screen.queryByText("已清洗 HTML")).not.toBeInTheDocument();

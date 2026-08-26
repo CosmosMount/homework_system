@@ -8,6 +8,7 @@
 - 管理员通知、作业和赛事列表页参考 `management_system` 的 `PageCommandBar`，统一使用紧凑页头与浅蓝创建按钮；新增 `AdminPageHeader`，不改变业务路由或权限。
 - 新增 `commandButtonClassName` 和 `commandLinkClassName`，创建入口统一为 `h-9`、`rounded-lg`、浅蓝底深蓝字，表单主按钮保持既有样式。
 - 登录后页面改用共享响应式侧边栏；桌面端可折叠，移动端可打开抽屉，管理员和学生沿用各自入口并显示当前 active 状态。
+- 已保存作业编辑页默认展示与学生详情一致的 Markdown 渲染结果，源文本编辑器改为按需展开；新建作业仍直接显示源文本输入，不改变提交与发布接口。
 
 ### Fixed
 - 修复 CI 严格 Mypy 对 `list_admin_sessions` 测试上下文的 `SimpleNamespace` 类型错误，以及通知测试中 `MailSender.calls` 属性推断的两个错误；修复范围仅限测试类型标注。
