@@ -9,6 +9,7 @@ import {
   getSubmission,
   requireUser,
 } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 import { formatDateTime, formatFileSize } from "@/lib/format";
 
 type SubmissionPageProps = Readonly<{
@@ -23,7 +24,7 @@ export default async function SubmissionPage({
     requireUser(),
     getDashboard(),
   ]);
-  if (user.role === "admin") {
+  if (isAdminView(user)) {
     redirect("/admin/submissions/" + submissionId);
   }
   const submission = await getSubmission(submissionId);

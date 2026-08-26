@@ -9,6 +9,7 @@ from sqlalchemy import (
     and_,
     delete,
     exists,
+    false,
     func,
     or_,
     select,
@@ -154,14 +155,69 @@ class AssignmentRepository:
         )
         return int(value or 0)
 
-    async def is_audience_user(self, assignment_id: UUID, user_id: UUID) -> bool:
-        value = await self._session.scalar(
-            select(
-                exists().where(
-                    AssignmentAudienceUser.assignment_id == assignment_id,
-                    AssignmentAudienceUser.user_id == user_id,
+    @staticmethod
+    def _live_audience_condition(user: User) -> ColumnElement[bool]:
+        cohort_configured = exists(select(1).where(AssignmentCohort.assignment_id == Assignment.id))
+        direction_configured = exists(
+            select(1).where(AssignmentDirection.assignment_id == Assignment.id)
+        )
+        cohort_matches: ColumnElement[bool]
+        if user.cohort_id is None:
+            cohort_matches = false()
+        else:
+            cohort_matches = exists(
+                select(1).where(
+                    AssignmentCohort.assignment_id == Assignment.id,
+                    AssignmentCohort.cohort_id == user.cohort_id,
                 )
             )
+        direction_matches: ColumnElement[bool]
+        if user.direction_id is None:
+            direction_matches = false()
+        else:
+            direction_matches = exists(
+                select(1).where(
+                    AssignmentDirection.assignment_id == Assignment.id,
+                    AssignmentDirection.direction_id == user.direction_id,
+                )
+            )
+        union_matches = and_(
+            Assignment.audience_match == "union",
+            or_(cohort_matches, direction_matches),
+        )
+        intersection_matches = and_(
+            Assignment.audience_match == "intersection",
+            or_(cohort_configured, direction_configured),
+            or_(~cohort_configured, cohort_matches),
+            or_(~direction_configured, direction_matches),
+        )
+        return or_(
+            Assignment.all_students.is_(True),
+            and_(
+                Assignment.all_students.is_(False),
+                or_(union_matches, intersection_matches),
+            ),
+        )
+
+    async def is_audience_user(
+        self,
+        assignment_id: UUID,
+        user_id: UUID,
+        *,
+        preview_user: User | None = None,
+    ) -> bool:
+        snapshot_match = exists().where(
+            AssignmentAudienceUser.assignment_id == assignment_id,
+            AssignmentAudienceUser.user_id == user_id,
+        )
+        audience_match: ColumnElement[bool] = snapshot_match
+        if preview_user is not None:
+            audience_match = or_(
+                snapshot_match,
+                self._live_audience_condition(preview_user),
+            )
+        value = await self._session.scalar(
+            select(audience_match).select_from(Assignment).where(Assignment.id == assignment_id)
         )
         return bool(value)
 
@@ -196,17 +252,22 @@ class AssignmentRepository:
         self,
         assignment_id: UUID,
         user_id: UUID,
+        *,
+        preview_user: User | None = None,
     ) -> StudentAssignmentRecord | None:
+        snapshot_match = exists().where(
+            AssignmentAudienceUser.assignment_id == Assignment.id,
+            AssignmentAudienceUser.user_id == user_id,
+        )
+        audience_match: ColumnElement[bool] = snapshot_match
+        if preview_user is not None:
+            audience_match = or_(
+                snapshot_match,
+                self._live_audience_condition(preview_user),
+            )
         row = (
             await self._session.execute(
                 select(Assignment, AssignmentExtension)
-                .join(
-                    AssignmentAudienceUser,
-                    and_(
-                        AssignmentAudienceUser.assignment_id == Assignment.id,
-                        AssignmentAudienceUser.user_id == user_id,
-                    ),
-                )
                 .outerjoin(
                     AssignmentExtension,
                     and_(
@@ -217,6 +278,7 @@ class AssignmentRepository:
                 .where(
                     Assignment.id == assignment_id,
                     Assignment.status != "draft",
+                    audience_match,
                 )
             )
         ).one_or_none()
@@ -228,6 +290,7 @@ class AssignmentRepository:
         self,
         *,
         user_id: UUID,
+        preview_user: User | None = None,
         page: int,
         page_size: int,
         status: str | None,
@@ -251,8 +314,18 @@ class AssignmentRepository:
             or_(Assignment.status == "published", auto_closed),
             effective_deadline > now,
         )
-        filters: list[ColumnElement[bool]] = [
+        snapshot_match = exists().where(
+            AssignmentAudienceUser.assignment_id == Assignment.id,
             AssignmentAudienceUser.user_id == user_id,
+        )
+        audience_match: ColumnElement[bool] = snapshot_match
+        if preview_user is not None:
+            audience_match = or_(
+                snapshot_match,
+                self._live_audience_condition(preview_user),
+            )
+        filters: list[ColumnElement[bool]] = [
+            audience_match,
             Assignment.status != "draft",
         ]
         if query:
@@ -271,10 +344,6 @@ class AssignmentRepository:
 
         base = (
             select(Assignment, AssignmentExtension)
-            .join(
-                AssignmentAudienceUser,
-                AssignmentAudienceUser.assignment_id == Assignment.id,
-            )
             .outerjoin(
                 AssignmentExtension,
                 and_(

@@ -1,15 +1,21 @@
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import Select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.assignments.models import Assignment, AssignmentExtension
 from app.assignments.policy import can_submit_assignment
+from app.assignments.repository import AssignmentRepository
 from app.assignments.schemas import AssignmentCreateRequest
 from app.notifications.mailer import render_mail
 from app.notifications.models import OutboxJob
 from app.notifications.service import OutboxProcessor
+from app.users.models import User
 
 
 def make_assignment(
@@ -206,3 +212,38 @@ async def test_worker_dispatches_assignment_schedule_jobs(job_type: str) -> None
     assert processor.close_calls == (expected if job_type == "close_assignment" else [])
     assert harness.sent_ids == [job.id]
     assert harness.failed_ids == []
+
+
+class CapturingSession:
+    def __init__(self) -> None:
+        self.statement: Select[tuple[bool]] | None = None
+
+    async def scalar(self, statement: Select[tuple[bool]]) -> bool:
+        self.statement = statement
+        return True
+
+
+@pytest.mark.asyncio
+async def test_student_view_preview_uses_live_audience_without_changing_snapshot() -> None:
+    session = CapturingSession()
+    repository = AssignmentRepository(cast(AsyncSession, session))
+    preview_user = cast(
+        User,
+        SimpleNamespace(cohort_id=None, direction_id=uuid4()),
+    )
+
+    await repository.is_audience_user(
+        uuid4(),
+        uuid4(),
+        preview_user=preview_user,
+    )
+    assert session.statement is not None
+    preview_sql = str(session.statement)
+    assert "assignment_audience_users" in preview_sql
+    assert "assignment_directions" in preview_sql
+
+    await repository.is_audience_user(uuid4(), uuid4())
+    assert session.statement is not None
+    snapshot_sql = str(session.statement)
+    assert "assignment_audience_users" in snapshot_sql
+    assert "assignment_directions" not in snapshot_sql

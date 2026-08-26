@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { LogoutButton } from "@/components/auth/logout-button";
+import { ApiError, csrfFetch } from "@/lib/api/client";
+import { isAdminView } from "@/lib/api/types";
 import type { User } from "@/lib/api/types";
 
 type NavigationItem = Readonly<{
@@ -25,7 +27,7 @@ function matchesPath(pathname: string, href: string): boolean {
 
 function itemsForUser(user: User, unreadCount: number): NavigationItem[] {
   const primary =
-    user.role === "admin"
+    isAdminView(user)
       ? [
           { href: "/admin/dashboard", label: "管理概览" },
           { href: "/admin/announcements", label: "通知管理" },
@@ -115,17 +117,71 @@ function NavigationLinks({
   );
 }
 
+function StudentViewToggle({
+  collapsed,
+  user,
+}: Readonly<{
+  collapsed: boolean;
+  user: User;
+}>) {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (user.role !== "admin") return null;
+  const viewingStudent = user.student_view === true;
+  const label = viewingStudent ? "返回管理员视图" : "查看学生视图";
+
+  async function toggle() {
+    setPending(true);
+    setError(null);
+    try {
+      await csrfFetch<User>("/auth/student-view", {
+        method: viewingStudent ? "DELETE" : "POST",
+      });
+      router.replace(viewingStudent ? "/admin/dashboard" : "/dashboard");
+      router.refresh();
+    } catch (nextError) {
+      setError(nextError instanceof ApiError ? nextError.message : "切换视图失败，请重试。");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="space-y-1">
+      <button
+        aria-label={label}
+        className={
+          "flex h-10 w-full items-center gap-3 rounded-lg px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-50 " +
+          (collapsed ? "justify-center px-0" : "")
+        }
+        disabled={pending}
+        onClick={toggle}
+        title={collapsed ? label : undefined}
+        type="button"
+      >
+        <span aria-hidden="true" className="w-4 shrink-0 text-center text-xs">{viewingStudent ? "↩" : "◇"}</span>
+        <span className={collapsed ? "sr-only" : ""}>{pending ? "切换中…" : label}</span>
+      </button>
+      {error && !collapsed ? <p className="px-3 text-xs text-[var(--color-danger)]" role="alert">{error}</p> : null}
+    </div>
+  );
+}
+
 function NavigationFooter({
+  user,
   collapsed,
   onNavigate,
   onToggle,
 }: Readonly<{
+  user: User;
   collapsed: boolean;
   onNavigate?: () => void;
   onToggle?: () => void;
 }>) {
   return (
     <div className="mt-auto space-y-1 border-t border-[var(--color-border)] p-3">
+      <StudentViewToggle collapsed={collapsed} user={user} />
       <Link
         className={
           "flex h-10 items-center gap-3 rounded-lg px-3 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] " +
@@ -176,7 +232,7 @@ export function AppShellNavigation({
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const items = itemsForUser(user, unreadCount);
-  const homeHref = user.role === "admin" ? "/admin/dashboard" : "/dashboard";
+  const homeHref = isAdminView(user) ? "/admin/dashboard" : "/dashboard";
 
   return (
     <>
@@ -198,7 +254,7 @@ export function AppShellNavigation({
           </Link>
         </div>
         <NavigationLinks collapsed={collapsed} items={items} pathname={pathname} />
-        <NavigationFooter collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)} />
+        <NavigationFooter user={user} collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)} />
       </aside>
 
       <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 px-4 backdrop-blur lg:hidden">
@@ -248,7 +304,7 @@ export function AppShellNavigation({
               onNavigate={() => setMobileOpen(false)}
               pathname={pathname}
             />
-            <NavigationFooter collapsed={false} onNavigate={() => setMobileOpen(false)} />
+            <NavigationFooter user={user} collapsed={false} onNavigate={() => setMobileOpen(false)} />
           </aside>
         </div>
       ) : null}

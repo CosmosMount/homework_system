@@ -9,6 +9,7 @@ import {
   getExcellentSubmission,
   requireUser,
 } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 import { formatDateTime, formatFileSize } from "@/lib/format";
 
 type ExcellentSubmissionPageProps = Readonly<{
@@ -23,7 +24,7 @@ export default async function ExcellentSubmissionPage({
     requireUser(),
     getDashboard(),
   ]);
-  if (user.role === "admin") {
+  if (isAdminView(user)) {
     redirect("/admin/assignments/" + assignmentId + "/edit");
   }
   const version = await getExcellentSubmission(assignmentId, versionId);

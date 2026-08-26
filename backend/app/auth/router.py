@@ -166,7 +166,7 @@ async def me(
     service: AuthenticationServiceDependency,
     context: AuthenticatedContextDependency,
 ) -> UserResponse:
-    return await service.user_response(context.user)
+    return await service.user_response(context.user, student_view=context.is_student_view)
 
 
 @router.get("/csrf", response_model=CsrfResponse)
@@ -188,6 +188,36 @@ async def csrf(
         samesite="lax",
     )
     return CsrfResponse(csrf_token=token)
+
+
+@router.post("/student-view", response_model=UserResponse)
+async def enable_student_view(
+    request: Request,
+    service: AuthenticationServiceDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> UserResponse:
+    return await service.set_student_view(
+        context,
+        enabled=True,
+        request_id=current_request_id() or "unknown",
+        ip_prefix=request_ip_prefix(request),
+    )
+
+
+@router.delete("/student-view", response_model=UserResponse)
+async def disable_student_view(
+    request: Request,
+    service: AuthenticationServiceDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> UserResponse:
+    return await service.set_student_view(
+        context,
+        enabled=False,
+        request_id=current_request_id() or "unknown",
+        ip_prefix=request_ip_prefix(request),
+    )
 
 
 @router.get("/sessions", response_model=list[SessionResponse])

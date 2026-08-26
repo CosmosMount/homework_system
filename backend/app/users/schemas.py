@@ -21,6 +21,7 @@ class UserResponse(BaseModel):
     full_name: str
     role: Role
     status: UserStatus
+    student_view: bool = False
     cohort: CategorySummary | None = None
     direction: CategorySummary | None = None
     email_verified_at: datetime | None

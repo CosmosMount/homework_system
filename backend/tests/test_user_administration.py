@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
@@ -113,3 +113,31 @@ async def test_last_active_admin_cannot_be_demoted_and_denial_is_audited() -> No
     assert audit.action == "user.role_change"
     assert audit.result == "denied"
     assert audit.change_summary["blocked"] == "last_active_admin"
+
+
+@pytest.mark.asyncio
+async def test_demoting_another_admin_revokes_every_session() -> None:
+    target = make_active_admin()
+    service, commit, audit_add = build_last_admin_service(target)
+    cast(AsyncMock, service._users.active_admin_count).return_value = 2
+    revoke_all_sessions = AsyncMock()
+    cast(Any, service._auth).revoke_all_sessions_for_user = revoke_all_sessions
+
+    result = await service.change_role(
+        target.id,
+        UserRoleRequest(role="student", reason="安全回归测试"),
+        audit=audit_context(make_active_admin()),
+    )
+
+    assert result.role == "student"
+    assert target.role == "student"
+    revoke_all_sessions.assert_awaited_once_with(target.id)
+    commit.assert_awaited_once()
+    audit = audit_add.call_args.args[0]
+    assert isinstance(audit, AuditLog)
+    assert audit.result == "success"
+    assert audit.change_summary == {
+        "from": "admin",
+        "to": "student",
+        "reason": "安全回归测试",
+    }

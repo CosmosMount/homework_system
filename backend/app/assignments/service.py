@@ -38,7 +38,7 @@ from app.assignments.schemas import (
 )
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
-from app.auth.service import AuthenticatedContext
+from app.auth.service import AuthenticatedContext, context_is_admin
 from app.core.errors import ApplicationError
 from app.core.identifiers import uuid7
 from app.core.markdown import render_markdown
@@ -694,6 +694,7 @@ class AssignmentService:
     ) -> AssignmentPage:
         records, total = await self._assignments.list_for_student(
             user_id=context.user.id,
+            preview_user=context.user if getattr(context, "is_student_view", False) else None,
             page=page,
             page_size=page_size,
             status=status,
@@ -740,6 +741,7 @@ class AssignmentService:
         record = await self._assignments.get_for_student(
             assignment_id,
             context.user.id,
+            preview_user=context.user if getattr(context, "is_student_view", False) else None,
         )
         if record is None:
             raise self._not_found()
@@ -1070,9 +1072,10 @@ class AssignmentService:
         *,
         context: AuthenticatedContext,
     ) -> list[ExcellentSubmissionSummaryResponse]:
-        if context.user.role != "admin" and not await self._assignments.is_audience_user(
+        if not context_is_admin(context) and not await self._assignments.is_audience_user(
             assignment_id,
             context.user.id,
+            preview_user=context.user if getattr(context, "is_student_view", False) else None,
         ):
             raise self._not_found()
         assignment = await self._assignments.get_by_id(assignment_id)
@@ -1087,9 +1090,10 @@ class AssignmentService:
         *,
         context: AuthenticatedContext,
     ) -> ExcellentSubmissionDetailResponse:
-        if context.user.role != "admin" and not await self._assignments.is_audience_user(
+        if not context_is_admin(context) and not await self._assignments.is_audience_user(
             assignment_id,
             context.user.id,
+            preview_user=context.user if getattr(context, "is_student_view", False) else None,
         ):
             raise self._not_found()
         assignment = await self._assignments.get_by_id(assignment_id)

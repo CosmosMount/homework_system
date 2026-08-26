@@ -58,6 +58,26 @@ class AuthenticatedContext:
     user: User
     session: Session
 
+    @property
+    def is_student_view(self) -> bool:
+        return self.user.role == "admin" and bool(getattr(self.session, "student_view", False))
+
+    @property
+    def effective_role(self) -> str:
+        return "student" if self.is_student_view else self.user.role
+
+    @property
+    def is_admin(self) -> bool:
+        return self.user.role == "admin" and not self.is_student_view
+
+
+def context_effective_role(context: AuthenticatedContext) -> str:
+    return str(getattr(context, "effective_role", context.user.role))
+
+
+def context_is_admin(context: AuthenticatedContext) -> bool:
+    return bool(getattr(context, "is_admin", context.user.role == "admin"))
+
 
 class AuthenticationService:
     def __init__(
@@ -104,7 +124,7 @@ class AuthenticationService:
             else None,
         )
 
-    async def user_response(self, user: User) -> UserResponse:
+    async def user_response(self, user: User, *, student_view: bool = False) -> UserResponse:
         cohort, direction = await self._category_summary(user.cohort_id, user.direction_id)
         return UserResponse(
             id=user.id,
@@ -113,6 +133,7 @@ class AuthenticationService:
             full_name=user.full_name,
             role=user.role,
             status=user.status,
+            student_view=student_view,
             cohort=cohort,
             direction=direction,
             email_verified_at=user.email_verified_at,
@@ -653,6 +674,41 @@ class AuthenticationService:
         if context.session.revoked_at is None:
             context.session.revoked_at = self._clock()
         await self._session.commit()
+
+    async def set_student_view(
+        self,
+        context: AuthenticatedContext,
+        *,
+        enabled: bool,
+        request_id: str,
+        ip_prefix: str,
+    ) -> UserResponse:
+        if context.user.role != "admin":
+            raise ApplicationError(
+                status_code=403,
+                code="FORBIDDEN",
+                message="只有管理员可以切换学生视图。",
+            )
+        current = bool(getattr(context.session, "student_view", False))
+        if current != enabled:
+            now = self._clock()
+            context.session.student_view = enabled
+            self._audit.add(
+                AuditLog(
+                    id=uuid7(),
+                    actor_user_id=context.user.id,
+                    action="auth.student_view.enable" if enabled else "auth.student_view.disable",
+                    target_type="session",
+                    target_id=context.session.id,
+                    request_id=request_id,
+                    ip_prefix=ip_prefix,
+                    result="success",
+                    change_summary={"enabled": enabled},
+                    created_at=now,
+                )
+            )
+        await self._session.commit()
+        return await self.user_response(context.user, student_view=enabled)
 
     async def list_sessions(self, context: AuthenticatedContext) -> list[SessionResponse]:
         records = await self._auth.list_sessions(context.user.id)

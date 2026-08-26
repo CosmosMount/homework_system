@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { buttonClassName, inputClassName } from "@/components/ui/form-controls";
 import { getAnnouncements, getDashboard, requireUser } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 import { formatDateTime } from "@/lib/format";
 
 type AnnouncementListPageProps = Readonly<{
@@ -31,7 +32,7 @@ export default async function AnnouncementsPage({
     getDashboard(),
     searchParams,
   ]);
-  if (user.role === "admin") {
+  if (isAdminView(user)) {
     redirect("/admin/announcements");
   }
 

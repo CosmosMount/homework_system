@@ -3,6 +3,8 @@ import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { isAdminView } from "@/lib/api/types";
+
 import type {
   AdminCompetitionDetail,
   AdminRegistrationList,
@@ -68,7 +70,7 @@ export async function requireUser(): Promise<User> {
 
 export async function requireAdmin(): Promise<User> {
   const user = await requireUser();
-  if (user.role !== "admin") {
+  if (!isAdminView(user)) {
     redirect("/dashboard");
   }
   return user;

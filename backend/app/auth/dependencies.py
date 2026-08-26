@@ -65,7 +65,7 @@ CsrfDependency = Annotated[None, Depends(require_csrf)]
 
 
 def require_admin(context: AuthenticatedContextDependency) -> AuthenticatedContext:
-    if context.user.role != "admin":
+    if not context.is_admin:
         raise ApplicationError(
             status_code=403,
             code="FORBIDDEN",

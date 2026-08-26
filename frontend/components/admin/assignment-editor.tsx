@@ -184,9 +184,6 @@ export function AssignmentEditor({
   const [descriptionMarkdown, setDescriptionMarkdown] = useState(
     initialAssignment?.description_markdown ?? "",
   );
-  const [showMarkdownEditor, setShowMarkdownEditor] = useState(
-    initialAssignment === null || !initialAssignment.description_html,
-  );
   const [trainingUrl, setTrainingUrl] = useState(
     initialAssignment?.training_url ?? "",
   );
@@ -403,34 +400,17 @@ export function AssignmentEditor({
           <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4 shadow-[var(--shadow-soft)] sm:p-5">
             <RenderedMarkdown sanitizedHtml={assignment?.description_html ?? null} />
           </div>
-          {editable ? (
-            <div className="border border-dashed border-[var(--color-border-strong)] p-4">
-              <button
-                aria-controls="assignment-markdown-source"
-                aria-expanded={showMarkdownEditor}
-                className="font-medium text-[var(--color-info)] underline-offset-4 hover:underline"
-                onClick={() => setShowMarkdownEditor((visible) => !visible)}
-                type="button"
-              >
-                编辑 Markdown 源文
-              </button>
-              {showMarkdownEditor ? (
-                <label
-                  className="mt-4 block text-sm font-medium"
-                  id="assignment-markdown-source"
-                >
-                  Markdown 作业说明
-                  <textarea
-                    className={inputClassName + " min-h-72 py-3 font-mono text-sm"}
-                    maxLength={200000}
-                    onChange={(event) => setDescriptionMarkdown(event.target.value)}
-                    required
-                    value={descriptionMarkdown}
-                  />
-                </label>
-              ) : null}
-            </div>
-          ) : null}
+          <label className="block text-sm font-medium">
+            Markdown 作业说明
+            <textarea
+              className={inputClassName + " min-h-72 py-3 font-mono text-sm"}
+              disabled={!editable}
+              maxLength={200000}
+              onChange={(event) => setDescriptionMarkdown(event.target.value)}
+              required
+              value={descriptionMarkdown}
+            />
+          </label>
           <label className="block text-sm font-medium">
             培训资料链接
             <input

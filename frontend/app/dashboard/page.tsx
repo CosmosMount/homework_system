@@ -5,10 +5,11 @@ import { AppShell } from "@/components/layout/app-shell";
 import { buttonLinkClassName } from "@/components/ui/form-controls";
 import { formatDateTime } from "@/lib/format";
 import { getDashboard, requireUser } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 
 export default async function DashboardPage() {
   const [user, dashboard] = await Promise.all([requireUser(), getDashboard()]);
-  if (user.role === "admin") {
+  if (isAdminView(user)) {
     redirect("/admin/dashboard");
   }
 

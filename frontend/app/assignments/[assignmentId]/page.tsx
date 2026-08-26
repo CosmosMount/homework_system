@@ -10,6 +10,7 @@ import {
   getDashboard,
   requireUser,
 } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 import { formatDateTime, formatFileSize } from "@/lib/format";
 
 type AssignmentDetailPageProps = Readonly<{
@@ -24,7 +25,7 @@ export default async function AssignmentDetailPage({
     requireUser(),
     getDashboard(),
   ]);
-  if (user.role === "admin") {
+  if (isAdminView(user)) {
     redirect("/admin/assignments/" + assignmentId + "/edit");
   }
   const [assignment, submission] = await Promise.all([

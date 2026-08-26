@@ -1,6 +1,7 @@
 import { ProfileEditor } from "@/components/admin/profile-editor";
 import { AppShell } from "@/components/layout/app-shell";
 import { requireUser } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 
 export default async function ProfilePage() {
   const user = await requireUser();
@@ -8,7 +9,7 @@ export default async function ProfilePage() {
     ["真实姓名", user.full_name],
     ["学号", user.student_number],
     ["校园邮箱", user.email],
-    ["角色", user.role === "admin" ? "管理员" : "学生"],
+    ["角色", isAdminView(user) ? "管理员" : "学生"],
     ["账号状态", user.status === "active" ? "已激活" : user.status],
     ["届次", user.cohort?.name ?? "未设置"],
     ["技术方向", user.direction?.name ?? "未设置"],
@@ -20,7 +21,7 @@ export default async function ProfilePage() {
       </p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">个人资料</h1>
       <p className="mt-3 text-[var(--color-text-secondary)]">
-        {user.role === "admin"
+        {isAdminView(user)
           ? "管理员可以维护自己的姓名、学号和校园邮箱；修改邮箱后需要重新验证。"
           : "邮箱、学号、届次和方向由管理员维护；未分类不会影响登录。"}
       </p>
@@ -32,7 +33,7 @@ export default async function ProfilePage() {
           </div>
         ))}
       </dl>
-      {user.role === "admin" ? <ProfileEditor initialUser={user} /> : null}
+      {isAdminView(user) ? <ProfileEditor initialUser={user} /> : null}
     </AppShell>
   );
 }

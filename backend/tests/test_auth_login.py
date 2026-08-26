@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
+from app.auth.dependencies import require_admin
+from app.auth.models import Session
 from app.auth.repository import AuthRepository
 from app.auth.service import AuthenticatedContext, AuthenticationService
 from app.core.config import Settings
@@ -225,3 +227,86 @@ async def test_admin_session_list_returns_active_user_metadata() -> None:
     assert result[0].user_role == "admin"
     assert result[0].is_current is True
     assert not hasattr(result[0], "token_hash")
+
+
+@pytest.mark.asyncio
+async def test_admin_can_toggle_student_view_without_changing_real_role() -> None:
+    now = datetime(2026, 8, 25, 8, 0, tzinfo=UTC)
+    admin = make_user(status="active")
+    admin.role = "admin"
+    session_record = SimpleNamespace(id=uuid4(), student_view=False)
+    context = AuthenticatedContext(
+        user=admin,
+        session=cast(Session, session_record),
+    )
+    commit = AsyncMock()
+    service = AuthenticationService(
+        cast(AsyncSession, SimpleNamespace(commit=commit)),
+        Settings(app_env="test"),
+        clock=lambda: now,
+    )
+    service._audit = cast(AuditRepository, SimpleNamespace(add=Mock()))
+
+    enabled = await service.set_student_view(
+        context,
+        enabled=True,
+        request_id="student-view-on",
+        ip_prefix="192.0.2.0/24",
+    )
+
+    assert enabled.role == "admin"
+    assert enabled.student_view is True
+    assert context.effective_role == "student"
+    assert context.is_admin is False
+    with pytest.raises(ApplicationError) as admin_guard:
+        require_admin(context)
+    assert admin_guard.value.status_code == 403
+    assert admin.role == "admin"
+    assert session_record.student_view is True
+    first_audit = cast(Mock, service._audit.add).call_args.args[0]
+    assert isinstance(first_audit, AuditLog)
+    assert first_audit.action == "auth.student_view.enable"
+
+    disabled = await service.set_student_view(
+        context,
+        enabled=False,
+        request_id="student-view-off",
+        ip_prefix="192.0.2.0/24",
+    )
+
+    assert disabled.role == "admin"
+    assert disabled.student_view is False
+    assert context.effective_role == "admin"
+    assert context.is_admin is True
+    assert session_record.student_view is False
+    assert [call.args[0].action for call in cast(Mock, service._audit.add).call_args_list] == [
+        "auth.student_view.enable",
+        "auth.student_view.disable",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_student_cannot_enable_student_view() -> None:
+    user = make_user(status="active")
+    session_record = SimpleNamespace(id=uuid4(), student_view=False)
+    context = AuthenticatedContext(
+        user=user,
+        session=cast(Session, session_record),
+    )
+    commit = AsyncMock()
+    service = AuthenticationService(
+        cast(AsyncSession, SimpleNamespace(commit=commit)),
+        Settings(app_env="test"),
+    )
+
+    with pytest.raises(ApplicationError) as caught:
+        await service.set_student_view(
+            context,
+            enabled=True,
+            request_id="student-view-denied",
+            ip_prefix="192.0.2.0/24",
+        )
+
+    assert caught.value.status_code == 403
+    assert session_record.student_view is False
+    commit.assert_not_awaited()

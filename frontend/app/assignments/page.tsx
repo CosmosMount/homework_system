@@ -8,6 +8,7 @@ import {
   getDashboard,
   requireUser,
 } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 import { formatDateTime } from "@/lib/format";
 
 type AssignmentsPageProps = Readonly<{
@@ -35,7 +36,7 @@ export default async function AssignmentsPage({
     getDashboard(),
     searchParams,
   ]);
-  if (user.role === "admin") {
+  if (isAdminView(user)) {
     redirect("/admin/assignments");
   }
 

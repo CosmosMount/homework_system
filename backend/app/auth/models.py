@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -31,6 +31,12 @@ class Session(Base):
     idle_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     absolute_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    student_view: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
     ip_prefix: Mapped[str] = mapped_column(String(64), nullable=False)
     user_agent_summary: Mapped[str] = mapped_column(String(200), nullable=False)
 

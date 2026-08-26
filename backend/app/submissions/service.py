@@ -12,7 +12,7 @@ from app.assignments.repository import AssignmentRepository
 from app.assignments.service import AssignmentService
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
-from app.auth.service import AuthenticatedContext
+from app.auth.service import AuthenticatedContext, context_effective_role, context_is_admin
 from app.competitions.policy import task_submission_is_open
 from app.competitions.repository import CompetitionRepository
 from app.core.errors import ApplicationError
@@ -272,7 +272,7 @@ class SubmissionService:
         request_id: str,
         ip_prefix: str,
     ) -> SubmissionVersionCreatedResponse:
-        if context.user.role != "student":
+        if context_effective_role(context) != "student":
             raise ApplicationError(
                 status_code=403,
                 code="FORBIDDEN",
@@ -297,6 +297,7 @@ class SubmissionService:
             or not await self._assignments.is_audience_user(
                 assignment_id,
                 context.user.id,
+                preview_user=context.user if getattr(context, "is_student_view", False) else None,
             )
         ):
             await self._session.rollback()
@@ -436,7 +437,7 @@ class SubmissionService:
         request_id: str,
         ip_prefix: str,
     ) -> SubmissionVersionCreatedResponse:
-        if context.user.role != "student":
+        if context_effective_role(context) != "student":
             raise ApplicationError(
                 status_code=403,
                 code="FORBIDDEN",
@@ -659,7 +660,7 @@ class SubmissionService:
         submission: Submission,
         context: AuthenticatedContext,
     ) -> bool:
-        if context.user.role == "admin":
+        if context_is_admin(context):
             return True
         if submission.assignment_id is not None:
             return submission.owner_user_id == context.user.id

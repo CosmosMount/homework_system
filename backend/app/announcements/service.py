@@ -26,7 +26,7 @@ from app.announcements.schemas import (
 from app.assignments.repository import AssignmentRepository
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
-from app.auth.service import AuthenticatedContext
+from app.auth.service import AuthenticatedContext, context_effective_role
 from app.competitions.repository import CompetitionRepository
 from app.core.errors import ApplicationError, ErrorDetail
 from app.core.identifiers import uuid7
@@ -875,7 +875,7 @@ class AnnouncementService:
             include_total=False,
         )
         assignment_items: list[DashboardAssignmentItem] = []
-        if context.user.role == "student":
+        if context_effective_role(context) == "student":
             records, _ = await AssignmentRepository(self._session).list_for_student(
                 user_id=context.user.id,
                 page=1,
@@ -909,7 +909,7 @@ class AnnouncementService:
             current_user=DashboardUserResponse(
                 id=context.user.id,
                 full_name=context.user.full_name,
-                role=context.user.role,
+                role=context_effective_role(context),
                 cohort_id=context.user.cohort_id,
                 direction_id=context.user.direction_id,
             ),

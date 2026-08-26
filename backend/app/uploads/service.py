@@ -13,7 +13,7 @@ from app.announcements.repository import AnnouncementRepository
 from app.announcements.service import AnnouncementService
 from app.assignments.policy import can_submit_assignment
 from app.assignments.repository import AssignmentRepository
-from app.auth.service import AuthenticatedContext
+from app.auth.service import AuthenticatedContext, context_effective_role, context_is_admin
 from app.competitions.policy import task_submission_is_open
 from app.competitions.repository import CompetitionRepository
 from app.core.config import Settings
@@ -311,7 +311,7 @@ class UploadService:
         if payload.purpose == "announcement_attachment":
             announcement = await self._announcements.get_by_id(payload.context_id)
             if (
-                context.user.role != "admin"
+                not context_is_admin(context)
                 or announcement is None
                 or announcement.status == "archived"
             ):
@@ -334,7 +334,7 @@ class UploadService:
                 else None
             )
             if (
-                context.user.role != "student"
+                context_effective_role(context) != "student"
                 or task is None
                 or competition is None
                 or team is None
@@ -382,12 +382,13 @@ class UploadService:
 
         assignment = await self._assignments.get_by_id(payload.context_id)
         if (
-            context.user.role != "student"
+            context_effective_role(context) != "student"
             or assignment is None
             or assignment.status in {"draft", "archived"}
             or not await self._assignments.is_audience_user(
                 payload.context_id,
                 context.user.id,
+                preview_user=context.user if getattr(context, "is_student_view", False) else None,
             )
         ):
             raise self._not_found()
@@ -882,7 +883,7 @@ class UploadService:
             raise self._not_found()
         announcement_id = await self._uploads.bound_announcement_id(file_id)
         if announcement_id is not None:
-            if context.user.role != "admin":
+            if not context_is_admin(context):
                 await AnnouncementService(self._session).get_student(
                     announcement_id,
                     context=context,
@@ -895,7 +896,7 @@ class UploadService:
             if record is None:
                 raise self._not_found()
             submission = record.submission
-            if context.user.role != "admin":
+            if not context_is_admin(context):
                 if submission.assignment_id is not None:
                     if submission.owner_user_id != context.user.id:
                         marker = await self._assignments.get_excellent_marker(
@@ -905,6 +906,9 @@ class UploadService:
                         if marker is None or not await self._assignments.is_audience_user(
                             submission.assignment_id,
                             context.user.id,
+                            preview_user=(
+                                context.user if getattr(context, "is_student_view", False) else None
+                            ),
                         ):
                             raise self._not_found()
                 elif (

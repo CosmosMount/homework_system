@@ -18,6 +18,7 @@ const {
   getCohortsMock,
   getDirectionsMock,
   requireAdminMock,
+  replaceMock,
 } = vi.hoisted(() => ({
   csrfFetchMock: vi.fn(),
   getAdminAnnouncementsMock: vi.fn(),
@@ -26,11 +27,12 @@ const {
   getCohortsMock: vi.fn(),
   getDirectionsMock: vi.fn(),
   requireAdminMock: vi.fn(),
+  replaceMock: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/assignments",
-  useRouter: () => ({ refresh: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ refresh: vi.fn(), replace: replaceMock }),
 }));
 
 vi.mock("@/lib/api/client", async (importOriginal) => ({
@@ -106,6 +108,7 @@ describe("admin permissions UI", () => {
 
   beforeEach(() => {
     csrfFetchMock.mockReset();
+    replaceMock.mockReset();
     requireAdminMock.mockReset();
     requireAdminMock.mockResolvedValue(admin);
     getCohortsMock.mockResolvedValue([]);
@@ -132,6 +135,38 @@ describe("admin permissions UI", () => {
     );
   });
 
+
+  it("switches an administrator into the student view", async () => {
+    csrfFetchMock.mockResolvedValue({ ...admin, student_view: true });
+    render(<AppShell user={admin}><p>内容</p></AppShell>);
+
+    fireEvent.click(screen.getByRole("button", { name: "查看学生视图" }));
+
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledOnce());
+    expect(csrfFetchMock).toHaveBeenCalledWith("/auth/student-view", {
+      method: "POST",
+    });
+    expect(replaceMock).toHaveBeenCalledWith("/dashboard");
+  });
+
+  it("shows student navigation and can return to administrator view", async () => {
+    const studentViewAdmin = { ...admin, student_view: true };
+    csrfFetchMock.mockResolvedValue({ ...admin, student_view: false });
+    render(<AppShell user={studentViewAdmin}><p>内容</p></AppShell>);
+
+    expect(screen.getByRole("link", { name: "工作台" })).toHaveAttribute(
+      "href",
+      "/dashboard",
+    );
+    expect(screen.queryByRole("link", { name: "管理概览" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "返回管理员视图" }));
+
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledOnce());
+    expect(csrfFetchMock).toHaveBeenCalledWith("/auth/student-view", {
+      method: "DELETE",
+    });
+    expect(replaceMock).toHaveBeenCalledWith("/admin/dashboard");
+  });
   it("uses light-blue create links for admin content", async () => {
     const { unmount } = render(await AdminAnnouncementsPage());
     const announcementLink = screen.getByRole("link", { name: "新建通知" });
@@ -155,7 +190,7 @@ describe("admin permissions UI", () => {
     expect(requireAdminMock).toHaveBeenCalledOnce();
   });
 
-  it("shows the saved document first and keeps Markdown source collapsed", () => {
+  it("keeps the rendered document above the editable Markdown source", () => {
     const draft: AssignmentAdmin = {
       ...assignment(),
       description_markdown: "# Electric Control Homework 1\n\n- task1\n- task2",
@@ -172,19 +207,55 @@ describe("admin permissions UI", () => {
       />,
     );
 
-    expect(screen.queryByLabelText("Markdown 作业说明")).not.toBeInTheDocument();
-    expect(screen.getByText("编辑 Markdown 源文")).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Electric Control Homework 1" }),
-    ).toBeInTheDocument();
-    expect(screen.getAllByRole("listitem")).toHaveLength(2);
-    fireEvent.click(screen.getByText("编辑 Markdown 源文"));
-    expect(screen.getByLabelText("Markdown 作业说明")).toHaveValue(
+    const renderedHeading = screen.getByRole("heading", {
+      name: "Electric Control Homework 1",
+    });
+    const source = screen.getByLabelText("Markdown 作业说明");
+    expect(renderedHeading).toBeInTheDocument();
+    expect(source).toHaveValue(
       "# Electric Control Homework 1\n\n- task1\n- task2",
     );
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(
+      renderedHeading.compareDocumentPosition(source) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.queryByText("# Electric Control Homework 1")).not.toBeInTheDocument();
     expect(screen.queryByText("Markdown 渲染预览")).not.toBeInTheDocument();
     expect(screen.queryByText("已清洗 HTML")).not.toBeInTheDocument();
+  });
+
+  it("submits changed Markdown through the admin PATCH endpoint", async () => {
+    const draft = assignment();
+    csrfFetchMock.mockResolvedValue({
+      ...draft,
+      description_markdown: "# Updated",
+      description_html: "<h1>Updated</h1>",
+      revision: draft.revision + 1,
+    });
+
+    render(
+      <AssignmentEditor
+        cohorts={[]}
+        directions={[]}
+        initialAssignment={draft}
+        initialSubmissions={[]}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Markdown 作业说明"), {
+      target: { value: "# Updated" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledTimes(1));
+    const [path, request] = csrfFetchMock.mock.calls[0] ?? [];
+    expect(path).toBe("/admin/assignments/assignment-1");
+    expect(request).toMatchObject({ method: "PATCH" });
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      description_markdown: "# Updated",
+      revision: draft.revision,
+    });
+    expect(screen.getByText("作业草稿已保存。")).toBeInTheDocument();
   });
 
   it("publishes an assignment over HTTP when randomUUID is unavailable", async () => {

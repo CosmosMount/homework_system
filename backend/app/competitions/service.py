@@ -14,7 +14,7 @@ from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
 from app.auth.models import AuthSecurityEvent
 from app.auth.repository import AuthRepository
-from app.auth.service import AuthenticatedContext
+from app.auth.service import AuthenticatedContext, context_effective_role, context_is_admin
 from app.competitions.models import (
     Competition,
     CompetitionRegistration,
@@ -107,7 +107,7 @@ class CompetitionService:
 
     @staticmethod
     def _require_student(context: AuthenticatedContext) -> None:
-        if context.user.role != "student":
+        if context_effective_role(context) != "student":
             raise ApplicationError(
                 status_code=403,
                 code="FORBIDDEN",
@@ -116,7 +116,7 @@ class CompetitionService:
 
     @staticmethod
     def _require_admin(context: AuthenticatedContext) -> None:
-        if context.user.role != "admin":
+        if not context_is_admin(context):
             raise ApplicationError(
                 status_code=403,
                 code="FORBIDDEN",

@@ -8,6 +8,7 @@ import {
 import { SafeHtml } from "@/components/announcements/safe-html";
 import { AppShell } from "@/components/layout/app-shell";
 import { getAnnouncement, getDashboard, requireUser } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 import { formatDateTime, formatFileSize } from "@/lib/format";
 
 type AnnouncementDetailPageProps = Readonly<{
@@ -22,7 +23,7 @@ export default async function AnnouncementDetailPage({
     requireUser(),
     getDashboard(),
   ]);
-  if (user.role === "admin") {
+  if (isAdminView(user)) {
     redirect("/admin/announcements/" + announcementId + "/edit");
   }
   const announcement = await getAnnouncement(announcementId);
