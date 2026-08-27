@@ -50,7 +50,7 @@
 
 访问：未登录。对应 AUTH-001、AUTH-002、AUTH-010。
 
-`email` 必须规范化后精确以 `@connect.hkust-gz.edu.cn` 结尾；旧域名、子域名、相似域名或通过该字符串作为局部内容的请求均被拒绝。
+`email` 必须规范化后精确以 `@connect.hkust-gz.edu.cn` 结尾；旧域名、子域名、相似域名或通过该字符串作为局部内容的请求均被拒绝。`password` 必须为 8～128 个 Unicode 字符，并通过常见密码和身份相似性检查。
 
 ```json
 {
@@ -107,7 +107,7 @@
 | 方法与路径 | 请求 | 结果 | 需求 |
 | --- | --- | --- | --- |
 | `POST /auth/password-resets/request` | `{email}` | 统一返回 202 | AUTH-005、AUTH-009 |
-| `POST /auth/password-resets/confirm` | `{token,new_password}` | 返回 204，撤销其他 Session | AUTH-005 |
+| `POST /auth/password-resets/confirm` | `{token,new_password}`，`new_password` 使用与注册相同的 8～128 字符策略 | 返回 204，撤销其他 Session | AUTH-005 |
 
 ## 工作台与站内通知
 
