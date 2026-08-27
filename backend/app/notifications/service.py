@@ -11,6 +11,8 @@ from app.auth.models import OneTimeToken
 from app.auth.repository import AuthRepository
 from app.core.config import Settings
 from app.core.security import OutboxCipher
+from app.knowledge.feishu_client import KnowledgeSyncError
+from app.knowledge.service import KnowledgeSynchronizer
 from app.notifications.mailer import (
     MailSender,
     PermanentMailError,
@@ -82,6 +84,7 @@ def apply_delivery_failure(
     now: datetime,
     code: str,
     permanent: bool,
+    summary: str | None = None,
 ) -> None:
     job.attempt_count += 1
     exhausted = job.attempt_count >= job.max_attempts
@@ -93,7 +96,7 @@ def apply_delivery_failure(
     job.locked_at = None
     fallback_code = "PERMANENT_FAILURE" if permanent else "TRANSIENT_FAILURE"
     job.last_error_code = code if _SAFE_ERROR_CODE.fullmatch(code) else fallback_code
-    job.last_error_summary = "邮件投递失败，未记录收件地址或服务响应正文。"
+    job.last_error_summary = summary or "邮件投递失败，未记录收件地址或服务响应正文。"
 
 
 class AnnouncementPublisher(Protocol):
@@ -105,6 +108,11 @@ class AssignmentProcessor(Protocol):
     async def close(self, assignment_id: UUID, job_id: UUID) -> None: ...
 
 
+class KnowledgeSyncProcessor(Protocol):
+    async def synchronize(self, run_id: UUID) -> None: ...
+    async def mark_failed(self, run_id: UUID, error: KnowledgeSyncError) -> None: ...
+
+
 class OutboxProcessor:
     def __init__(
         self,
@@ -114,6 +122,7 @@ class OutboxProcessor:
         sender: MailSender | None = None,
         announcement_publisher: AnnouncementPublisher | None = None,
         assignment_processor: AssignmentProcessor | None = None,
+        knowledge_sync: KnowledgeSyncProcessor | None = None,
     ) -> None:
         self._factory = factory
         self._settings = settings
@@ -122,6 +131,7 @@ class OutboxProcessor:
             factory
         )
         self._assignment_processor = assignment_processor or ScheduledAssignmentProcessor(factory)
+        self._knowledge_sync = knowledge_sync or KnowledgeSynchronizer(factory, settings)
         self._cipher = OutboxCipher(settings.outbox_encryption_key.get_secret_value())
 
     async def _claim(self, now: datetime) -> list[OutboxJob]:
@@ -168,6 +178,11 @@ class OutboxProcessor:
                 now=now,
                 code=code,
                 permanent=permanent,
+                summary=(
+                    "知识库同步任务失败，未记录飞书凭证或服务响应正文。"
+                    if job.job_type == "sync_knowledge"
+                    else None
+                ),
             )
 
     async def _token_email_is_deliverable(
@@ -206,12 +221,28 @@ class OutboxProcessor:
                 elif job.job_type == "close_assignment":
                     assignment_id = UUID(str(job.payload["assignment_id"]))
                     await self._assignment_processor.close(assignment_id, job.id)
+                elif job.job_type == "sync_knowledge":
+                    run_id = UUID(str(job.payload["run_id"]))
+                    await self._knowledge_sync.synchronize(run_id)
                 else:
                     if not await self._token_email_is_deliverable(job, datetime.now(UTC)):
                         await self._mark_token_superseded(job.id)
                         continue
                     secret_payload = self._secret_payload(job)
                     await self._sender.send(job, secret_payload)
+            except KnowledgeSyncError as exc:
+                final_failure = exc.permanent or job.attempt_count + 1 >= job.max_attempts
+                if final_failure:
+                    await self._knowledge_sync.mark_failed(
+                        UUID(str(job.payload["run_id"])),
+                        exc,
+                    )
+                await self._mark_failed(
+                    job.id,
+                    now=datetime.now(UTC),
+                    code=exc.code,
+                    permanent=exc.permanent,
+                )
             except PermanentMailError as exc:
                 await self._mark_failed(
                     job.id,

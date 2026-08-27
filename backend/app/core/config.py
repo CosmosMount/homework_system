@@ -1,10 +1,11 @@
 from base64 import urlsafe_b64decode
 from functools import lru_cache
 from pathlib import Path
+from re import fullmatch
 from typing import Literal, Self
 from urllib.parse import quote_plus, urlsplit
 
-from pydantic import AnyHttpUrl, Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, AnyHttpUrl, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +38,7 @@ class Settings(BaseSettings):
     minio_access_key_file: str | None = None
     minio_secret_key_file: str | None = None
     smtp_password_file: str | None = None
+    feishu_app_secret_file: str | None = None
     team_invite_code_pepper: SecretStr = SecretStr("development-team-invite-pepper-32-bytes")
     outbox_encryption_key: SecretStr = SecretStr("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 
@@ -62,6 +64,18 @@ class Settings(BaseSettings):
     smtp_starttls: bool = True
     mail_from: str = "no-reply@connect.hkust-gz.edu.cn"
     mail_reply_to: str = "no-reply@connect.hkust-gz.edu.cn"
+
+    feishu_app_id: str = ""
+    feishu_app_secret: SecretStr = SecretStr("")
+    feishu_wiki_url: AnyHttpUrl | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "feishu_wiki_url", "FEISHU_WIKI_URL", "FEISHU_KNOWLEDGE_SOURCE_URL"
+        ),
+    )
+    feishu_knowledge_max_documents: int = Field(default=500, ge=1, le=5_000)
+    feishu_knowledge_max_assets: int = Field(default=2_000, ge=1, le=10_000)
+    feishu_knowledge_max_asset_bytes: int = Field(default=52_428_800, ge=1, le=209_715_200)
 
     global_max_upload_bytes: int = Field(default=2_147_483_648, ge=1)
     upload_part_size_bytes: int = Field(default=16_777_216, ge=5_242_880)
@@ -94,6 +108,7 @@ class Settings(BaseSettings):
             ("minio_access_key", "minio_access_key_file"),
             ("minio_secret_key", "minio_secret_key_file"),
             ("smtp_password", "smtp_password_file"),
+            ("feishu_app_secret", "feishu_app_secret_file"),
         )
         for value_name, file_name in secret_files:
             file_value = resolved.get(file_name)
@@ -135,6 +150,39 @@ class Settings(BaseSettings):
         if value != "Asia/Shanghai":
             raise ValueError("APP_TIMEZONE must be Asia/Shanghai")
         return value
+
+    @field_validator("feishu_wiki_url")
+    @classmethod
+    def validate_feishu_wiki_url(cls, value: AnyHttpUrl | None) -> AnyHttpUrl | None:
+        if value is None:
+            return None
+        parts = urlsplit(str(value))
+        hostname = (parts.hostname or "").lower()
+        if parts.scheme != "https" or not (
+            hostname.endswith(".feishu.cn") or hostname.endswith(".larksuite.com")
+        ):
+            raise ValueError("FEISHU_WIKI_URL must be an HTTPS Feishu or Lark URL")
+        if parts.username or parts.password or parts.port not in (None, 443) or parts.fragment:
+            raise ValueError("FEISHU_WIKI_URL contains unsupported URL components")
+        path = parts.path.rstrip("/")
+        if not (fullmatch(r"/wiki/space/[0-9]+", path) or fullmatch(r"/wiki/[A-Za-z0-9_-]+", path)):
+            raise ValueError(
+                "FEISHU_WIKI_URL must use /wiki/space/{space_id} or /wiki/{node_token}"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_feishu_configuration(self) -> Self:
+        values = (
+            self.feishu_app_id.strip(),
+            self.feishu_app_secret.get_secret_value().strip(),
+            self.feishu_wiki_url,
+        )
+        if any(values) and not all(values):
+            raise ValueError(
+                "FEISHU_APP_ID, FEISHU_APP_SECRET and FEISHU_WIKI_URL must be configured together"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_production_security(self) -> Self:
@@ -221,6 +269,14 @@ class Settings(BaseSettings):
     @property
     def csrf_cookie_name(self) -> str:
         return "__Host-pnx_csrf" if self.session_cookie_secure else "pnx_csrf"
+
+    @property
+    def feishu_knowledge_configured(self) -> bool:
+        return bool(
+            self.feishu_app_id.strip()
+            and self.feishu_app_secret.get_secret_value().strip()
+            and self.feishu_wiki_url is not None
+        )
 
 
 @lru_cache

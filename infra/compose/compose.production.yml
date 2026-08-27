@@ -32,6 +32,13 @@ x-app-environment: &app-environment
   SMTP_STARTTLS: "${SMTP_STARTTLS:-true}"
   MAIL_FROM: "${MAIL_FROM:?MAIL_FROM is required}"
   MAIL_REPLY_TO: "${MAIL_REPLY_TO:?MAIL_REPLY_TO is required}"
+  FEISHU_APP_ID: "${FEISHU_APP_ID:-}"
+  FEISHU_APP_SECRET_FILE: /run/secrets/feishu_app_secret
+  FEISHU_WIKI_URL: "${FEISHU_WIKI_URL:-${FEISHU_KNOWLEDGE_SOURCE_URL:-}}"
+  FEISHU_KNOWLEDGE_MAX_DOCUMENTS: "${FEISHU_KNOWLEDGE_MAX_DOCUMENTS:-500}"
+  FEISHU_KNOWLEDGE_MAX_ASSETS: "${FEISHU_KNOWLEDGE_MAX_ASSETS:-2000}"
+  FEISHU_KNOWLEDGE_MAX_ASSET_BYTES: "${FEISHU_KNOWLEDGE_MAX_ASSET_BYTES:-52428800}"
+
   GLOBAL_MAX_UPLOAD_BYTES: "${GLOBAL_MAX_UPLOAD_BYTES:-2147483648}"
   UPLOAD_PART_SIZE_BYTES: "${UPLOAD_PART_SIZE_BYTES:-16777216}"
   UPLOAD_SESSION_TTL_SECONDS: "${UPLOAD_SESSION_TTL_SECONDS:-86400}"
@@ -51,6 +58,7 @@ x-app-secrets: &app-secrets
   - minio_secret_key
   - smtp_password
 
+  - feishu_app_secret
 x-app-security: &app-security
   read_only: true
   init: true
@@ -360,5 +368,7 @@ secrets:
     file: "${MINIO_SECRET_KEY_SOURCE:?MINIO_SECRET_KEY_SOURCE is required}"
   smtp_password:
     file: "${SMTP_PASSWORD_SOURCE:?SMTP_PASSWORD_SOURCE is required}"
+  feishu_app_secret:
+    file: "${FEISHU_APP_SECRET_SOURCE:-/dev/null}"
   tls_private_key:
     file: "${TLS_PRIVATE_KEY_SOURCE:?TLS_PRIVATE_KEY_SOURCE is required}"

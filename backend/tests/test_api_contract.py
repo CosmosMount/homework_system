@@ -54,6 +54,11 @@ def test_stage_three_openapi_contains_dashboard_announcements_notifications_and_
         "/api/v1/uploads/{upload_id}/parts/presign",
         "/api/v1/uploads/{upload_id}/complete",
         "/api/v1/files/{file_id}/download-url",
+        "/api/v1/knowledge",
+        "/api/v1/knowledge/documents/{document_id}",
+        "/api/v1/knowledge/assets/{asset_id}/content",
+        "/api/v1/admin/knowledge",
+        "/api/v1/admin/knowledge/sync",
     }
 
     assert expected_paths <= set(paths)

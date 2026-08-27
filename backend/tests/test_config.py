@@ -37,6 +37,43 @@ def test_database_pool_defaults_match_four_web_worker_capacity_budget() -> None:
     assert settings.database_max_overflow == 4
 
 
+def test_feishu_knowledge_configuration_is_optional_but_atomic() -> None:
+    assert Settings(app_env="test").feishu_knowledge_configured is False
+    configured = Settings(
+        app_env="test",
+        feishu_app_id="app-id",
+        feishu_app_secret="secret-value",
+        feishu_wiki_url="https://pnx.feishu.cn/wiki/space/7666438057763015890",
+    )
+    assert configured.feishu_knowledge_configured is True
+
+    legacy_url = Settings(
+        app_env="test",
+        feishu_app_id="app-id",
+        feishu_app_secret="secret-value",
+        FEISHU_KNOWLEDGE_SOURCE_URL="https://pnx.feishu.cn/wiki/document-node",
+    )
+    assert legacy_url.feishu_knowledge_configured is True
+    assert str(legacy_url.feishu_wiki_url).startswith("https://pnx.feishu.cn/wiki/document-node")
+
+    with pytest.raises(ValidationError, match="must be configured together"):
+        Settings(app_env="test", feishu_app_id="app-id")
+    with pytest.raises(ValidationError, match="HTTPS Feishu or Lark URL"):
+        Settings(
+            app_env="test",
+            feishu_wiki_url="https://attacker.example/wiki/space/7666438057763015890",
+        )
+
+
+def test_feishu_wiki_url_rejects_invalid_paths() -> None:
+    for url in ("https://pnx.feishu.cn/wiki/", "https://pnx.feishu.cn/wiki/space/not-numeric"):
+        with pytest.raises(ValidationError, match="FEISHU_WIKI_URL"):
+            Settings(
+                app_env="test",
+                feishu_wiki_url=url,
+            )
+
+
 def test_connect_campus_domain_is_fixed_and_old_domain_is_rejected() -> None:
     settings = Settings(app_env="test")
 

@@ -404,6 +404,31 @@ class MinioObjectStore:
         except (BotoCoreError, ClientError, OSError) as exc:
             raise ObjectStoreError("OBJECT_IMPORT_FAILED") from exc
 
+    async def import_bytes(
+        self,
+        object_key: str,
+        content: bytes,
+        *,
+        content_type: str,
+    ) -> ObjectInspection:
+        await self.ensure_bucket()
+        parameters: dict[str, object] = {
+            "Bucket": self._bucket,
+            "Key": object_key,
+            "Body": content,
+            "ContentType": content_type,
+        }
+        try:
+            await asyncio.to_thread(self._client.put_object, **parameters)
+        except (BotoCoreError, ClientError, OSError) as exc:
+            raise ObjectStoreError("OBJECT_IMPORT_FAILED") from exc
+        return ObjectInspection(
+            size_bytes=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+            first_bytes=content[:32],
+            content_type=content_type,
+        )
+
     async def abort_multipart(self, *, object_key: str, upload_id: str) -> None:
         try:
             await asyncio.to_thread(
@@ -443,6 +468,31 @@ class MinioObjectStore:
                     "Bucket": self._bucket,
                     "Key": object_key,
                     "ResponseContentDisposition": disposition,
+                },
+                ExpiresIn=expires_seconds,
+                HttpMethod="GET",
+            )
+        except (BotoCoreError, ClientError, ValueError) as exc:
+            raise ObjectStoreError("DOWNLOAD_PRESIGN_FAILED") from exc
+        return self._public_url(internal_url)
+
+    async def presign_inline(
+        self,
+        *,
+        object_key: str,
+        file_name: str,
+        content_type: str,
+        expires_seconds: int,
+    ) -> str:
+        disposition = f"inline; filename*=UTF-8''{quote(file_name, safe='')}"
+        try:
+            internal_url = self._client.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": self._bucket,
+                    "Key": object_key,
+                    "ResponseContentDisposition": disposition,
+                    "ResponseContentType": content_type,
                 },
                 ExpiresIn=expires_seconds,
                 HttpMethod="GET",
