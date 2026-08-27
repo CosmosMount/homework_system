@@ -4,7 +4,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -44,6 +44,7 @@ from app.competitions.schemas import (
     AdminTeamListItem,
     AdminTeamListResponse,
     AdminTeamSubmissionItem,
+    AutoAssignResponse,
     CaptainTransferRequest,
     CompetitionCreateRequest,
     CompetitionDetailResponse,
@@ -59,6 +60,8 @@ from app.competitions.schemas import (
     RegistrationResponse,
     RegistrationStatus,
     TeamCreatedResponse,
+    TeamDirectoryItem,
+    TeamDirectoryResponse,
     TeamMemberResponse,
     TeamResponse,
     TeamStatus,
@@ -518,6 +521,55 @@ class CompetitionService:
             raise self._not_found()
         return await self._team_response(team, actor_user_id=context.user.id)
 
+    async def public_teams(
+        self,
+        competition_id: UUID,
+        *,
+        context: AuthenticatedContext,
+        query: str | None,
+        page: int,
+        page_size: int,
+    ) -> TeamDirectoryResponse:
+        self._require_student(context)
+        competition = await self._competitions.get_competition(competition_id)
+        if (
+            competition is None
+            or competition.published_at is None
+            or competition.status
+            in {
+                "draft",
+                "archived",
+            }
+        ):
+            raise self._not_found()
+        records, total = await self._competitions.list_public_teams(
+            competition_id,
+            query=query,
+            page=page,
+            page_size=page_size,
+            max_team_size=competition.max_team_size,
+        )
+        can_join = registration_is_open(competition, self._clock())
+        return TeamDirectoryResponse(
+            items=[
+                TeamDirectoryItem(
+                    id=record.team.id,
+                    competition_id=competition_id,
+                    name=record.team.name,
+                    status=cast(TeamStatus, record.team.status),
+                    member_count=record.member_count,
+                    max_team_size=competition.max_team_size,
+                    can_join=can_join
+                    and record.team.status == "forming"
+                    and record.member_count < competition.max_team_size,
+                )
+                for record in records
+            ],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+
     async def _require_registered(
         self, competition_id: UUID, user_id: UUID
     ) -> CompetitionRegistration:
@@ -746,6 +798,105 @@ class CompetitionService:
             team,
             actor_user_id=audit_context.actor.user.id,
             competition=competition,
+        )
+
+    async def auto_assign(
+        self,
+        competition_id: UUID,
+        *,
+        audit_context: CompetitionAuditContext,
+    ) -> AutoAssignResponse:
+        """Assign a registered student to the smallest available forming team."""
+        self._require_student(audit_context.actor)
+        competition = await self._competitions.get_competition(competition_id, for_update=True)
+        now = self._clock()
+        if competition is None or competition.published_at is None:
+            await self._session.rollback()
+            raise self._not_found()
+        await self._advance_locked(competition, now)
+        if not registration_is_open(competition, now):
+            await self._session.rollback()
+            raise self._conflict("COMPETITION_REGISTRATION_CLOSED", "当前不在赛事报名期。")
+        await self._require_registered(competition_id, audit_context.actor.user.id)
+        existing = await self._competitions.team_for_user(
+            competition_id, audit_context.actor.user.id, for_update=True
+        )
+        if existing is not None:
+            await self._session.rollback()
+            raise self._conflict("ALREADY_IN_TEAM", "当前账号已加入本赛事的队伍。")
+        selected: Team | None = None
+        selected_count = competition.max_team_size
+        for candidate in await self._competitions.forming_teams_for_update(competition_id):
+            candidate_count = await self._competitions.member_count(candidate.id)
+            if candidate_count >= competition.max_team_size:
+                continue
+            if selected is None or (candidate_count, candidate.created_at, candidate.id) < (
+                selected_count,
+                selected.created_at,
+                selected.id,
+            ):
+                selected = candidate
+                selected_count = candidate_count
+        assignment: Literal["joined", "created"]
+        invite_code: str | None = None
+        if selected is None:
+            invite_code = self._new_invite_code()
+            selected = Team(
+                id=uuid7(),
+                competition_id=competition_id,
+                name="自动组队-" + secrets.token_hex(3).upper(),
+                status="forming",
+                captain_user_id=audit_context.actor.user.id,
+                invite_code_hash=self._invite_hash(invite_code),
+                invite_code_rotated_at=now,
+                min_size_waived_at=None,
+                min_size_waived_by=None,
+                waiver_reason=None,
+                disqualified_at=None,
+                disqualified_by=None,
+                disqualification_reason=None,
+                locked_at=None,
+                dissolved_at=None,
+                created_at=now,
+                updated_at=now,
+                revision=1,
+            )
+            self._competitions.add_team(selected)
+            assignment = "created"
+        else:
+            assignment = "joined"
+        self._competitions.add_member(
+            TeamMember(
+                id=uuid7(),
+                team_id=selected.id,
+                competition_id=competition_id,
+                user_id=audit_context.actor.user.id,
+                joined_at=now,
+                left_at=None,
+                added_by_admin=False,
+                admin_reason=None,
+            )
+        )
+        self._add_audit(
+            audit_context,
+            action="team.auto_assign",
+            target_type="team",
+            target_id=selected.id,
+            change_summary={"assignment": assignment},
+            now=now,
+        )
+        try:
+            await self._session.commit()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise self._conflict(
+                "TEAM_MEMBERSHIP_CONFLICT", "队伍分配发生并发冲突，请重试。"
+            ) from exc
+        response = await self._team_response(
+            selected, actor_user_id=audit_context.actor.user.id, competition=competition
+        )
+        return AutoAssignResponse(
+            **response.model_dump(), assignment=assignment, invite_code=invite_code
         )
 
     async def rotate_invite_code(

@@ -36,6 +36,7 @@ function itemsForUser(user: User, unreadCount: number): NavigationItem[] {
           { href: "/admin/announcements", label: "通知管理", icon: "announcement" },
           { href: "/admin/assignments", label: "作业管理", icon: "assignment" },
           { href: "/admin/competitions", label: "校内赛", icon: "competition" },
+          { href: "/admin/intentions", label: "意向调查", icon: "layers" },
           { href: "/admin/users", label: "用户管理", icon: "users" },
           { href: "/admin/categories", label: "方向设置", icon: "categories" },
           { href: "/admin/sessions", label: "登录人员", icon: "monitor" },
@@ -46,7 +47,8 @@ function itemsForUser(user: User, unreadCount: number): NavigationItem[] {
           { href: "/dashboard", label: "工作台", icon: "dashboard" },
           { href: "/announcements", label: "通知", icon: "announcement", badgeCount: unreadCount },
           { href: "/assignments", label: "作业", icon: "assignment" },
-          { href: "/competitions", label: "赛事", icon: "competition" },
+          { href: "/competitions", label: "校内赛", icon: "competition" },
+          { href: "/intentions", label: "意向调查", icon: "layers" },
         ];
 
   return primary.map((item) => ({

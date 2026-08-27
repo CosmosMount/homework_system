@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 import app.announcements.models  # noqa: F401
 import app.assignments.models  # noqa: F401
 import app.competitions.models  # noqa: F401
+import app.intentions.models  # noqa: F401
 import app.submissions.models  # noqa: F401
 from app.audit.models import AuditLog  # noqa: F401
 from app.auth.models import AuthSecurityEvent, OneTimeToken, Session  # noqa: F401

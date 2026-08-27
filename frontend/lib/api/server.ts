@@ -4,11 +4,16 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { isAdminView } from "@/lib/api/types";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
 import type {
   AdminCompetitionDetail,
   AdminRegistrationList,
   AdminSession,
+  AdminIntentionSurveyPage,
+  IntentionStats,
+  IntentionSurvey,
+  IntentionSurveyPage,
   AdminTeamDetail,
   AdminTeamList,
   AnnouncementAdmin,
@@ -59,10 +64,15 @@ export async function getOptionalUser(): Promise<User | null> {
   return result;
 }
 
-export async function requireUser(): Promise<User> {
+export async function requireUser(returnTo?: string): Promise<User> {
   const user = await getOptionalUser();
   if (user === null) {
-    redirect("/login");
+    const safeReturnTo = safeReturnPath(returnTo);
+    redirect(
+      safeReturnTo === null
+        ? "/login"
+        : "/login?next=" + encodeURIComponent(safeReturnTo),
+    );
   }
   return user;
 }
@@ -314,6 +324,48 @@ export async function getCompetitionTeam(
     return null;
   }
   return resolveProtectedResult(result);
+}
+
+export async function getCompetitionTeams(
+  competitionId: string,
+  search = "",
+): Promise<import("@/lib/api/types").TeamDirectoryPage> {
+  const suffix = search ? "?" + search : "";
+  return resolveProtectedResult(
+    await serverApi<import("@/lib/api/types").TeamDirectoryPage>(
+      "/competitions/" + encodeURIComponent(competitionId) + "/teams" + suffix,
+    ),
+  );
+}
+
+export async function getIntentions(): Promise<IntentionSurveyPage> {
+  return resolveProtectedResult(await serverApi<IntentionSurveyPage>("/intentions"));
+}
+
+export async function getIntention(
+  surveyId: string,
+  token = "",
+): Promise<IntentionSurvey | null> {
+  const query = token ? "?token=" + encodeURIComponent(token) : "";
+  const result = await serverApi<IntentionSurvey>(
+    "/intentions/" + encodeURIComponent(surveyId) + query,
+  );
+  if (result instanceof Response && result.status === 404) return null;
+  return resolveProtectedResult(result);
+}
+
+export async function getAdminIntentions(): Promise<AdminIntentionSurveyPage> {
+  return resolveProtectedResult(
+    await serverApi<AdminIntentionSurveyPage>("/admin/intentions"),
+  );
+}
+
+export async function getAdminIntentionStats(surveyId: string): Promise<IntentionStats> {
+  return resolveProtectedResult(
+    await serverApi<IntentionStats>(
+      "/admin/intentions/" + encodeURIComponent(surveyId) + "/stats",
+    ),
+  );
 }
 
 export async function getCompetitionTask(

@@ -335,4 +335,44 @@ describe("competition UI", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText(/TEAM SUBMISSION · NO SHOWCASE/)).toBeInTheDocument();
   });
+
+  it("automatically joins the smallest available team", async () => {
+    csrfFetchMock.mockResolvedValue({
+      ...team({ id: "team-small", name: "人数较少队" }),
+      assignment: "joined",
+      invite_code: null,
+    });
+    render(
+      <CompetitionRegistrationActions
+        competition={competition({ registration_status: "registered" })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "没有队伍？自动分配" }));
+
+    expect(await screen.findByText("已将你分配到人数较少的队伍。")).toBeInTheDocument();
+    expect(screen.getByText("人数较少队")).toBeInTheDocument();
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/competitions/competition-1/auto-assign",
+      { method: "POST" },
+    );
+  });
+
+  it("shows the one-time invite when automatic assignment creates a team", async () => {
+    csrfFetchMock.mockResolvedValue({
+      ...team({ id: "team-auto", name: "自动组队-A1B2C3" }),
+      assignment: "created",
+      invite_code: "AUTO-CODE-123",
+    });
+    render(
+      <CompetitionRegistrationActions
+        competition={competition({ registration_status: "registered" })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "没有队伍？自动分配" }));
+
+    expect(await screen.findByText("AUTO-CODE-123")).toBeInTheDocument();
+    expect(screen.getByText(/邀请码只显示这一次/)).toBeInTheDocument();
+  });
 });

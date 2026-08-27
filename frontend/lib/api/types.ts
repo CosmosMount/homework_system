@@ -593,6 +593,28 @@ export type TeamCreated = Team & {
   invite_code: string;
 };
 
+export type AutoAssign = Team & {
+  assignment: "joined" | "created";
+  invite_code: string | null;
+};
+
+export type TeamDirectoryItem = {
+  id: string;
+  competition_id: string;
+  name: string;
+  status: TeamStatus;
+  member_count: number;
+  max_team_size: number;
+  can_join: boolean;
+};
+
+export type TeamDirectoryPage = {
+  items: TeamDirectoryItem[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
 export type InviteCodeRotated = {
   team_id: string;
   invite_code: string;
@@ -626,4 +648,80 @@ export type AdminTeamSubmissionItem = {
 
 export type AdminTeamDetail = Team & {
   submissions: AdminTeamSubmissionItem[];
+};
+
+
+export type IntentionStatus = "draft" | "open" | "closed" | "archived";
+
+export type IntentionOption = {
+  id: string;
+  label: string;
+  display_order: number;
+};
+
+export type IntentionSurveySummary = {
+  id: string;
+  title: string;
+  description_html: string;
+  status: IntentionStatus;
+  allow_multiple: boolean;
+  starts_at: string | null;
+  ends_at: string | null;
+  option_count: number;
+  has_response: boolean;
+};
+
+export type IntentionSurvey = IntentionSurveySummary & {
+  options: IntentionOption[];
+  response: {
+    selected_option_ids: string[];
+    free_text: string | null;
+    submitted_at: string;
+  } | null;
+  revision: number;
+};
+
+export type IntentionSurveyPage = {
+  items: IntentionSurveySummary[];
+  total: number;
+};
+
+export type AdminIntentionSurvey = {
+  id: string;
+  title: string;
+  description_markdown: string;
+  status: IntentionStatus;
+  allow_multiple: boolean;
+  starts_at: string | null;
+  ends_at: string | null;
+  option_count: number;
+  responded_count: number;
+  created_at: string;
+  updated_at: string;
+  revision: number;
+};
+
+export type AdminIntentionSurveyPage = {
+  items: AdminIntentionSurvey[];
+  total: number;
+};
+
+export type IntentionStats = {
+  survey_id: string;
+  total_active_students: number;
+  responded_count: number;
+  response_rate: number;
+  options: {
+    option_id: string;
+    label: string;
+    response_count: number;
+    percentage: number;
+  }[];
+};
+
+export type IntentionQr = {
+  survey_id: string;
+  token: string;
+  fill_url: string;
+  generated_at: string;
 };

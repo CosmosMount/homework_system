@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import LoginPage from "@/app/login/page";
 import RegisterPage from "@/app/register/page";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
 const { apiFetchMock, clearCsrfTokenMock, refreshMock, replaceMock } =
   vi.hoisted(() => ({
@@ -34,8 +35,8 @@ describe("login page", () => {
     replaceMock.mockReset();
   });
 
-  it("shows an accessible login form", () => {
-    render(<LoginPage />);
+  it("shows an accessible login form", async () => {
+    render(await LoginPage());
 
     expect(
       screen.getByRole("heading", { name: "登录训练平台" }),
@@ -62,7 +63,7 @@ describe("login page", () => {
 
   it("submits credentials and routes an administrator", async () => {
     apiFetchMock.mockResolvedValue({ user: { role: "admin" } });
-    render(<LoginPage />);
+    render(await LoginPage());
 
     fireEvent.change(screen.getByLabelText("用户名或校园邮箱"), {
       target: { value: "admin" },
@@ -88,7 +89,7 @@ describe("login page", () => {
 
   it("shows the message from a local runtime error", async () => {
     apiFetchMock.mockRejectedValue(new Error("服务暂时不可用。"));
-    render(<LoginPage />);
+    render(await LoginPage());
 
     fireEvent.change(screen.getByLabelText("用户名或校园邮箱"), {
       target: { value: "admin@connect.hkust-gz.edu.cn" },
@@ -100,6 +101,36 @@ describe("login page", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "服务暂时不可用。",
+    );
+  });
+
+  it("returns to a same-origin intention form after login", async () => {
+    apiFetchMock.mockResolvedValue({ user: { role: "student" } });
+    const returnTo = "/intentions/survey-1?token=qr-token";
+    render(
+      await LoginPage({
+        searchParams: Promise.resolve({ next: returnTo }),
+      }),
+    );
+
+    fireEvent.change(screen.getByLabelText("用户名或校园邮箱"), {
+      target: { value: "student" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "correct-password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith(returnTo));
+  });
+
+  it("rejects external and recursive login return paths", () => {
+    expect(safeReturnPath("https://evil.invalid/steal")).toBeNull();
+    expect(safeReturnPath("//evil.invalid/steal")).toBeNull();
+    expect(safeReturnPath("/login?next=/dashboard")).toBeNull();
+    expect(safeReturnPath("/login/?next=/dashboard")).toBeNull();
+    expect(safeReturnPath("/intentions/survey-1?token=safe")).toBe(
+      "/intentions/survey-1?token=safe",
     );
   });
 

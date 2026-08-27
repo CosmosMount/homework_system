@@ -33,6 +33,12 @@ class TeamListRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class TeamDirectoryRecord:
+    team: Team
+    member_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class RegistrationListRecord:
     registration: CompetitionRegistration
     user: User
@@ -403,6 +409,50 @@ class CompetitionRepository:
                 )
             ).all()
         )
+
+    async def list_public_teams(
+        self,
+        competition_id: UUID,
+        *,
+        query: str | None,
+        max_team_size: int,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[TeamDirectoryRecord], int]:
+        """List forming, non-full teams without exposing invite or member details."""
+        member_counts = (
+            select(TeamMember.team_id.label("team_id"), func.count().label("member_count"))
+            .where(TeamMember.left_at.is_(None))
+            .group_by(TeamMember.team_id)
+            .subquery()
+        )
+        filters = [
+            Team.competition_id == competition_id,
+            Team.status == "forming",
+            func.coalesce(member_counts.c.member_count, 0) < max_team_size,
+        ]
+        if query and query.strip():
+            filters.append(Team.name.ilike(f"%{query.strip()}%"))
+        total = int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(Team)
+                .outerjoin(member_counts, member_counts.c.team_id == Team.id)
+                .where(*filters)
+            )
+            or 0
+        )
+        rows = (
+            await self._session.execute(
+                select(Team, func.coalesce(member_counts.c.member_count, 0))
+                .outerjoin(member_counts, member_counts.c.team_id == Team.id)
+                .where(*filters)
+                .order_by(func.lower(Team.name), Team.id)
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        ).all()
+        return [TeamDirectoryRecord(team=row[0], member_count=int(row[1])) for row in rows], total
 
     async def list_teams(self, competition_id: UUID) -> list[TeamListRecord]:
         member_counts = (

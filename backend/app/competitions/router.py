@@ -18,6 +18,7 @@ from app.competitions.schemas import (
     AdminRegistrationListResponse,
     AdminTeamDetailResponse,
     AdminTeamListResponse,
+    AutoAssignResponse,
     CaptainTransferRequest,
     CompetitionCreateRequest,
     CompetitionDetailResponse,
@@ -31,6 +32,7 @@ from app.competitions.schemas import (
     RegistrationResponse,
     TeamCreatedResponse,
     TeamCreateRequest,
+    TeamDirectoryResponse,
     TeamJoinRequest,
     TeamResponse,
 )
@@ -145,6 +147,37 @@ async def get_my_team(
     context: AuthenticatedContextDependency,
 ) -> TeamResponse:
     return await service.my_team(competition_id, context=context)
+
+
+@router.get(
+    "/competitions/{competition_id}/teams",
+    response_model=TeamDirectoryResponse,
+)
+async def list_public_teams(
+    competition_id: UUID,
+    service: CompetitionServiceDependency,
+    context: AuthenticatedContextDependency,
+    query: Annotated[str | None, Query(max_length=120)] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> TeamDirectoryResponse:
+    return await service.public_teams(
+        competition_id, context=context, query=query, page=page, page_size=page_size
+    )
+
+
+@router.post(
+    "/competitions/{competition_id}/auto-assign",
+    response_model=AutoAssignResponse,
+)
+async def auto_assign_team(
+    competition_id: UUID,
+    request: Request,
+    service: CompetitionServiceDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> AutoAssignResponse:
+    return await service.auto_assign(competition_id, audit_context=_audit_context(request, context))
 
 
 @router.post(

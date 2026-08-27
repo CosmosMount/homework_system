@@ -184,6 +184,23 @@ class TeamJoinRequest(BaseModel):
     invite_code: str = Field(min_length=6, max_length=64)
 
 
+class TeamDirectoryItem(BaseModel):
+    id: UUID
+    competition_id: UUID
+    name: str
+    status: TeamStatus
+    member_count: int
+    max_team_size: int
+    can_join: bool
+
+
+class TeamDirectoryResponse(BaseModel):
+    items: list[TeamDirectoryItem]
+    total: int
+    page: int
+    page_size: int
+
+
 class CaptainTransferRequest(BaseModel):
     new_captain_user_id: UUID
 
@@ -231,6 +248,11 @@ class TeamResponse(BaseModel):
 
 class TeamCreatedResponse(TeamResponse):
     invite_code: str
+
+
+class AutoAssignResponse(TeamResponse):
+    assignment: Literal["joined", "created"]
+    invite_code: str | None = None
 
 
 class InviteCodeRotatedResponse(BaseModel):

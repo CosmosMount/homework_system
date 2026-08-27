@@ -19,6 +19,7 @@ import {
   fieldReason,
 } from "@/lib/api/client";
 import type { User } from "@/lib/api/types";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
 const reasonMessages: Record<string, string> = {
   INVALID_CAMPUS_EMAIL: "请输入有效的 @connect.hkust-gz.edu.cn 校园邮箱。",
@@ -48,7 +49,7 @@ function errorMessage(error: unknown): string {
   return "网络连接失败，请检查网络后重试。";
 }
 
-export function LoginForm() {
+export function LoginForm({ returnTo = null }: Readonly<{ returnTo?: string | null }>) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -68,7 +69,10 @@ export function LoginForm() {
         }),
       });
       clearCsrfToken();
-      router.replace(result.user.role === "admin" ? "/admin/dashboard" : "/dashboard");
+      router.replace(
+        safeReturnPath(returnTo) ??
+          (result.user.role === "admin" ? "/admin/dashboard" : "/dashboard"),
+      );
       router.refresh();
     } catch (nextError) {
       setError(nextError);

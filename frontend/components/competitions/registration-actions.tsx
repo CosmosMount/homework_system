@@ -12,6 +12,7 @@ import {
 import { ApiError, csrfFetch } from "@/lib/api/client";
 import type {
   CompetitionDetail,
+  AutoAssign,
   Registration,
   Team,
   TeamCreated,
@@ -137,8 +138,31 @@ export function CompetitionRegistrationActions({
     }
   }
 
+  async function autoAssign() {
+    begin();
+    try {
+      const result = await csrfFetch<AutoAssign>(
+        "/competitions/" + competition.id + "/auto-assign",
+        { method: "POST" },
+      );
+      setTeamId(result.id);
+      setTeamName(result.name);
+      if (result.invite_code) setOneTimeInviteCode(result.invite_code);
+      setMessage(
+        result.assignment === "created"
+          ? "已为你创建自动组队队伍。邀请码只显示这一次，请立即保存。"
+          : "已将你分配到人数较少的队伍。",
+      );
+      router.refresh();
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
-    <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
+    <section className="mt-8 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[var(--shadow-card)] sm:p-6">
       <h2 className="text-xl font-semibold">我的参赛状态</h2>
       {message ? (
         <div className="mt-4">
@@ -152,7 +176,7 @@ export function CompetitionRegistrationActions({
       ) : null}
 
       {oneTimeInviteCode ? (
-        <div className="mt-4 border border-[var(--color-warning)] bg-[var(--color-bg)] p-4">
+        <div className="mt-4 rounded-xl border border-[var(--color-warning)] bg-[var(--color-bg)] p-4">
           <p className="text-sm text-[var(--color-warning)]">
             一次性显示的邀请码
           </p>
@@ -166,7 +190,7 @@ export function CompetitionRegistrationActions({
       ) : null}
 
       {teamId ? (
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-4 border border-[var(--color-border)] p-4">
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[var(--color-border)] p-4">
           <div>
             <p className="text-sm text-[var(--color-text-muted)]">当前队伍</p>
             <p className="mt-1 font-medium">{teamName}</p>
@@ -191,7 +215,7 @@ export function CompetitionRegistrationActions({
         registrationOpen ? (
           <div className="mt-5 grid gap-5 lg:grid-cols-2">
             <form
-              className="space-y-4 border border-[var(--color-border)] p-4"
+              className="space-y-4 rounded-xl border border-[var(--color-border)] p-4"
               onSubmit={createTeam}
             >
               <h3 className="font-medium">创建队伍</h3>
@@ -210,7 +234,7 @@ export function CompetitionRegistrationActions({
               </button>
             </form>
             <form
-              className="space-y-4 border border-[var(--color-border)] p-4"
+              className="space-y-4 rounded-xl border border-[var(--color-border)] p-4"
               onSubmit={joinTeam}
             >
               <h3 className="font-medium">使用邀请码加入</h3>
@@ -229,6 +253,14 @@ export function CompetitionRegistrationActions({
                 加入队伍
               </button>
             </form>
+            <button
+              className={buttonClassName + " justify-self-start lg:col-span-2"}
+              disabled={pending}
+              onClick={autoAssign}
+              type="button"
+            >
+              没有队伍？自动分配
+            </button>
             <button
               className="min-h-11 justify-self-start border border-[var(--color-danger)] px-5 text-[var(--color-danger)] lg:col-span-2"
               disabled={pending}

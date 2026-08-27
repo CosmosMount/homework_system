@@ -55,3 +55,26 @@ def test_stage_five_openapi_contains_competitions_teams_and_team_submissions() -
     serialized = str(schema).lower()
     assert "'score'" not in serialized
     assert "'ranking'" not in serialized
+
+
+def test_openapi_contains_team_matching_and_intention_surveys() -> None:
+    schema = create_app(Settings(app_env="test")).openapi()
+    paths = schema["paths"]
+
+    expected_paths = {
+        "/api/v1/competitions/{competition_id}/auto-assign",
+        "/api/v1/intentions",
+        "/api/v1/intentions/{survey_id}",
+        "/api/v1/intentions/{survey_id}/response",
+        "/api/v1/admin/intentions",
+        "/api/v1/admin/intentions/{survey_id}",
+        "/api/v1/admin/intentions/{survey_id}/stats",
+        "/api/v1/admin/intentions/{survey_id}/qr-token",
+        "/api/v1/admin/intentions/{survey_id}/{action}",
+    }
+
+    assert expected_paths <= set(paths)
+    assert "get" in paths["/api/v1/competitions/{competition_id}/teams"]
+    assert "post" in paths["/api/v1/competitions/{competition_id}/auto-assign"]
+    assert "invite_code" not in schema["components"]["schemas"]["TeamDirectoryItem"]["properties"]
+    assert "members" not in schema["components"]["schemas"]["TeamDirectoryItem"]["properties"]
