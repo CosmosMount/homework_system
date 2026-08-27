@@ -16,14 +16,14 @@
 
 阶段 1～6 已完成实现与真实 Linux Docker/浏览器/运维验收，首版发布候选已经形成。系统具备认证与两角色授权、用户与技术方向分类、通知与工作台、邮件 Outbox、固定受众作业、个人/团队不可变版本、私密评语、作业内优秀版本、赛事报名组队，以及通知/作业/赛事共用的 MinIO multipart。管理员可维护自己的姓名、学号和校园邮箱，查看全体活跃登录人员的脱敏会话信息，并可在当前 Session 临时切换学生视图。
 
-当前质量门通过 Ruff/136 个 Python 文件格式检查、100 个应用源文件严格 Mypy、135 个后端测试、ESLint、严格 TypeScript、47 个前端测试和主机/容器 Next.js 生产构建。阶段 6 的 Chromium/Firefox/WebKit 核心流程及 `npm audit`、`pip-audit`、Gitleaks、Alpine 镜像与生产配置安全门继续有效。
+当前质量门通过 Ruff、145 个 Python 文件格式检查、134 个源文件严格 Mypy、159 个后端测试、ESLint、严格 TypeScript、18 个前端测试文件/62 项测试和主机/容器 Next.js 生产构建；npm 与 Python 锁定依赖审计均为 0 个已知漏洞。阶段 6 的 Chromium/Firefox/WebKit 核心流程及 `npm audit`、`pip-audit`、Gitleaks、Alpine 镜像与生产配置安全门继续有效。
 
 生产资源边界下读取 P95 为 341.754 ms、错误率 0%；每日增量恢复 RPO 31 秒、RTO 13 秒且对象对账为 0。空库已完成 `base → 20260825_0006 → 20260825_0005 → 20260825_0006`，并发邮箱验证只产生一个初始管理员和一条授予审计；阶段 6 发布脚本记录 `pnx-release-20260825T013516Z` 并通过 HTTPS 冒烟，所有认证增量隔离资源也已清理。
 
-开发 Compose 上一次运行态为 `20260825_0007`，Frontend、Backend、Worker、PostgreSQL、MinIO 与 Nginx 均健康且只有 Nginx 映射 `0.0.0.0:5000`；本轮代码迁移 head 为 `20260826_0008`，已应用并运行。数据库已清除历史 Stage 4/Stage 5/Codex Smoke 数据，只保留 `yzhang367@connect.hkust-gz.edu.cn`，该账号是唯一的已验证 `active admin`；MinIO 私有桶为 0 对象，非目标 Outbox 为 0。角色变化已撤销全部旧 Session，用户需重新登录；两条维护审计保留，Alembic head 为 0008（已应用并运行）。删除前 PostgreSQL 与 MinIO 恢复材料暂存于 `/tmp`，路径和校验值见 `.agents/plans/plan_remove_smoke_accounts.md` 与运维报告。统一前端 API Client 已兼容 `202` 等成功空响应，管理员新建作业、个人资料和登录人员页面均已注册。
+开发 Compose 当前运行态为 `20260827_0009 (head)`，Frontend、Backend、Worker、PostgreSQL、MinIO 与 Nginx 均健康且只有 Nginx 映射 `0.0.0.0:5000`；Alembic 模型漂移检查没有待生成操作。数据库已清除历史 Stage 4/Stage 5/Codex Smoke 数据，只保留 `yzhang367@connect.hkust-gz.edu.cn`，该账号是唯一的已验证 `active admin`；MinIO 私有桶为 0 对象，非目标 Outbox 为 0。角色变化已撤销全部旧 Session，用户需重新登录；两条维护审计保留，Alembic head 为 0009（已应用并运行）。删除前 PostgreSQL 与 MinIO 恢复材料暂存于 `/tmp`，路径和校验值见 `.agents/plans/plan_remove_smoke_accounts.md` 与运维报告。统一前端 API Client 已兼容 `202` 等成功空响应，管理员新建作业、个人资料和登录人员页面均已注册。
 浏览器端作业/通知发布、正式版本和上传幂等操作已统一兼容普通局域网 HTTP：原生 `crypto.randomUUID()` 缺失时使用 Web Crypto `getRandomValues()` 生成 UUID v4。Frontend 新镜像和 Nginx 已重启，真实 Chromium 环境能力与回归测试一致。
 
-当前没有进行中的仓库开发任务；局域网 HTTP 作业发布兼容修复已完成并部署。现场上线仍须部署方提供受信域名/证书、异机加密备份目标、独立告警接收方和学校数据留存/灾难恢复制度，不能把临时 CA、本机目录或未经投递验收的 SMTP 配置当作已完成；只有用户表恰好一行且唯一账号已验证、处于 `active` 时才允许自动修正管理员，多账号无管理员的历史库仍必须走受控恢复。
+当前没有进行中的仓库开发任务；管理员统一页头、单一校内赛管理、学生队伍中心与意向调查均已完成并部署。现场上线仍须部署方提供受信域名/证书、异机加密备份目标、独立告警接收方和学校数据留存/灾难恢复制度，不能把临时 CA、本机目录或未经投递验收的 SMTP 配置当作已完成；只有用户表恰好一行且唯一账号已验证、处于 `active` 时才允许自动修正管理员，多账号无管理员的历史库仍必须走受控恢复。
 
 
 ## 2026-08-27 增量记忆
@@ -31,3 +31,6 @@
 - 管理员所有页面统一使用 `AdminPageHeader`，通知、作业、校内赛及详情页共享返回入口、标题层级和操作区。
 - 赛事管理产品入口固定为“校内赛”：首页直接列出当前未归档赛事的队伍；首次配置路由只在没有当前赛事时可用。
 - `CompetitionRepository` 使用事务级 advisory lock 配合未归档查询，`CompetitionService.create_competition` 在已有当前赛事时返回 `CAMPUS_COMPETITION_EXISTS`；归档历史赛事和赛题兼容数据不删除。
+- 学生校内赛入口现为队伍中心，公开目录只列未满 `forming` 队伍的名称、状态和人数，支持搜索、分页、邀请码加入及本人主动自动分配。
+- 新增登录态学生意向调查：管理员管理单选/多选、匿名汇总和本地二维码，学生只读取和修改本人回答；二维码 token 只存 SHA-256 且轮换后旧码失效。
+- 2026-08-27 已重建 Backend/Worker/Frontend/Nginx；六服务健康，四个健康端点为 200，新增受保护页面/API 的匿名请求分别由登录守卫返回 307/401。

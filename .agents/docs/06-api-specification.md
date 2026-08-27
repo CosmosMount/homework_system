@@ -241,6 +241,8 @@
 | 方法与路径 | 请求/行为 | 需求 |
 | --- | --- | --- |
 | `GET /competitions/{competition_id}/my-team` | 返回本人队伍、成员与权限 | TEAM-001～TEAM-006 |
+| `GET /competitions/{competition_id}/teams` | `query,page,page_size`；只返回未满 `forming` 队伍的名称、状态、人数、最大人数和 `can_join`，不返回成员或邀请码 | TEAM-008 |
+| `POST /competitions/{competition_id}/auto-assign` | 已报名且无队伍学生申请；优先加入人数较少的成形队伍，否则自动建队 | TEAM-002、TEAM-004、TEAM-008 |
 | `POST /competitions/{competition_id}/teams` | `{name}` 创建队伍并成为队长 | TEAM-001 |
 | `POST /competitions/{competition_id}/teams/join` | `{invite_code}` 加入队伍 | TEAM-001～TEAM-004 |
 | `POST /teams/{team_id}/invite-code/rotate` | 队长轮换邀请码，明文只返回一次 | TEAM-003 |
@@ -287,6 +289,31 @@
 赛事时间必须满足：`registration_start < registration_end <= submission_start < submission_end`；现有字段用于兼容状态机，其中 submission_start 表示组队锁定时间，submission_end 表示赛事结束时间。新赛事不校验赛题截止。
 个人取消资格原因只返回管理员和对应学生本人；联动队伍的 `disqualification_reason` 使用不含个人原因的固定通用说明。管理员补录使 `invalid` 队伍达到最低人数时恢复 `locked`；从 `locked` 队伍移除成员后低于最低人数且没有豁免时转为 `invalid`。所有上述纠错请求必须提供非空原因并写审计。
 
+
+## 学生意向接口
+
+### 学生读取与回答
+
+| 方法与路径 | 行为 | 需求 |
+| --- | --- | --- |
+| `GET /intentions` | 返回当前 `open` 且处于填写窗口内的调查摘要及本人是否已回答 | INT-002～INT-004 |
+| `GET /intentions/{survey_id}` | 返回清洗说明、选项和本人当前回答；可选 `token` 不匹配时返回 404 | INT-001～INT-004、INT-006 |
+| `PUT /intentions/{survey_id}/response` | `{selected_option_ids,free_text?}` 首次填写或覆盖本人当前回答 | INT-002～INT-004 |
+
+学生接口按有效角色鉴权；普通管理员视图不能代填，管理员学生视图可以按本人账号填写。调查关闭、未开始或已过结束时间时，读取不可见，写入返回 `409 INTENTION_CLOSED`。单选多于一个、选项不属于调查或重复选项均被拒绝。
+
+### 管理接口
+
+| 方法与路径 | 行为 | 需求 |
+| --- | --- | --- |
+| `GET /admin/intentions` | 返回全部调查及选项数、填写人数，不含个人回答 | INT-001～INT-005 |
+| `POST /admin/intentions` | 创建 `draft` 单选/多选调查并清洗 Markdown | INT-001～INT-002 |
+| `PATCH /admin/intentions/{survey_id}` | 按 `revision` 修改尚未开放的标题、说明、选项和时间窗口 | INT-001～INT-002 |
+| `POST /admin/intentions/{survey_id}/{action}` | `action` 为 `open`、`closed` 或 `archived`，按顺序开放、关闭或归档调查 | INT-002 |
+| `GET /admin/intentions/{survey_id}/stats` | 返回有效学生数、填写人数/比例和各选项人数/比例 | INT-005 |
+| `POST /admin/intentions/{survey_id}/qr-token` | 轮换二维码 token 并返回 `{survey_id,token,fill_url,generated_at}` | INT-006 |
+
+状态只能 `draft → open → closed → archived`。统计响应不得包含 `user_id`、姓名、学号或补充说明。二维码 token 使用高熵随机值，数据库只保存 SHA-256；每次生成使旧 token 失效，`closed`/`archived` 调查拒绝生成，填写地址仍由 Session 登录保护。
 
 ## 优秀作业接口
 

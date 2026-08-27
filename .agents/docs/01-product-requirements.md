@@ -80,6 +80,7 @@ stateDiagram-v2
 - **TEAM-005**：报名结束后队伍自动进入 `locked`，普通成员关系不可再修改；管理员可以进行带原因的补录、移除或队长变更。
 - **TEAM-006**：报名结束后，`locked` 且有效的队伍作为参赛队伍只读展示；本产品不创建赛事作品版本或赛事评语。
 - **TEAM-007**：重复入队返回 `409 ALREADY_IN_COMPETITION_TEAM`；历史赛事提交接口仍按兼容路径执行原有队长权限校验。
+- **TEAM-008**：学生队伍中心必须提供按队伍名称搜索和分页的公开目录，只包含未满的 `forming` 队伍并只返回队伍名称、状态与人数，不公开成员身份或邀请码。报名期内已报名、尚无队伍的学生可以主动申请自动分配；服务端在事务内优先加入人数较少的未满 `forming` 队伍，无可用队伍时自动创建队伍并只在响应中返回一次邀请码，一赛一队唯一索引继续处理并发冲突。
 
 赛事和队伍状态关系：
 
@@ -94,6 +95,15 @@ stateDiagram-v2
     locked --> archived: 赛事归档
     disqualified --> archived: 赛事归档
 ```
+
+## 学生意向调查
+
+- **INT-001**：管理员可以创建包含标题、已清洗 Markdown 说明和 1～30 个选项的意向调查；调查可配置为单选或多选，标题和选项去除首尾空白后不得为空或重复。
+- **INT-002**：意向调查状态为 `draft`、`open`、`closed`、`archived`，只允许按该顺序推进；仅 `open` 且处于可选开始/结束时间窗口内的调查允许学生读取和填写。
+- **INT-003**：登录学生可以填写当前开放调查，并在调查关闭前修改自己的选择和可选补充说明；同一学生对同一调查始终只有一份当前回答。
+- **INT-004**：单选调查必须且只能提交一个有效选项，多选调查可以提交一个或多个有效选项；服务端验证所有选项属于当前调查，个人答案仅本人可读取。
+- **INT-005**：管理员可以查看有效学生总数、填写人数、填写率及每个选项的人数和比例，但管理 API 和页面不得返回个人答案、姓名或学号。
+- **INT-006**：管理员可以为未关闭调查生成移动端填写二维码；二维码 token 使用不可猜测随机值、数据库只保存 SHA-256，重新生成后旧 token 立即失效。二维码只定位调查，学生扫码后仍必须登录，并在登录后返回原调查填写页。
 
 ## 优秀作业
 
@@ -145,10 +155,12 @@ stateDiagram-v2
 | 查看作业 | 禁止 | 仅本人受众 | 全部 |
 | 创建作业版本 | 禁止 | 仅本人且未截止 | 禁止代交 |
 | 查看作业评语 | 禁止 | 仅本人 | 全部 |
-| 报名、建队、加入队伍 | 禁止 | 仅开放赛事 | 管理与纠错 |
+| 报名、建队、加入或自动分配队伍 | 禁止 | 仅开放赛事且本人符合资格 | 管理与纠错 |
 | 创建赛事版本 | 禁止 | 仅有效队长 | 禁止代交 |
 | 查看赛事版本与评语 | 禁止 | 当前团队成员 | 全部 |
 | 查看优秀作业 | 禁止 | 仅所属受众的作业内 | 全部作业 |
+| 填写或修改意向调查 | 禁止 | 仅开放调查且仅本人 | 可在学生视图填写本人答案 |
+| 查看意向汇总、管理调查与二维码 | 禁止 | 禁止 | 允许 |
 | 管理用户、通知、作业、赛事、优秀标记 | 禁止 | 禁止 | 允许 |
 
 ## 需求追溯入口
@@ -164,7 +176,8 @@ stateDiagram-v2
 | HW-001～HW-007 | 作业列表/详情、个人版本、管理员作业/提交 | `/assignments*`、`/admin/assignments*` | `assignments`、受众配置、`assignment_audience_users`、`assignment_extensions` | HW-T01～HW-T13 |
 | SUB-001～SUB-008 | 作业版本、管理员提交反馈 | `/submission-versions`、`/submissions/*`、管理员反馈接口 | `submissions`、`submission_versions`、`version_files`、`feedback` | HW-T04～HW-T09、HW-T13 |
 | COMP-001～COMP-006 | 校内赛公告/报名、管理员赛事 | `/competitions*`、`/admin/competitions*` | `competitions`、`competition_registrations`（`competition_tasks` 仅兼容历史数据） | COMP-T01～COMP-T04 |
-| TEAM-001～TEAM-007 | 我的队伍、管理员队伍 | `/teams*`、`/competitions/*/my-team`、`/admin/teams*` | `teams`、`team_members`、报名表与一赛一队部分唯一索引 | TEAM-T01～TEAM-T05 |
+| TEAM-001～TEAM-008 | 校内赛队伍中心、我的队伍、管理员队伍 | `/teams*`、`/competitions/*/teams`、`/competitions/*/auto-assign`、`/admin/teams*` | `teams`、`team_members`、报名表与一赛一队部分唯一索引 | TEAM-T01～TEAM-T10 |
+| INT-001～INT-006 | 学生意向列表/填写、管理员意向管理/统计/二维码 | `/intentions*`、`/admin/intentions*` | `intention_surveys`、`intention_options`、`intention_responses`、`intention_response_options` | INT-T01～INT-T08 |
 | SHOW-001～SHOW-005 | 作业详情的优秀作业区块、管理员提交详情 | `/assignments/*/excellent-submissions*`、管理员标记接口 | `assignment_excellent_submissions`、作业/版本外键和删除保护 | SHOW-T01～SHOW-T05 |
 | FILE-001～FILE-007 | 作业/赛题上传器、通知附件、授权下载 | `/uploads*`、`/files/*/download-url` | `files`、`upload_sessions`、`upload_parts`、正式资源附件关联 | FILE-T01～FILE-T09 |
 | MAIL-001～MAIL-005 | 认证邮件提示、通知发布结果、管理员邮件任务 | 认证邮件触发接口、通知发布、`/admin/mail-outbox*` | `outbox_jobs`、`student_notifications`、唯一事件键 | MAIL-T01～MAIL-T04、NEWS-T03 |

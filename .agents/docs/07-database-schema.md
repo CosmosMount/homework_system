@@ -41,6 +41,11 @@ erDiagram
     COMPETITIONS ||--o{ COMPETITION_TASKS : contains
     COMPETITIONS ||--o{ TEAMS : contains
     TEAMS ||--o{ TEAM_MEMBERS : has
+    USERS ||--o{ INTENTION_RESPONSES : submits
+    INTENTION_SURVEYS ||--o{ INTENTION_OPTIONS : defines
+    INTENTION_SURVEYS ||--o{ INTENTION_RESPONSES : receives
+    INTENTION_RESPONSES ||--o{ INTENTION_RESPONSE_OPTIONS : selects
+    INTENTION_OPTIONS ||--o{ INTENTION_RESPONSE_OPTIONS : selected_by
     ASSIGNMENTS ||--o{ SUBMISSIONS : receives
     COMPETITION_TASKS ||--o{ SUBMISSIONS : receives
     USERS ||--o{ SUBMISSIONS : owns_assignment
@@ -194,7 +199,7 @@ erDiagram
 
 - `(competition_id, lower(name))` 对未解散队伍唯一。
 - `captain_user_id` 必须是当前有效成员，由 Service 事务保证。
-- 邀请码只保存慢哈希或带服务端 pepper 的 HMAC，不保存明文。
+- 邀请码只保存慢哈希或带服务端 pepper 的 HMAC，不保存明文。公开目录只从该表和有效成员计数生成，不连接用户身份字段；自动分配锁定赛事及所有候选 `forming` 队伍并优先选择未满且人数较少者。
 
 ### `team_members`
 
@@ -204,6 +209,39 @@ erDiagram
 - 唯一 `(team_id, user_id, joined_at)` 保留重新加入历史。
 - Service 验证 `competition_id` 与 `teams.competition_id` 一致。
 - 索引 `(team_id, left_at)`。
+
+## 学生意向调查
+
+### `intention_surveys`
+
+`id`, `title`, `description_markdown`, `description_html`, `status`, `allow_multiple`, `starts_at`, `ends_at`, `public_token_hash`, `created_by`, `updated_by`, `created_at`, `updated_at`, `revision`。
+
+- `status` 只允许 `draft`、`open`、`closed`、`archived`，Service 只允许顺序推进。
+- 标题去除首尾空白后长度为 1～200；开始和结束时间同时存在时必须 `starts_at < ends_at`。
+- `description_html` 由统一安全 Markdown 渲染器生成；`public_token_hash` 是唯一 64 位 SHA-256 十六进制值，不保存二维码明文 token。
+- 索引 `(status, starts_at, ends_at)` 支持学生开放调查查询。
+
+### `intention_options`
+
+`id`, `survey_id`, `label`, `display_order`。
+
+- `survey_id` 删除时级联删除选项；`label` 去空白后非空，`display_order >= 0`。
+- `(survey_id, display_order)` 唯一；Service 额外按去空白后的大小写折叠标签拒绝重复选项。
+
+### `intention_responses`
+
+`id`, `survey_id`, `user_id`, `free_text`, `submitted_at`, `created_at`, `updated_at`, `revision`。
+
+- `(survey_id, user_id)` 唯一，保证同一学生只保留一份可修改当前回答；修改时更新选择、提交时间和 revision，不创建公开历史版本。
+- `user_id` 使用 `RESTRICT`，调查删除时级联删除回答；正式产品通过归档保留调查，不提供删除 API。
+
+### `intention_response_options`
+
+`response_id`, `option_id`，复合主键 `(response_id, option_id)`。
+
+- 回答删除时级联删除选择；选项仍被引用时 `RESTRICT`。
+- Service 在写入前锁定调查和本人回答，验证选项全部属于当前调查，并按 `allow_multiple` 限制选择数量；数据库唯一约束处理并发首次填写。
+- 管理员统计只聚合回答数和选项选择数，不连接或返回用户姓名、学号和补充说明。
 
 ## 提交、版本和评语
 
@@ -331,6 +369,7 @@ CHECK (
 | HW | `assignments`, 受众配置与快照, `assignment_extensions` |
 | COMP、TEAM | `competitions`, `competition_registrations`, `teams`, `team_members`；`competition_tasks` 仅保留历史兼容数据 |
 | SUB | `submissions`, `submission_versions`, `version_files`, `feedback` |
+| INT | `intention_surveys`, `intention_options`, `intention_responses`, `intention_response_options` |
 | SHOW | `assignment_excellent_submissions`、作业与版本外键、源附件删除保护 |
 | FILE | `files`, `upload_sessions`, `upload_parts` |
 | NFR-006 | `audit_logs` |
@@ -345,3 +384,4 @@ CHECK (
 5. 迁移测试从空库升级到最新，也从上一个发布版本升级到最新，并验证全部检查、唯一和外键约束。
 6. 数据修正迁移 `20260825_0007` 不改变结构，只在用户表恰好一行且该行是已验证 `active student` 时提升为管理员、撤销旧 Session 并追加审计；降级保留已授予角色，避免系统重新失去管理员。
 7. 认证增量迁移 `20260826_0008` 为 `sessions.student_view` 增加可回滚的非空布尔列，默认关闭；降级仅删除该列，不恢复已撤销 Session 或审计记录。
+8. 意向调查迁移 `20260827_0009` 创建上述四张表、外键、唯一约束和状态/时间检查；downgrade 按响应选项、回答、选项、调查顺序删除，可完成 `0008 → 0009 → 0008 → 0009` 往返。
