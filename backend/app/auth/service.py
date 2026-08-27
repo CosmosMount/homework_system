@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.assignments.repository import AssignmentRepository
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
 from app.auth.models import AuthSecurityEvent, OneTimeToken, Session
@@ -90,6 +91,7 @@ class AuthenticationService:
     ) -> None:
         self._session = session
         self._settings = settings
+        self._assignments = AssignmentRepository(session)
         self._auth = AuthRepository(session)
         self._audit = AuditRepository(session)
         self._users = UserRepository(session)
@@ -440,6 +442,11 @@ class AuthenticationService:
         user.disabled_by = None
         user.disabled_reason = None
         user.revision += 1
+        if user.role == "student":
+            await self._assignments.add_open_assignment_audiences_for_student(
+                user=user,
+                created_at=now,
+            )
         if initial_admin_granted:
             self._audit.add(
                 AuditLog(

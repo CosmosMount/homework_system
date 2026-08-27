@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.assignments.repository import AssignmentRepository
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
 from app.auth.models import OneTimeToken
@@ -103,6 +104,13 @@ async def test_first_verified_user_becomes_audited_initial_admin() -> None:
         now=now,
         has_active_user=False,
     )
+    add_assignment_audiences = AsyncMock(return_value=0)
+    service._assignments = cast(
+        AssignmentRepository,
+        SimpleNamespace(
+            add_open_assignment_audiences_for_student=add_assignment_audiences,
+        ),
+    )
 
     response = await service.confirm_email(
         raw_token,
@@ -123,6 +131,7 @@ async def test_first_verified_user_becomes_audited_initial_admin() -> None:
         now=now,
         exclude_id=token.id,
     )
+    add_assignment_audiences.assert_not_awaited()
     commit.assert_awaited_once()
     audit = audit_add.call_args.args[0]
     assert isinstance(audit, AuditLog)
@@ -149,6 +158,13 @@ async def test_later_verified_user_remains_student_without_bootstrap_audit() -> 
         now=now,
         has_active_user=True,
     )
+    add_assignment_audiences = AsyncMock(return_value=1)
+    service._assignments = cast(
+        AssignmentRepository,
+        SimpleNamespace(
+            add_open_assignment_audiences_for_student=add_assignment_audiences,
+        ),
+    )
 
     await service.confirm_email(
         raw_token,
@@ -158,6 +174,7 @@ async def test_later_verified_user_remains_student_without_bootstrap_audit() -> 
 
     assert user.status == "active"
     assert user.role == "student"
+    add_assignment_audiences.assert_awaited_once_with(user=user, created_at=now)
     acquire_lock.assert_awaited_once()
     commit.assert_awaited_once()
     audit_add.assert_not_called()

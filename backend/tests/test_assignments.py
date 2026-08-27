@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.assignments.models import Assignment, AssignmentExtension
+from app.assignments.models import Assignment, AssignmentAudienceUser, AssignmentExtension
 from app.assignments.policy import can_submit_assignment
 from app.assignments.repository import AssignmentRepository
 from app.assignments.schemas import AssignmentCreateRequest
@@ -221,6 +221,53 @@ class CapturingSession:
     async def scalar(self, statement: Select[tuple[bool]]) -> bool:
         self.statement = statement
         return True
+
+
+class CapturingAudienceEnrollmentSession:
+    def __init__(self, assignment_id: UUID) -> None:
+        self.assignment_id = assignment_id
+        self.statement: Select[tuple[UUID]] | None = None
+        self.added: list[AssignmentAudienceUser] = []
+
+    async def scalars(self, statement: Select[tuple[UUID]]) -> SimpleNamespace:
+        self.statement = statement
+        return SimpleNamespace(all=lambda: [self.assignment_id])
+
+    def add_all(self, records: list[AssignmentAudienceUser]) -> None:
+        self.added.extend(records)
+
+
+@pytest.mark.asyncio
+async def test_new_student_is_added_to_matching_open_assignment_snapshots() -> None:
+    now = datetime(2026, 8, 27, 6, 30, tzinfo=UTC)
+    assignment_id = uuid4()
+    user = cast(
+        User,
+        SimpleNamespace(
+            id=uuid4(),
+            cohort_id=None,
+            direction_id=uuid4(),
+        ),
+    )
+    session = CapturingAudienceEnrollmentSession(assignment_id)
+    repository = AssignmentRepository(cast(AsyncSession, session))
+
+    added = await repository.add_open_assignment_audiences_for_student(
+        user=user,
+        created_at=now,
+    )
+
+    assert added == 1
+    assert session.statement is not None
+    sql = str(session.statement)
+    assert "assignments.status" in sql
+    assert "assignments.deadline" in sql
+    assert "assignment_audience_users" in sql
+    assert "NOT (EXISTS" in sql
+    assert len(session.added) == 1
+    assert session.added[0].assignment_id == assignment_id
+    assert session.added[0].user_id == user.id
+    assert session.added[0].created_at == now
 
 
 @pytest.mark.asyncio

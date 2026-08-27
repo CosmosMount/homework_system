@@ -147,6 +147,45 @@ class AssignmentRepository:
             ]
         )
 
+    async def add_open_assignment_audiences_for_student(
+        self,
+        *,
+        user: User,
+        created_at: datetime,
+    ) -> int:
+        existing_snapshot = exists().where(
+            AssignmentAudienceUser.assignment_id == Assignment.id,
+            AssignmentAudienceUser.user_id == user.id,
+        )
+        assignment_ids = list(
+            (
+                await self._session.scalars(
+                    select(Assignment.id)
+                    .where(
+                        Assignment.status == "published",
+                        Assignment.deadline > created_at,
+                        self._live_audience_condition(user),
+                        ~existing_snapshot,
+                    )
+                    .order_by(Assignment.id)
+                    .with_for_update()
+                )
+            ).all()
+        )
+        self._session.add_all(
+            [
+                AssignmentAudienceUser(
+                    assignment_id=assignment_id,
+                    user_id=user.id,
+                    cohort_id_at_publish=user.cohort_id,
+                    direction_id_at_publish=user.direction_id,
+                    created_at=created_at,
+                )
+                for assignment_id in assignment_ids
+            ]
+        )
+        return len(assignment_ids)
+
     async def actual_audience_count(self, assignment_id: UUID) -> int:
         value = await self._session.scalar(
             select(func.count())
