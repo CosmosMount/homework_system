@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { LogoutButton } from "@/components/auth/logout-button";
 import { AppIcon } from "@/components/ui/app-icon";
 import type { AppIconName } from "@/components/ui/app-icon";
+import { APP_SHELL_COLLAPSE_EVENT } from "@/lib/app-shell-events";
 import { ApiError, csrfFetch } from "@/lib/api/client";
 import { isAdminView } from "@/lib/api/types";
 import type { User } from "@/lib/api/types";
@@ -35,6 +36,7 @@ function itemsForUser(user: User, unreadCount: number): NavigationItem[] {
           { href: "/admin/dashboard", label: "管理概览", icon: "dashboard" },
           { href: "/admin/announcements", label: "通知管理", icon: "announcement" },
           { href: "/admin/assignments", label: "作业管理", icon: "assignment" },
+          { href: "/admin/knowledge", label: "知识库同步", icon: "book" },
           { href: "/admin/competitions", label: "校内赛", icon: "competition" },
           { href: "/admin/intentions", label: "意向调查", icon: "layers" },
           { href: "/admin/users", label: "用户管理", icon: "users" },
@@ -47,6 +49,7 @@ function itemsForUser(user: User, unreadCount: number): NavigationItem[] {
           { href: "/dashboard", label: "工作台", icon: "dashboard" },
           { href: "/announcements", label: "通知", icon: "announcement", badgeCount: unreadCount },
           { href: "/assignments", label: "作业", icon: "assignment" },
+          { href: "/knowledge", label: "培训文档", icon: "book" },
           { href: "/competitions", label: "校内赛", icon: "competition" },
           { href: "/intentions", label: "意向调查", icon: "layers" },
         ];
@@ -268,6 +271,14 @@ export function AppShellNavigation({
   const [mobileOpen, setMobileOpen] = useState(false);
   const items = itemsForUser(user, unreadCount);
   const homeHref = isAdminView(user) ? "/admin/dashboard" : "/dashboard";
+
+  useEffect(() => {
+    function collapseNavigation() {
+      setCollapsed(true);
+    }
+    window.addEventListener(APP_SHELL_COLLAPSE_EVENT, collapseNavigation);
+    return () => window.removeEventListener(APP_SHELL_COLLAPSE_EVENT, collapseNavigation);
+  }, []);
 
   return (
     <>

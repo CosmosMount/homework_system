@@ -14,6 +14,9 @@ import type {
   IntentionStats,
   IntentionSurvey,
   IntentionSurveyPage,
+  KnowledgeAdminStatus,
+  KnowledgeDocument,
+  KnowledgeOverview,
   AdminTeamDetail,
   AdminTeamList,
   AnnouncementAdmin,
@@ -365,6 +368,30 @@ export async function getAdminIntentionStats(surveyId: string): Promise<Intentio
     await serverApi<IntentionStats>(
       "/admin/intentions/" + encodeURIComponent(surveyId) + "/stats",
     ),
+  );
+}
+
+export async function getKnowledge(): Promise<KnowledgeOverview> {
+  return resolveProtectedResult(
+    await serverApi<KnowledgeOverview>("/knowledge"),
+  );
+}
+
+export async function getKnowledgeDocument(
+  documentId: string,
+): Promise<KnowledgeDocument | null> {
+  const result = await serverApi<KnowledgeDocument>(
+    "/knowledge/documents/" + encodeURIComponent(documentId),
+  );
+  if (result instanceof Response && result.status === 404) {
+    return null;
+  }
+  return resolveProtectedResult(result);
+}
+
+export async function getAdminKnowledge(): Promise<KnowledgeAdminStatus> {
+  return resolveProtectedResult(
+    await serverApi<KnowledgeAdminStatus>("/admin/knowledge"),
   );
 }
 

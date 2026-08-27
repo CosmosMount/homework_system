@@ -725,3 +725,120 @@ export type IntentionQr = {
   fill_url: string;
   generated_at: string;
 };
+
+export type KnowledgeSnapshot = {
+  run_id: string;
+  synced_at: string;
+  source_url: string;
+  document_count: number;
+  asset_count: number;
+};
+
+export type KnowledgeNode = {
+  id: string;
+  parent_id: string | null;
+  document_id: string | null;
+  title: string;
+  node_type: "document" | "folder" | "unsupported";
+  depth: number;
+  display_order: number;
+  source_url: string | null;
+};
+
+export type KnowledgeDocumentSummary = {
+  id: string;
+  title: string;
+  source_url: string;
+  source_token: string;
+  display_order: number;
+};
+
+export type KnowledgeOverview = {
+  snapshot: KnowledgeSnapshot | null;
+  nodes: KnowledgeNode[];
+  documents: KnowledgeDocumentSummary[];
+};
+
+export type KnowledgeRichSegment = {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  inline_code?: boolean;
+  href?: string;
+  document_token?: string;
+};
+
+export type KnowledgeTableCell = {
+  id: string;
+  blocks: KnowledgeBlock[];
+  row_span?: number;
+  col_span?: number;
+};
+
+export type KnowledgeBlock = {
+  id: string;
+  type:
+    | "paragraph"
+    | "heading"
+    | "bullet"
+    | "ordered"
+    | "code"
+    | "quote"
+    | "todo"
+    | "callout"
+    | "divider"
+    | "image"
+    | "whiteboard"
+    | "attachment"
+    | "table"
+    | "container";
+  segments?: KnowledgeRichSegment[];
+  level?: number;
+  done?: boolean;
+  language?: string;
+  tone?: string;
+  wrap?: boolean;
+  emoji_id?: string;
+  background_color?: number | string;
+  border_color?: number | string;
+  text_color?: number | string;
+  asset_id?: string | null;
+  file_name?: string;
+  fallback_url?: string;
+  file_size?: number;
+  mime_type?: string;
+  width?: number | null;
+  height?: number | null;
+  children?: KnowledgeBlock[];
+  rows?: Array<Array<KnowledgeBlock[] | KnowledgeTableCell>>;
+};
+
+export type KnowledgeDocument = KnowledgeDocumentSummary & {
+  synced_at: string;
+  blocks: KnowledgeBlock[];
+};
+
+export type KnowledgeSyncRun = {
+  id: string;
+  status: "pending" | "running" | "succeeded" | "failed";
+  source_url: string;
+  started_at: string | null;
+  finished_at: string | null;
+  document_count: number;
+  asset_count: number;
+  error_code: string | null;
+  error_summary: string | null;
+  created_at: string;
+};
+
+export type KnowledgeAdminStatus = {
+  configured: boolean;
+  current_snapshot: KnowledgeSnapshot | null;
+  latest_run: KnowledgeSyncRun | null;
+};
+
+export type KnowledgeSyncCreated = {
+  run: KnowledgeSyncRun;
+};

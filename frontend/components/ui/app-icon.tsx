@@ -5,6 +5,7 @@ export type AppIconName =
   | "assignment"
   | "atom"
   | "audit"
+  | "book"
   | "categories"
   | "chevron-left"
   | "chevron-right"
@@ -58,6 +59,13 @@ function IconShape({ name }: Pick<AppIconProps, "name">): ReactNode {
         <>
           <path d="M7 3.5h7l3 3V20.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5Z" />
           <path d="M14 3.5V7h3M8.5 11h5M8.5 14.5h5M8.5 18h3" />
+        </>
+      );
+    case "book":
+      return (
+        <>
+          <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z" />
+          <path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v16h4.5a2.5 2.5 0 0 1 2.5 2.5v-16Z" />
         </>
       );
     case "competition":
