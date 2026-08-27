@@ -116,9 +116,9 @@ PostgreSQL / MinIO / SMTP Adapter
 | 模块 | 核心职责 | 主要需求 |
 | --- | --- | --- |
 | `auth` | 密码、Session、一次性令牌、CSRF、限流 | AUTH-001～AUTH-011 |
-| `users` | 邮箱验证后激活、角色、技术方向、禁用状态；届次字段仅历史兼容 | AUTH-003、AUTH-007～AUTH-010 |
+| `users` | 邮箱验证后激活、角色、技术方向、禁用状态，并在后续学生激活事务补录开放作业受众；届次字段仅历史兼容 | AUTH-003、AUTH-007～AUTH-010 |
 | `announcements` | 受众、发布、置顶、归档 | NEWS-001～NEWS-008 |
-| `assignments` | 个人任务、受众快照、截止、延期和优秀作业标记 | HW-001～HW-007、SHOW-001～SHOW-005 |
+| `assignments` | 个人任务、发布时快照与新学生激活补录、截止、延期和优秀作业标记 | HW-001～HW-007、SHOW-001～SHOW-005 |
 | `competitions` | 校内赛公告、阶段、报名、公开队伍目录与自动分配 | COMP-001～COMP-006、TEAM-001～TEAM-008 |
 | `intentions` | 单选/多选调查、本人回答、匿名汇总与二维码 token | INT-001～INT-006 |
 | `submissions` | 两类提交的聚合、不可变版本和私密评语 | SUB-001～SUB-008 |

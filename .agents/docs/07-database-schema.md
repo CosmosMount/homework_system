@@ -157,8 +157,8 @@ erDiagram
 
 `assignment_id`, `user_id`, `cohort_id_at_publish`, `direction_id_at_publish`, `created_at`，复合主键 `(assignment_id, user_id)`。
 
-- 发布事务中生成，是 HW-002 的固定受众快照。新规则按方向生成；`cohort_id_at_publish` 为历史快照兼容字段。
-- 学生后续调整方向不修改此表。
+- 发布事务生成初始固定受众；后续账号首次激活为普通学生时，同一激活事务为仍处于 `published`、未过公共截止且匹配的作业追加该学生。
+- `cohort_id_at_publish` 和 `direction_id_at_publish` 对激活后补录行记录补录当时分类；届次字段仅历史兼容。学生后续调整方向不修改此表。
 
 ### `assignment_extensions`
 
@@ -385,3 +385,4 @@ CHECK (
 6. 数据修正迁移 `20260825_0007` 不改变结构，只在用户表恰好一行且该行是已验证 `active student` 时提升为管理员、撤销旧 Session 并追加审计；降级保留已授予角色，避免系统重新失去管理员。
 7. 认证增量迁移 `20260826_0008` 为 `sessions.student_view` 增加可回滚的非空布尔列，默认关闭；降级仅删除该列，不恢复已撤销 Session 或审计记录。
 8. 意向调查迁移 `20260827_0009` 创建上述四张表、外键、唯一约束和状态/时间检查；downgrade 按响应选项、回答、选项、调查顺序删除，可完成 `0008 → 0009 → 0008 → 0009` 往返。
+9. 作业受众数据迁移 `20260827_0010` 为现有 active student 补录仍开放且匹配的作业，使用专用 `created_at` 标记；downgrade 只删除该标记行，可完成 `0009 → 0010 → 0009 → 0010` 往返。

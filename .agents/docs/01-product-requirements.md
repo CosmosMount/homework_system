@@ -12,7 +12,7 @@
 
 - **AUTH-001**：公开注册必须使用邮箱后缀精确为 `connect.hkust-gz.edu.cn` 的学校邮箱；邮箱去除首尾空白并按小写唯一比较。注册资料包括真实姓名、学号、学校邮箱和密码；密码长度必须为 8～128 个 Unicode 字符，并拒绝常见密码及与邮箱、学号高度相似的值；系统自动把规范化邮箱的 `@` 前缀派生为用户名，不提供另一套可编辑用户名。
 - **AUTH-002**：注册后必须发送一次性邮箱验证链接。验证令牌只能使用一次且 24 小时过期；未验证账号状态为 `pending_email`。
-- **AUTH-003**：邮箱验证成功后账号必须直接进入 `active`，不经过人工审批，也不要求先分配方向或其他组别。若系统此前不存在任何 `active` 用户，当前验证账号成为 `admin`；否则保持 `student`。
+- **AUTH-003**：邮箱验证成功后账号必须直接进入 `active`，不经过人工审批，也不要求先分配方向或其他组别。若系统此前不存在任何 `active` 用户，当前验证账号成为 `admin`；否则保持 `student`。后续账号激活为学生时，激活事务必须把当时仍为 `published`、未过公共截止且符合其当前受众分类的作业追加到该学生的正式受众快照。
 - **AUTH-004**：只有 `active` 账号可以登录；Connect 账号可以使用派生用户名或完整邮箱，旧域名存量账号只使用完整邮箱；`pending_email` 和 `disabled` 不得创建业务 Session。
 - **AUTH-005**：学生可以申请密码重置。重置令牌只能使用一次、30 分钟过期，成功重置后必须使该用户的其他 Session 失效。
 - **AUTH-006**：登录创建服务端 Session；退出必须立即撤销当前 Session。用户能够查看并撤销自己的其他登录会话。
@@ -46,11 +46,11 @@ stateDiagram-v2
 ## 培训作业
 
 - **HW-001**：管理员可以创建作业，字段包括标题、说明、外部培训资料链接、提交要求、允许的附件扩展名、发布时间、截止时间和状态。
-- **HW-002**：作业受众规则与通知一致，可面向全部学生或已维护方向及其交集；未设置方向的学生只接收全体作业。发布后受众快照固定，不因学生之后调整方向而改变历史任务归属。历史届次受众继续按原快照兼容读取。
+- **HW-002**：作业受众规则与通知一致，可面向全部学生或已维护方向及其交集；未设置方向的学生只接收全体作业。发布事务生成初始受众快照；后续账号首次激活为普通学生时，只把激活时仍开放且按当时分类匹配的作业追加给该学生。此后调整方向不重算历史任务归属，作业编辑也不能改变既有快照；历史届次受众继续按原快照兼容读取。
 - **HW-003**：作业状态为 `draft`、`published`、`closed`、`archived`。草稿不可见；到达截止时间后自动关闭；管理员可以提前关闭或归档。
 - **HW-004**：管理员可以为单个目标学生设置个人延期时间，延期只能晚于公共截止时间。没有个人延期时默认禁止截止后提交。
 - **HW-005**：管理员可以查看作业目标人数、未提交人数、已提交人数、最后提交时间和存在反馈的提交数，并按方向和提交状态过滤。
-- **HW-006**：学生只能查看受众快照包含自己的作业。管理员当前 Session 开启学生视图时，为验证学生体验可按当前方向预览已发布作业，但不改变历史受众快照；作业详情必须显示上海时区的截止时间、剩余状态、提交要求、资料链接和自己的最新提交情况。
+- **HW-006**：学生只能查看正式受众快照包含自己的作业；快照成员来自发布时受众和后续学生激活时的开放作业补录。管理员当前 Session 开启学生视图时，为验证学生体验可按当前方向预览已发布作业，但不改变历史受众快照；作业详情必须显示上海时区的截止时间、剩余状态、提交要求、资料链接和自己的最新提交情况。
 - **HW-007**：发布后的作业可以修正文案和延期，但不得缩短到早于任何已有提交时间，也不得改变受众快照或附件规则以使历史版本失效。
 
 ## 提交版本与私密评语
@@ -173,7 +173,7 @@ stateDiagram-v2
 | --- | --- | --- | --- | --- |
 | AUTH-001～AUTH-011 | 注册、邮箱验证、登录、管理员用户、个人 Session | `/auth/*`、`/admin/users/*` | `users`、`sessions`、`one_time_tokens`、`auth_security_events`、技术方向（届次历史兼容）、审计 | AUTH-T01～AUTH-T14、SEC-T01、SEC-T03 |
 | NEWS-001～NEWS-008 | 学生工作台、通知列表/详情、管理员通知 | `/announcements*`、`/admin/announcements*`、`/notifications*` | `announcements`、通知受众关联、`announcement_files`、`student_notifications`、Outbox | NEWS-T01～NEWS-T07 |
-| HW-001～HW-007 | 作业列表/详情、个人版本、管理员作业/提交 | `/assignments*`、`/admin/assignments*` | `assignments`、受众配置、`assignment_audience_users`、`assignment_extensions` | HW-T01～HW-T13 |
+| HW-001～HW-007 | 作业列表/详情、个人版本、管理员作业/提交 | `/assignments*`、`/admin/assignments*` | `assignments`、受众配置、`assignment_audience_users`、`assignment_extensions` | HW-T01～HW-T14 |
 | SUB-001～SUB-008 | 作业版本、管理员提交反馈 | `/submission-versions`、`/submissions/*`、管理员反馈接口 | `submissions`、`submission_versions`、`version_files`、`feedback` | HW-T04～HW-T09、HW-T13 |
 | COMP-001～COMP-006 | 校内赛公告/报名、管理员赛事 | `/competitions*`、`/admin/competitions*` | `competitions`、`competition_registrations`（`competition_tasks` 仅兼容历史数据） | COMP-T01～COMP-T04 |
 | TEAM-001～TEAM-008 | 校内赛队伍中心、我的队伍、管理员队伍 | `/teams*`、`/competitions/*/teams`、`/competitions/*/auto-assign`、`/admin/teams*` | `teams`、`team_members`、报名表与一赛一队部分唯一索引 | TEAM-T01～TEAM-T10 |

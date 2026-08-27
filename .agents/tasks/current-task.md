@@ -183,3 +183,15 @@
 ## 最终状态
 
 已完成：后端 163 项测试、Ruff、格式检查和严格 Mypy，前端 18 个文件/63 项测试、ESLint、严格 TypeScript 及主机/容器生产构建均通过。Backend、Worker、Frontend 和 Nginx 已重建重启；六个 Compose 服务 healthy，四个健康端点、注册页和重置页均返回 200，运行容器已确认接受安全 8 位密码。本次不涉及 API 结构、数据库或数据迁移。
+
+
+## 本次追加：后注册学生作业可见性修复
+
+- 根因是“电控第一次作业”发布时没有普通学生，`xluo799@connect.hkust-gz.edu.cn` 两天后激活，固定受众快照仍为 0。
+- 后续普通学生完成邮箱验证时，激活事务会把仍为 `published`、未过截止且匹配的作业追加到正式快照；首个管理员和不匹配/已关闭作业不加入。
+- `20260827_0010` 已为现有 active student 补录开放作业，学生现已进入该作业正式受众，目标人数为 1。
+- 正式计划：`.agents/plans/plan_late_student_assignment_audience.md`。
+
+## 最终状态
+
+已完成：后端 164 项测试、Ruff、146 个 Python 文件格式检查和严格 Mypy，前端 18 个文件/63 项测试、ESLint、严格 TypeScript 与生产构建均通过；隔离迁移往返、运行库升级、镜像重建、服务重启和运行态数据验收完成。六个 Compose 服务 healthy，四个健康端点为 200，Alembic 为 `20260827_0010 (head)` 且无模型漂移。

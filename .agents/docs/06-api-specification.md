@@ -78,7 +78,7 @@
 | 方法与路径 | 请求 | 结果 | 需求 |
 | --- | --- | --- | --- |
 | `POST /auth/email-verifications/resend` | `{email}` | 统一返回 202 | AUTH-002、AUTH-009 |
-| `POST /auth/email-verifications/confirm` | `{token}` | `{status: active}`；空系统首个验证账号成为管理员，其余为学生 | AUTH-002～AUTH-003、AUTH-008 |
+| `POST /auth/email-verifications/confirm` | `{token}` | `{status: active}`；空系统首个验证账号成为管理员，其余为学生并原子补入当时仍开放且匹配的作业受众快照 | AUTH-002～AUTH-003、AUTH-008 |
 
 令牌无效返回 `400 INVALID_TOKEN`，过期或已使用返回 410。重发接口不暴露邮箱是否注册。
 
@@ -177,7 +177,7 @@
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /assignments` | `status,query,page,page_size`；普通学生返回固定受众快照中的作业与最新提交摘要；管理员当前 Session 开启学生视图时，按该账号技术方向对新规则作业执行只读受众预览，不写入或改变快照，历史届次受众仍按原快照兼容 | HW-002、HW-003、HW-006、AUTH-011 |
+| `GET /assignments` | `status,query,page,page_size`；普通学生返回正式受众快照（发布时成员及激活时开放作业补录）中的作业与最新提交摘要；管理员当前 Session 开启学生视图时，按该账号技术方向对新规则作业执行只读受众预览，不写入或改变快照，历史届次受众仍按原快照兼容 | HW-002、HW-003、HW-006、AUTH-011 |
 | `GET /assignments/{assignment_id}` | 返回要求、外链、有效截止、附件规则、本人提交摘要和优秀作业摘要；管理员当前 Session 开启学生视图时按临时受众预览读取 | HW-001、HW-004、HW-006、SHOW-002、AUTH-011 |
 | `POST /assignments/{assignment_id}/submission-versions` | 创建本人正式版本；管理员当前 Session 开启学生视图时允许以自身账号创建个人版本，普通管理员视图仍禁止代交 | SUB-001～SUB-005、FILE-001、AUTH-011 |
 | `GET /assignments/{assignment_id}/submission` | 返回本人提交聚合、版本和评语 | SUB-003、SUB-005～SUB-007 |
