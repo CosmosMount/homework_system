@@ -396,3 +396,19 @@
 | `GET /health/worker` | Worker 心跳，由内网监控访问 | 最近心跳、Outbox 延迟摘要 |
 
 健康接口不得返回版本秘密、连接串、凭证或用户数据。
+
+## 飞书培训知识库接口
+
+| 方法与路径 | 行为 | 权限/需求 |
+| --- | --- | --- |
+| `GET /knowledge` | 返回最新成功快照元数据、目录节点和文档摘要；无快照返回 `snapshot:null` 与空数组 | 登录，KB-001～KB-002、KB-005 |
+| `GET /knowledge/documents/{document_id}` | 只在最新成功快照中按内部 UUID 返回标题、原文 URL、同步时间和结构化块 | 登录，KB-002～KB-003、KB-005 |
+| `GET /knowledge/assets/{asset_id}/content` | 验证资源被最新成功快照引用后，图片/白板跳转短时 inline URL，附件跳转 attachment URL | 登录，KB-006～KB-008 |
+| `GET /admin/knowledge` | 返回 `configured`、学生当前快照和最近运行的脱敏状态 | 真实管理员，KB-004～KB-005、KB-008 |
+| `POST /admin/knowledge/sync` | CSRF 校验后创建同步运行、审计和 Outbox，返回 `202 {run}` | 真实管理员，KB-004～KB-005 |
+
+目录和文档响应不返回飞书 app secret、tenant token、MinIO 对象键或飞书错误正文。媒体路径只接受内部 UUID，不接受对象键或任意 URL。
+
+稳定错误：未配置为 `503 KNOWLEDGE_SYNC_NOT_CONFIGURED`；已有进行中运行为 `409 KNOWLEDGE_SYNC_IN_PROGRESS`；文档或媒体不属于当前快照统一为 `404 RESOURCE_NOT_FOUND`；MinIO 签名失败为 `503 DEPENDENCY_UNAVAILABLE`。管理员学生视图调用管理接口返回 `403 FORBIDDEN`。
+
+参考仓库提交 `c28f8a0` 的同步顺序和页面排布对齐属于 Service、Worker 与前端内部实现，不新增公开 API。首次上线前台初始化是仅接管唯一活动运行的内部运维命令；管理员 `POST /admin/knowledge/sync` 保持为后续更新的唯一产品写入口。

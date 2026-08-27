@@ -140,3 +140,57 @@
 - 首次运行库迁移因新脚本文件权限为 0600，在读取脚本、开启迁移事务前退出；数据库仍为 0009。修正为标准 0644、重建 Backend 镜像后再次执行成功。
 - 运行库最终为 `20260827_0010 (head)` 且 Alembic 无模型漂移；`xluo799@connect.hkust-gz.edu.cn` 已加入“电控第一次作业”正式受众，目标人数从 0 变为 1。
 - Backend、Worker、Frontend 和 Nginx 已重建重启，六个常驻服务 healthy，`live`、`ready`、`worker`、`nginx-health` 均为 200。
+
+## 飞书知识库 0011 运行态部署
+
+2026-08-27 已将飞书知识库源码、迁移和前端路由部署到开发 Compose 运行态。
+
+- 前后端固定镜像构建成功，Next.js 生产构建包含 `/knowledge` 与 `/admin/knowledge`；Backend、Worker、Frontend 完成容器替换。
+- 首次迁移容器在导入知识库模型前退出：新目录/文件为 `0700/0600`，复制到镜像后属主为 root，非 root `appuser` 无法读取。数据库未开启迁移事务并完整保持 `0010`；将源码修正为标准 `0755/0644` 后重建，迁移容器以退出码 0 完成。
+- 运行数据库为 `20260827_0011 (head)`；Backend、Worker、Frontend、PostgreSQL、MinIO、Nginx 六个常驻服务 healthy，`live`、`ready`、`worker` 与 `nginx-health` 均返回 200。
+- 匿名访问 `/knowledge` 和 `/admin/knowledge` 分别由登录守卫返回 307，匿名访问 `/api/v1/knowledge` 返回 401，证明新路由已生效且未绕过鉴权。
+- 飞书配置已对齐为 App ID、App Secret 和 Wiki URL 三项；生产通过 secret file 注入同一个 App Secret，不再要求独立 Space ID 或 Root Token。
+- 真实只读诊断已成功取得 tenant token，并从 URL 自动解析整个空间后读取 227 个节点；过程中未记录或输出秘密、token、Space ID、对象键和飞书原始响应。
+- 本轮四个健康端点再次返回 200；Docker socket 当时需要交互式 sudo，因此该初版部署阶段未重复读取容器列表。首次完整同步随后由前台接管命令完成，并已核对 `succeeded` 状态、目录正文和真实媒体下载。
+
+## 飞书知识库首次前台初始化与参考对齐
+
+2026-08-27 为缩短首次上线等待，先停止常驻 Worker，使用内部运维命令接管唯一活动运行；命令不创建第二条运行或第二套公开接口，并继续使用现有数据库、MinIO、脱敏日志和原子快照规则。
+
+- 前台初始化在约 32 秒内生成首个阶段性回退快照：228 个目录节点、212 个 Docx 目标、48 篇可读正文和 0 个首轮媒体。
+- 恢复 Worker 后，原 `sync_knowledge` Outbox 幂等收敛为 `sent`；`live`、`ready`、`worker` 和 `nginx-health` 四个健康端点均为 200。
+- 该 48 篇快照当时用于保证学生入口先可读，不作为全部 212 个 Docx 的最终完整验收；现已被后续完整成功快照自然替代。
+- 用户随后要求同步办法与知识库内容区排布固定对齐参考仓库提交 `c28f8a0`。目录、正文或标题错误必须使整次运行失败；图片/白板单项失败跳过块，附件失败保留整篇飞书原文入口。
+- 当时的页面参考契约是文档目录、位于正文左侧的本文目录和正文，不存在顶部文档切换栏；移动端使用右下目录按钮和全屏目录。该历史页面顺序已于 2026-08-28 被 ADR-033 替代，同步契约继续有效。
+- 对齐保留登录鉴权、`AppShell`、成功快照、MinIO、管理员手动接口和常规 Worker，不复制公开静态站点或硬编码租户资源。
+- 该阶段的文档与实现调整不涉及数据库迁移；完整结果记录如下。
+
+## 飞书知识库参考对齐完整上线
+
+- 2026-08-27 前台完整同步以 `succeeded` 完成 228 个目录节点、212 篇文档和 977 个成功媒体引用，耗时 `00:33:28.757715`；13 次允许的资源回退未阻断快照。
+- 旧 48 篇阶段性快照已被新成功快照自然替代；Worker 恢复后最新 `sync_knowledge` Outbox 为 `sent`、`attempt_count=1` 且无错误，管理员手动更新接口继续保留。
+- 29 项后端知识库定向测试、完整后端 213 项测试、前端 20 个文件/76 项测试及全部静态检查和生产构建通过；Backend/Worker 镜像为 `sha256:f8c42b…`，Frontend 为 `sha256:e82d020…`。
+- Backend、Worker、Frontend、PostgreSQL、MinIO、Nginx 六服务 healthy；`live`、`ready`、`worker`、`nginx-health` 均为 200，`/knowledge`、`/admin/knowledge` 匿名访问为 307，两个知识库 API 匿名访问为 401。
+- Alembic 保持 `20260827_0011`，本轮无迁移；定向热修镜像未纳入并行账号清理代码，账号清理工作树保持原样。
+
+
+## 2026-08-28：知识库白色主题前端部署
+
+- 仅修改知识库阅读器、知识块渲染器和知识库前端测试：页面改为白色主题，桌面顺序为左侧文档目录、中央正文、右侧本文目录；成功打开文档后左目录自动收起，失败不改变当前文档和目录状态。
+- 知识库定向 7 项测试、完整前端 20 个文件/76 项测试、ESLint、严格 TypeScript、工作树与隔离源码的 Next.js 生产构建均通过。
+- 隔离构建从上一版已上线知识库源码基线开始，目录差异审计只有 `knowledge-reader.tsx`、`knowledge-blocks.tsx` 和 `knowledge-ui.test.tsx`，未纳入并行账号活跃度/清理改动。
+- Frontend 已替换为 `sha256:1842c4d63afecf672d3310eb3a4db1d6b2ed40b604cad71749fe584999ee51dc`，Nginx 已重启；六个常驻服务均 healthy，`live`、`ready`、`worker`、`nginx-health` 均为 200。
+- `/knowledge`、`/admin/knowledge` 匿名访问为 307，`/api/v1/knowledge`、`/api/v1/admin/knowledge` 匿名访问为 401；最新知识库运行仍为 `succeeded|212|977`，Outbox 仍为 `sent|1`，证明本轮未触发新同步。
+- Backend、Worker、PostgreSQL、MinIO、管理员手动同步接口和 Alembic `20260827_0011` 均未修改；本轮无数据迁移。
+
+
+## 2026-08-28：知识库主导航折叠与本文目录跟随部署
+
+- 用户澄清后新增 ADR-034：成功打开当前或其他文档时折叠系统最左侧主要导航，文档目录保持用户自己的展开状态；加载失败不改变两者。
+- 右侧本文目录使用 `sticky top-6`、最大视口高度和内部滚动，页面滚动时以 `aria-current="location"` 高亮当前章节；阅读器祖先改用不阻断 sticky 的横向 clip。
+- 文档目录、搜索框、目录标题栏、目录行、展开/收起按钮和移动目录弹层统一使用系统全局设计令牌、圆角、边框、阴影、悬停和键盘焦点样式。
+- 知识库定向 8 项测试、完整前端 20 文件/77 项测试、ESLint、严格 TypeScript、工作树和隔离源码 Next.js 生产构建通过。
+- 隔离构建以已上线白色知识库源码为基线，差异审计仅有 `app-shell-navigation.tsx`、`app-shell-events.ts`、`knowledge-reader.tsx` 和 `knowledge-ui.test.tsx`；未纳入并行账号活跃度/清理代码。
+- Frontend 已替换为 `sha256:2ad76bd178810d82cf1d0b7d2d3517fa891998d949977e5514ecaff51ac1ed39`，Nginx 已重启；六服务 healthy，`live`、`ready`、`worker`、`nginx-health` 均为 200。
+- `/knowledge`、`/admin/knowledge` 匿名访问为 307，`/api/v1/knowledge`、`/api/v1/admin/knowledge` 匿名访问为 401；最新同步仍为 `succeeded|212|977`，Outbox 仍为 `sent|1`。
+- Backend、Worker、PostgreSQL、MinIO、管理员手动同步接口和 Alembic `20260827_0011` 均未修改；本轮无迁移且未重新同步飞书。

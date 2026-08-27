@@ -386,3 +386,25 @@ CHECK (
 7. 认证增量迁移 `20260826_0008` 为 `sessions.student_view` 增加可回滚的非空布尔列，默认关闭；降级仅删除该列，不恢复已撤销 Session 或审计记录。
 8. 意向调查迁移 `20260827_0009` 创建上述四张表、外键、唯一约束和状态/时间检查；downgrade 按响应选项、回答、选项、调查顺序删除，可完成 `0008 → 0009 → 0008 → 0009` 往返。
 9. 作业受众数据迁移 `20260827_0010` 为现有 active student 补录仍开放且匹配的作业，使用专用 `created_at` 标记；downgrade 只删除该标记行，可完成 `0009 → 0010 → 0009 → 0010` 往返。
+
+## 飞书知识库快照
+
+### `knowledge_sync_runs`
+
+`id`, `status`, `source_url`, `triggered_by`, `started_at`, `finished_at`, `document_count`, `asset_count`, `error_code`, `error_summary`, `created_at`。状态只允许 `pending/running/succeeded/failed`；部分唯一常量索引保证进行中状态合计最多一条。最新 `succeeded.finished_at` 即学生当前快照，不维护额外单例指针。
+
+### `knowledge_nodes` 与 `knowledge_documents`
+
+- 节点按 `sync_run_id` 保存父节点、飞书节点/对象标识、类型、标题、深度、顺序和安全原文 URL；同一运行的节点 token 唯一。
+- 文档一对一关联节点，按运行保存外部文档标识、标题、原文 URL、规范化块 `JSONB` 和顺序；同一运行的文档标识唯一。
+- 失败运行可保留诊断状态，但从不被学生读取；同一运行重试前级联清空部分节点/文档再重建。
+- 对齐参考同步后，只有目录遍历和全部目标 Docx 的 blocks、标题及引用均完成的运行才能标为 `succeeded`；目录子树或单篇正文不得被静默跳过并形成新的部分成功快照。
+
+### `knowledge_assets` 与 `knowledge_document_assets`
+
+- 媒体全局按 `(external_asset_token, asset_kind)` 复用，保存服务端对象键、安全文件名、媒体类型、大小、SHA-256、可选宽高和最后发现时间；文件内容只在 MinIO。
+- 文档媒体关联记录 `usage_type` 与顺序。资源 API 必须通过“最新成功运行 → 文档 → 关联 → 媒体”联查授权。
+
+迁移 `20260827_0011` 创建上述五表、外键、检查、唯一和查询索引；downgrade 逆序删除关联、文档、媒体、节点和运行表，不删除 MinIO 对象，避免数据库回滚造成不可恢复文件丢失。
+
+参考仓库对齐和首次上线前台初始化不改变上述表、约束或迁移，本轮不新增数据库迁移。
