@@ -25,7 +25,7 @@ const reasonMessages: Record<string, string> = {
   INVALID_CAMPUS_EMAIL: "请输入有效的 @connect.hkust-gz.edu.cn 校园邮箱。",
   EMAIL_ALREADY_REGISTERED: "该邮箱已注册。",
   STUDENT_NUMBER_ALREADY_REGISTERED: "该学号已注册。",
-  PASSWORD_TOO_SHORT: "密码至少需要 12 个字符。",
+  PASSWORD_TOO_SHORT: "密码至少需要 8 个字符。",
   PASSWORD_TOO_LONG: "密码最多允许 128 个字符。",
   COMMON_PASSWORD: "该密码过于常见，请换一个更独特的密码。",
   PASSWORD_TOO_SIMILAR: "密码不能包含邮箱名或学号。",
@@ -212,9 +212,9 @@ export function RegisterForm() {
       <Field
         autoComplete="new-password"
         error={fieldMessage(error, "password")}
-        hint="12～128 个字符；避免常见密码以及姓名、邮箱名或学号。"
+        hint="8～128 个字符；避免常见密码以及姓名、邮箱名或学号。"
         label="密码"
-        minLength={12}
+        minLength={8}
         name="password"
         required
         type="password"
@@ -413,9 +413,9 @@ export function ResetPasswordForm({ token }: Readonly<{ token: string }>) {
       <Field
         autoComplete="new-password"
         error={fieldMessage(error, "new_password")}
-        hint="12～128 个字符，不能包含邮箱名或学号。"
+        hint="8～128 个字符，不能包含邮箱名或学号。"
         label="新密码"
-        minLength={12}
+        minLength={8}
         name="new_password"
         required
         type="password"
@@ -423,7 +423,7 @@ export function ResetPasswordForm({ token }: Readonly<{ token: string }>) {
       <Field
         autoComplete="new-password"
         label="再次输入新密码"
-        minLength={12}
+        minLength={8}
         name="confirmation"
         required
         type="password"

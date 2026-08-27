@@ -373,7 +373,7 @@ def main() -> int:
         email = input("学校邮箱: ")
         full_name = input("姓名: ")
         student_number = input("学号/管理员编号: ")
-        password = getpass.getpass("密码（12～128 字符）: ")
+        password = getpass.getpass("密码（8～128 字符）: ")
         confirmation = getpass.getpass("再次输入密码: ")
         return asyncio.run(
             _run_create_admin(

@@ -54,7 +54,9 @@ def test_login_identifier_normalizes_username_and_full_email(
 @pytest.mark.parametrize(
     ("password", "reason"),
     [
-        ("short", "PASSWORD_TOO_SHORT"),
+        ("A7!vP2#", "PASSWORD_TOO_SHORT"),
+        ("z!" * 64 + "x", "PASSWORD_TOO_LONG"),
+        ("password", "COMMON_PASSWORD"),
         ("password1234", "COMMON_PASSWORD"),
         ("student-unique-safe-password", "PASSWORD_TOO_SIMILAR"),
         ("20261234-is-not-safe", "PASSWORD_TOO_SIMILAR"),
@@ -67,6 +69,15 @@ def test_password_policy_rejects_weak_or_similar_values(password: str, reason: s
             email="student@connect.hkust-gz.edu.cn",
             student_number="20261234",
         )
+
+
+@pytest.mark.parametrize("password", ["A7!vP2#q", "z!" * 64])
+def test_password_policy_accepts_minimum_and_maximum_lengths(password: str) -> None:
+    validate_password(
+        password,
+        email="student@connect.hkust-gz.edu.cn",
+        student_number="20261234",
+    )
 
 
 def test_argon2id_round_trip_and_wrong_password() -> None:

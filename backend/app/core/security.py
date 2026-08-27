@@ -13,15 +13,20 @@ from argon2.low_level import Type
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+MIN_PASSWORD_LENGTH = 8
+
 COMMON_PASSWORDS = frozenset(
     {
+        "12345678",
         "123456789012",
         "1234567890ab",
         "administrator",
         "changeme12345",
         "hkustgz123456",
         "letmein123456",
+        "password",
         "password1234",
+        "qwerty12",
         "qwerty123456",
         "welcome12345",
     }
@@ -94,7 +99,7 @@ def _identifier_fragment(value: str) -> str:
 
 
 def validate_password(password: str, *, email: str, student_number: str) -> None:
-    if len(password) < 12:
+    if len(password) < MIN_PASSWORD_LENGTH:
         raise PasswordPolicyViolation("PASSWORD_TOO_SHORT")
     if len(password) > 128:
         raise PasswordPolicyViolation("PASSWORD_TOO_LONG")

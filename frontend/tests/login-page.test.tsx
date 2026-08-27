@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import LoginPage from "@/app/login/page";
 import RegisterPage from "@/app/register/page";
+import { ResetPasswordForm } from "@/components/auth/auth-forms";
 import { safeReturnPath } from "@/lib/safe-return-path";
 
 const { apiFetchMock, clearCsrfTokenMock, refreshMock, replaceMock } =
@@ -166,5 +167,22 @@ describe("login page", () => {
         '"email":"new.student@connect.hkust-gz.edu.cn"',
       ),
     });
+  });
+
+  it("uses an eight-character minimum for registration and password reset", () => {
+    const registration = render(<RegisterPage />);
+
+    expect(screen.getByLabelText("密码")).toHaveAttribute("minlength", "8");
+    expect(screen.getByText(/8～128 个字符/)).toBeInTheDocument();
+
+    registration.unmount();
+    render(<ResetPasswordForm token="test-reset-token" />);
+
+    expect(screen.getByLabelText("新密码")).toHaveAttribute("minlength", "8");
+    expect(screen.getByLabelText("再次输入新密码")).toHaveAttribute(
+      "minlength",
+      "8",
+    );
+    expect(screen.getByText(/8～128 个字符/)).toBeInTheDocument();
   });
 });
