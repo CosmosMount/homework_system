@@ -32,6 +32,19 @@ export type UserPage = {
   total: number;
 };
 
+export type AdminUser = User & {
+  last_active_at: string | null;
+  is_inactive: boolean;
+  inactive_days: number;
+};
+
+export type AdminUserPage = {
+  items: AdminUser[];
+  page: number;
+  page_size: number;
+  total: number;
+};
+
 export type Session = {
   id: string;
   created_at: string;
@@ -659,24 +672,37 @@ export type IntentionOption = {
   display_order: number;
 };
 
+export type IntentionQuestion = {
+  id: string;
+  prompt: string;
+  allow_multiple: boolean;
+  display_order: number;
+  options: IntentionOption[];
+};
+
 export type IntentionSurveySummary = {
   id: string;
   title: string;
   description_html: string;
   status: IntentionStatus;
-  allow_multiple: boolean;
   starts_at: string | null;
   ends_at: string | null;
-  option_count: number;
+  question_count: number;
   has_response: boolean;
+  submissions_used: number;
+  max_submissions: number | null;
 };
 
 export type IntentionSurvey = IntentionSurveySummary & {
-  options: IntentionOption[];
+  questions: IntentionQuestion[];
   response: {
-    selected_option_ids: string[];
+    answers: {
+      question_id: string;
+      selected_option_ids: string[];
+    }[];
     free_text: string | null;
     submitted_at: string;
+    submission_count: number;
   } | null;
   revision: number;
 };
@@ -691,11 +717,11 @@ export type AdminIntentionSurvey = {
   title: string;
   description_markdown: string;
   status: IntentionStatus;
-  allow_multiple: boolean;
   starts_at: string | null;
   ends_at: string | null;
-  option_count: number;
+  question_count: number;
   responded_count: number;
+  max_submissions: number | null;
   created_at: string;
   updated_at: string;
   revision: number;
@@ -711,12 +737,36 @@ export type IntentionStats = {
   total_active_students: number;
   responded_count: number;
   response_rate: number;
-  options: {
-    option_id: string;
-    label: string;
-    response_count: number;
-    percentage: number;
+  questions: {
+    question_id: string;
+    prompt: string;
+    allow_multiple: boolean;
+    options: {
+      option_id: string;
+      label: string;
+      response_count: number;
+      percentage: number;
+    }[];
   }[];
+};
+
+export type IntentionRoster = {
+  survey_id: string;
+  items: {
+    user_id: string;
+    full_name: string;
+    student_number: string;
+    email: string;
+    answers: {
+      question_id: string;
+      prompt: string;
+      selected_options: string[];
+    }[];
+    free_text: string | null;
+    submission_count: number;
+    submitted_at: string;
+  }[];
+  total: number;
 };
 
 export type IntentionQr = {

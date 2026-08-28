@@ -14,12 +14,21 @@ import {
 import { formatDateTime } from "@/lib/format";
 
 export default async function AdminDashboardPage() {
-  const [admin, announcements, assignments, users, outbox, audit] =
+  const [
+    admin,
+    announcements,
+    assignments,
+    users,
+    inactiveUsers,
+    outbox,
+    audit,
+  ] =
     await Promise.all([
       requireAdmin(),
       getAdminAnnouncements(),
       getAdminAssignments(),
       getAdminUsers(),
+      getAdminUsers({ activity: "inactive", pageSize: 1 }),
       getOutboxJobs(),
       getAuditLogs(),
     ]);
@@ -52,6 +61,11 @@ export default async function AdminDashboardPage() {
       <section className="mt-8 grid gap-px border border-[var(--color-border)] bg-[var(--color-border)] sm:grid-cols-2 xl:grid-cols-3">
         {[
           ["账号", users.total, "/admin/users"],
+          [
+            "超过 10 天未进入",
+            inactiveUsers.total,
+            "/admin/users?activity=inactive",
+          ],
           ["通知 / 已发布", announcements.total + " / " + published, "/admin/announcements"],
           ["作业", assignments.total, "/admin/assignments"],
           ["72 小时内截止", upcomingDeadlines, "/admin/assignments"],

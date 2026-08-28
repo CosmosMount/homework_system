@@ -14,11 +14,34 @@ import { ApiError, apiFetch, csrfFetch } from "@/lib/api/client";
 import type {
   AdminIntentionSurvey,
   IntentionQr,
+  IntentionRoster,
   IntentionStats,
   IntentionStatus,
 } from "@/lib/api/types";
+import { formatDateTime } from "@/lib/format";
 
 const defaultOptions = "机器人\n视觉\n嵌入式";
+let nextQuestionDraftId = 1;
+
+type QuestionDraft = {
+  key: number;
+  prompt: string;
+  options: string;
+  allowMultiple: boolean;
+};
+
+function makeQuestion(prompt: string): QuestionDraft {
+  return {
+    key: nextQuestionDraftId++,
+    prompt,
+    options: defaultOptions,
+    allowMultiple: false,
+  };
+}
+
+function initialQuestions(): QuestionDraft[] {
+  return [makeQuestion("第一志愿"), makeQuestion("第二志愿")];
+}
 
 const statusLabels: Record<IntentionStatus, string> = {
   draft: "草稿",
@@ -37,12 +60,13 @@ export function IntentionAdminPanel({
   const [surveys, setSurveys] = useState(initialSurveys);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [options, setOptions] = useState(defaultOptions);
-  const [allowMultiple, setAllowMultiple] = useState(false);
+  const [questions, setQuestions] = useState<QuestionDraft[]>(initialQuestions);
+  const [maxSubmissions, setMaxSubmissions] = useState("1");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<Record<string, IntentionStats>>({});
+  const [rosters, setRosters] = useState<Record<string, IntentionRoster>>({});
   const [qr, setQr] = useState<
     Record<string, { url: string; image: string }>
   >({});
@@ -53,14 +77,41 @@ export function IntentionAdminPanel({
     setMessage(null);
   }
 
+  function updateQuestion(key: number, patch: Partial<QuestionDraft>) {
+    setQuestions((current) =>
+      current.map((question) =>
+        question.key === key ? { ...question, ...patch } : question,
+      ),
+    );
+  }
+
   async function createSurvey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const labels = options
-      .split("\n")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    if (!title.trim() || labels.length === 0) {
-      setError("标题和至少一个选项不能为空。");
+    const normalizedQuestions = questions.map((question) => ({
+      prompt: question.prompt.trim(),
+      allow_multiple: question.allowMultiple,
+      options: question.options
+        .split("\n")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((label) => ({ label })),
+    }));
+    if (
+      !title.trim() ||
+      normalizedQuestions.length === 0 ||
+      normalizedQuestions.some(
+        (question) => !question.prompt || question.options.length === 0,
+      )
+    ) {
+      setError("问卷标题、每道题目和每题至少一个选项不能为空。");
+      return;
+    }
+    const parsedLimit = maxSubmissions.trim() ? Number(maxSubmissions) : null;
+    if (
+      parsedLimit !== null &&
+      (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100)
+    ) {
+      setError("最多提交次数必须是 1～100 的整数，留空表示不限次数。");
       return;
     }
 
@@ -73,17 +124,17 @@ export function IntentionAdminPanel({
           body: JSON.stringify({
             title: title.trim(),
             description_markdown: description,
-            options: labels.map((label) => ({ label })),
-            allow_multiple: allowMultiple,
+            questions: normalizedQuestions,
+            max_submissions: parsedLimit,
           }),
         },
       );
       setSurveys((current) => [created, ...current]);
       setTitle("");
       setDescription("");
-      setOptions(defaultOptions);
-      setAllowMultiple(false);
-      setMessage("调查已创建。开放填写后学生即可提交意向。");
+      setQuestions(initialQuestions());
+      setMaxSubmissions("1");
+      setMessage("问卷已创建。开放填写后学生即可提交。");
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -111,7 +162,7 @@ export function IntentionAdminPanel({
           return next;
         });
       }
-      setMessage("调查状态已更新为“" + statusLabels[updated.status] + "”。");
+      setMessage("问卷状态已更新为“" + statusLabels[updated.status] + "”。");
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -134,6 +185,21 @@ export function IntentionAdminPanel({
         ),
       );
       setMessage("统计数据已刷新。");
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function loadRoster(surveyId: string) {
+    begin();
+    try {
+      const result = await apiFetch<IntentionRoster>(
+        "/admin/intentions/" + surveyId + "/responses",
+      );
+      setRosters((current) => ({ ...current, [surveyId]: result }));
+      setMessage("提交名单已刷新。");
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -174,10 +240,10 @@ export function IntentionAdminPanel({
         className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[var(--shadow-card)] sm:p-6"
         onSubmit={createSurvey}
       >
-        <h2 className="text-xl font-semibold">新建意向调查</h2>
+        <h2 className="text-xl font-semibold">新建问卷</h2>
         <div className="mt-5 grid gap-5 lg:grid-cols-2">
           <label className="block text-sm font-medium">
-            标题
+            问卷标题
             <input
               className={inputClassName}
               maxLength={200}
@@ -187,13 +253,15 @@ export function IntentionAdminPanel({
             />
           </label>
           <label className="block text-sm font-medium">
-            选项（每行一个）
-            <textarea
-              className={inputClassName + " min-h-32 py-3"}
-              maxLength={6_000}
-              onChange={(event) => setOptions(event.target.value)}
-              required
-              value={options}
+            每人最多提交次数
+            <input
+              className={inputClassName}
+              max={100}
+              min={1}
+              onChange={(event) => setMaxSubmissions(event.target.value)}
+              placeholder="留空表示不限次数"
+              type="number"
+              value={maxSubmissions}
             />
           </label>
           <label className="block text-sm font-medium lg:col-span-2">
@@ -206,27 +274,105 @@ export function IntentionAdminPanel({
             />
           </label>
         </div>
-        <label className="mt-4 flex items-center gap-2 text-sm">
-          <input
-            checked={allowMultiple}
-            className="size-4 accent-[var(--color-accent)]"
-            onChange={(event) => setAllowMultiple(event.target.checked)}
-            type="checkbox"
-          />
-          允许学生多选
-        </label>
-        <button
-          className={buttonClassName + " mt-5 w-full sm:w-auto"}
-          disabled={pending}
-          type="submit"
-        >
-          {pending ? "处理中…" : "创建调查"}
-        </button>
+
+        <div className="mt-6 space-y-4">
+          {questions.map((question, index) => (
+            <fieldset
+              className="rounded-xl border border-[var(--color-border)] p-4 sm:p-5"
+              key={question.key}
+            >
+              <legend className="px-2 text-sm font-semibold">
+                第 {index + 1} 题
+              </legend>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <label className="block text-sm font-medium">
+                  题目
+                  <input
+                    className={inputClassName}
+                    maxLength={200}
+                    onChange={(event) =>
+                      updateQuestion(question.key, {
+                        prompt: event.target.value,
+                      })
+                    }
+                    required
+                    value={question.prompt}
+                  />
+                </label>
+                <label className="block text-sm font-medium">
+                  选项（每行一个）
+                  <textarea
+                    className={inputClassName + " min-h-28 py-3"}
+                    maxLength={6_000}
+                    onChange={(event) =>
+                      updateQuestion(question.key, {
+                        options: event.target.value,
+                      })
+                    }
+                    required
+                    value={question.options}
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    checked={question.allowMultiple}
+                    className="size-4 accent-[var(--color-accent)]"
+                    onChange={(event) =>
+                      updateQuestion(question.key, {
+                        allowMultiple: event.target.checked,
+                      })
+                    }
+                    type="checkbox"
+                  />
+                  本题允许多选
+                </label>
+                {questions.length > 1 ? (
+                  <button
+                    className={commandButtonClassName}
+                    onClick={() =>
+                      setQuestions((current) =>
+                        current.filter((item) => item.key !== question.key),
+                      )
+                    }
+                    type="button"
+                  >
+                    删除本题
+                  </button>
+                ) : null}
+              </div>
+            </fieldset>
+          ))}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button
+            className={commandButtonClassName}
+            disabled={questions.length >= 30}
+            onClick={() =>
+              setQuestions((current) => [
+                ...current,
+                makeQuestion("第 " + (current.length + 1) + " 志愿"),
+              ])
+            }
+            type="button"
+          >
+            添加题目
+          </button>
+          <button
+            className={buttonClassName}
+            disabled={pending}
+            type="submit"
+          >
+            {pending ? "处理中…" : "创建问卷"}
+          </button>
+        </div>
       </form>
 
-      <section aria-label="意向调查列表" className="space-y-4">
+      <section aria-label="问卷列表" className="space-y-4">
         {surveys.map((survey) => {
           const surveyStats = stats[survey.id];
+          const surveyRoster = rosters[survey.id];
           const surveyQr = qr[survey.id];
           const qrAvailable =
             survey.status === "draft" || survey.status === "open";
@@ -239,8 +385,10 @@ export function IntentionAdminPanel({
                 <div>
                   <h2 className="text-xl font-semibold">{survey.title}</h2>
                   <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-                    {survey.allow_multiple ? "多选" : "单选"} ·{" "}
-                    {survey.option_count} 个选项 · {survey.responded_count} 人已填写
+                    {survey.question_count} 道题 · {survey.responded_count} 人已提交 ·{" "}
+                    {survey.max_submissions === null
+                      ? "不限提交次数"
+                      : "每人最多 " + survey.max_submissions + " 次"}
                   </p>
                 </div>
                 <span className="rounded-full bg-[var(--color-action-fill)] px-3 py-1 text-xs text-[var(--color-action-text)]">
@@ -266,7 +414,7 @@ export function IntentionAdminPanel({
                     onClick={() => transition(survey, "closed")}
                     type="button"
                   >
-                    关闭调查
+                    关闭问卷
                   </button>
                 ) : null}
                 {survey.status === "closed" ? (
@@ -276,7 +424,7 @@ export function IntentionAdminPanel({
                     onClick={() => transition(survey, "archived")}
                     type="button"
                   >
-                    归档调查
+                    归档问卷
                   </button>
                 ) : null}
                 {qrAvailable ? (
@@ -296,6 +444,14 @@ export function IntentionAdminPanel({
                   type="button"
                 >
                   查看统计
+                </button>
+                <button
+                  className={commandButtonClassName}
+                  disabled={pending}
+                  onClick={() => loadRoster(survey.id)}
+                  type="button"
+                >
+                  查看提交名单
                 </button>
               </div>
 
@@ -332,36 +488,104 @@ export function IntentionAdminPanel({
               {surveyStats ? (
                 <div className="mt-5 rounded-xl border border-[var(--color-border)] p-4">
                   <p className="text-sm text-[var(--color-text-secondary)]">
-                    填写率 {surveyStats.response_rate}%（
+                    提交率 {surveyStats.response_rate}%（
                     {surveyStats.responded_count} /{" "}
                     {surveyStats.total_active_students}）
                   </p>
-                  <div className="mt-4 space-y-3">
-                    {surveyStats.options.map((option) => (
-                      <div key={option.option_id}>
-                        <div className="flex justify-between gap-4 text-sm">
-                          <span>{option.label}</span>
-                          <span className="font-mono text-[var(--color-text-muted)]">
-                            {option.response_count} · {option.percentage}%
-                          </span>
+                  <div className="mt-4 space-y-5">
+                    {surveyStats.questions.map((question, questionIndex) => (
+                      <section key={question.question_id}>
+                        <h3 className="text-sm font-semibold">
+                          {questionIndex + 1}. {question.prompt}（
+                          {question.allow_multiple ? "多选" : "单选"}）
+                        </h3>
+                        <div className="mt-3 space-y-3">
+                          {question.options.map((option) => (
+                            <div key={option.option_id}>
+                              <div className="flex justify-between gap-4 text-sm">
+                                <span>{option.label}</span>
+                                <span className="font-mono text-[var(--color-text-muted)]">
+                                  {option.response_count} · {option.percentage}%
+                                </span>
+                              </div>
+                              <div
+                                aria-label={question.prompt + " / " + option.label + "选择比例"}
+                                aria-valuemax={100}
+                                aria-valuemin={0}
+                                aria-valuenow={Math.min(option.percentage, 100)}
+                                className="mt-1 h-2 rounded-full bg-[var(--color-surface-hover)]"
+                                role="progressbar"
+                              >
+                                <div
+                                  className="h-2 rounded-full bg-[var(--color-accent-fill)]"
+                                  style={{
+                                    width:
+                                      Math.min(option.percentage, 100) + "%",
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                        <div
-                          aria-label={option.label + "选择比例"}
-                          aria-valuemax={100}
-                          aria-valuemin={0}
-                          aria-valuenow={Math.min(option.percentage, 100)}
-                          className="mt-1 h-2 rounded-full bg-[var(--color-surface-hover)]"
-                          role="progressbar"
-                        >
-                          <div
-                            className="h-2 rounded-full bg-[var(--color-accent-fill)]"
-                            style={{
-                              width: Math.min(option.percentage, 100) + "%",
-                            }}
-                          />
-                        </div>
-                      </div>
+                      </section>
                     ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {surveyRoster ? (
+                <div className="mt-5 rounded-xl border border-[var(--color-border)] p-4">
+                  <h3 className="text-sm font-semibold">
+                    提交名单（{surveyRoster.total} 人）
+                  </h3>
+                  <div className="mt-4 space-y-3">
+                    {surveyRoster.items.map((item) => (
+                      <article
+                        className="rounded-xl bg-[var(--color-surface-raised)] p-4"
+                        key={item.user_id}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-medium">{item.full_name}</p>
+                            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                              {item.student_number} · {item.email}
+                            </p>
+                          </div>
+                          <p className="text-xs text-[var(--color-text-muted)]">
+                            提交 {item.submission_count} 次 · 最后提交{" "}
+                            {formatDateTime(item.submitted_at)}
+                          </p>
+                        </div>
+                        <dl className="mt-3 grid gap-2 text-sm">
+                          {item.answers.map((answer) => (
+                            <div
+                              className="grid gap-1 sm:grid-cols-[10rem_1fr]"
+                              key={answer.question_id}
+                            >
+                              <dt className="text-[var(--color-text-secondary)]">
+                                {answer.prompt}
+                              </dt>
+                              <dd>
+                                {answer.selected_options.join("、") || "—"}
+                              </dd>
+                            </div>
+                          ))}
+                          {item.free_text ? (
+                            <div className="grid gap-1 sm:grid-cols-[10rem_1fr]">
+                              <dt className="text-[var(--color-text-secondary)]">
+                                补充说明
+                              </dt>
+                              <dd className="whitespace-pre-wrap">{item.free_text}</dd>
+                            </div>
+                          ) : null}
+                        </dl>
+                      </article>
+                    ))}
+                    {surveyRoster.items.length === 0 ? (
+                      <p className="text-sm text-[var(--color-text-muted)]">
+                        暂无学生提交。
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -370,7 +594,7 @@ export function IntentionAdminPanel({
         })}
         {surveys.length === 0 ? (
           <p className="rounded-xl border border-dashed border-[var(--color-border-strong)] p-8 text-center text-sm text-[var(--color-text-muted)]">
-            还没有意向调查。
+            还没有问卷。
           </p>
         ) : null}
       </section>

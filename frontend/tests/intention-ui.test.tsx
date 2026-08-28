@@ -35,17 +35,36 @@ vi.mock("qrcode", () => ({
 function intention(overrides: Partial<IntentionSurvey> = {}): IntentionSurvey {
   return {
     id: "survey-1",
-    title: "培训方向意向",
+    title: "培训方向问卷",
     description_html: "<p>请选择培训方向</p>",
     status: "open",
-    allow_multiple: false,
     starts_at: null,
     ends_at: null,
-    option_count: 2,
+    question_count: 2,
     has_response: false,
-    options: [
-      { id: "option-robot", label: "机器人", display_order: 0 },
-      { id: "option-vision", label: "视觉", display_order: 1 },
+    submissions_used: 0,
+    max_submissions: 2,
+    questions: [
+      {
+        id: "question-first",
+        prompt: "第一志愿",
+        allow_multiple: false,
+        display_order: 0,
+        options: [
+          { id: "option-robot", label: "机器人", display_order: 0 },
+          { id: "option-vision", label: "视觉", display_order: 1 },
+        ],
+      },
+      {
+        id: "question-second",
+        prompt: "第二志愿",
+        allow_multiple: true,
+        display_order: 1,
+        options: [
+          { id: "option-control", label: "电控", display_order: 0 },
+          { id: "option-embedded", label: "嵌入式", display_order: 1 },
+        ],
+      },
     ],
     response: null,
     revision: 1,
@@ -58,14 +77,14 @@ function adminSurvey(
 ): AdminIntentionSurvey {
   return {
     id: "survey-1",
-    title: "培训方向意向",
+    title: "培训方向问卷",
     description_markdown: "请选择",
     status: "draft",
-    allow_multiple: false,
     starts_at: null,
     ends_at: null,
-    option_count: 2,
+    question_count: 2,
     responded_count: 0,
+    max_submissions: 2,
     created_at: "2026-08-27T00:00:00Z",
     updated_at: "2026-08-27T00:00:00Z",
     revision: 1,
@@ -73,7 +92,7 @@ function adminSurvey(
   };
 }
 
-describe("student intention form", () => {
+describe("student questionnaire form", () => {
   beforeEach(() => {
     apiFetchMock.mockReset();
     csrfFetchMock.mockReset();
@@ -81,16 +100,31 @@ describe("student intention form", () => {
     refreshMock.mockReset();
   });
 
-  it("submits exactly one option for a single-choice survey", async () => {
-    csrfFetchMock.mockResolvedValue({});
+  it("submits every single and multiple choice question", async () => {
+    csrfFetchMock.mockResolvedValue({
+      answers: [
+        {
+          question_id: "question-first",
+          selected_option_ids: ["option-vision"],
+        },
+        {
+          question_id: "question-second",
+          selected_option_ids: ["option-control", "option-embedded"],
+        },
+      ],
+      free_text: "希望参与视觉组",
+      submitted_at: "2026-08-28T01:00:00Z",
+      submission_count: 1,
+    });
     render(<IntentionForm initialSurvey={intention()} />);
 
-    fireEvent.click(screen.getByLabelText("机器人"));
     fireEvent.click(screen.getByLabelText("视觉"));
+    fireEvent.click(screen.getByLabelText("电控"));
+    fireEvent.click(screen.getByLabelText("嵌入式"));
     fireEvent.change(screen.getByLabelText("补充说明（可选）"), {
       target: { value: "  希望参与视觉组  " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "提交我的意向" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交问卷" }));
 
     await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledTimes(1));
     expect(csrfFetchMock).toHaveBeenCalledWith(
@@ -98,26 +132,44 @@ describe("student intention form", () => {
       {
         method: "PUT",
         body: JSON.stringify({
-          selected_option_ids: ["option-vision"],
+          answers: [
+            {
+              question_id: "question-first",
+              selected_option_ids: ["option-vision"],
+            },
+            {
+              question_id: "question-second",
+              selected_option_ids: ["option-control", "option-embedded"],
+            },
+          ],
           free_text: "希望参与视觉组",
         }),
       },
     );
-    expect(screen.getByText(/可以在调查关闭前继续修改/)).toBeInTheDocument();
+    expect(screen.getByText(/还可提交 1 次/)).toBeInTheDocument();
   });
 
-  it("loads and updates an existing multiple-choice response", async () => {
-    csrfFetchMock.mockResolvedValue({});
+  it("shows the latest answers and becomes read-only at the submission limit", () => {
     render(
       <IntentionForm
         initialSurvey={
           intention({
-            allow_multiple: true,
             has_response: true,
+            submissions_used: 2,
             response: {
-              selected_option_ids: ["option-robot"],
+              answers: [
+                {
+                  question_id: "question-first",
+                  selected_option_ids: ["option-robot"],
+                },
+                {
+                  question_id: "question-second",
+                  selected_option_ids: ["option-control"],
+                },
+              ],
               free_text: null,
               submitted_at: "2026-08-27T01:00:00Z",
+              submission_count: 2,
             },
           })
         }
@@ -125,18 +177,13 @@ describe("student intention form", () => {
     );
 
     expect(screen.getByLabelText("机器人")).toBeChecked();
-    fireEvent.click(screen.getByLabelText("视觉"));
-    fireEvent.click(screen.getByRole("button", { name: "更新我的意向" }));
-
-    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledTimes(1));
-    expect(JSON.parse(String(csrfFetchMock.mock.calls[0]?.[1]?.body))).toEqual({
-      selected_option_ids: ["option-robot", "option-vision"],
-      free_text: null,
-    });
+    expect(screen.getByLabelText("电控")).toBeChecked();
+    expect(screen.getByRole("button", { name: "再次提交问卷" })).toBeDisabled();
+    expect(screen.getByText(/提交次数已经用完/)).toBeInTheDocument();
   });
 });
 
-describe("administrator intention panel", () => {
+describe("administrator questionnaire panel", () => {
   beforeEach(() => {
     apiFetchMock.mockReset();
     csrfFetchMock.mockReset();
@@ -144,34 +191,50 @@ describe("administrator intention panel", () => {
     refreshMock.mockReset();
   });
 
-  it("creates a multiple-choice survey from one option per line", async () => {
-    csrfFetchMock.mockResolvedValue(
-      adminSurvey({ id: "survey-created", allow_multiple: true }),
-    );
+  it("creates a multi-question questionnaire with a submission limit", async () => {
+    csrfFetchMock.mockResolvedValue(adminSurvey({ id: "survey-created" }));
     render(<IntentionAdminPanel initialSurveys={[]} />);
 
-    fireEvent.change(screen.getByLabelText("标题"), {
+    fireEvent.change(screen.getByLabelText("问卷标题"), {
       target: { value: "  组队岗位意向  " },
     });
-    fireEvent.change(screen.getByLabelText("选项（每行一个）"), {
-      target: { value: "队长\n机械\n视觉" },
+    const prompts = screen.getAllByLabelText("题目");
+    const options = screen.getAllByLabelText("选项（每行一个）");
+    const multiple = screen.getAllByLabelText("本题允许多选");
+    fireEvent.change(prompts[0]!, { target: { value: "第一志愿" } });
+    fireEvent.change(options[0]!, { target: { value: "机械\n视觉" } });
+    fireEvent.change(prompts[1]!, { target: { value: "第二志愿" } });
+    fireEvent.change(options[1]!, { target: { value: "电控\n嵌入式" } });
+    fireEvent.click(multiple[1]!);
+    fireEvent.change(screen.getByLabelText("每人最多提交次数"), {
+      target: { value: "3" },
     });
-    fireEvent.click(screen.getByLabelText("允许学生多选"));
-    fireEvent.click(screen.getByRole("button", { name: "创建调查" }));
+    fireEvent.click(screen.getByRole("button", { name: "创建问卷" }));
 
-    await screen.findByText("调查已创建。开放填写后学生即可提交意向。");
+    await screen.findByText("问卷已创建。开放填写后学生即可提交。");
     expect(csrfFetchMock).toHaveBeenCalledWith("/admin/intentions", {
       method: "POST",
       body: JSON.stringify({
         title: "组队岗位意向",
         description_markdown: "",
-        options: [{ label: "队长" }, { label: "机械" }, { label: "视觉" }],
-        allow_multiple: true,
+        questions: [
+          {
+            prompt: "第一志愿",
+            allow_multiple: false,
+            options: [{ label: "机械" }, { label: "视觉" }],
+          },
+          {
+            prompt: "第二志愿",
+            allow_multiple: true,
+            options: [{ label: "电控" }, { label: "嵌入式" }],
+          },
+        ],
+        max_submissions: 3,
       }),
     });
   });
 
-  it("opens a survey, generates a local QR code, and then closes it", async () => {
+  it("opens a questionnaire, generates a local QR code, and closes it", async () => {
     const draft = adminSurvey();
     const opened = adminSurvey({ status: "open", revision: 2 });
     const closed = adminSurvey({ status: "closed", revision: 3 });
@@ -188,31 +251,40 @@ describe("administrator intention panel", () => {
     render(<IntentionAdminPanel initialSurveys={[draft]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "开放填写" }));
-    await screen.findByText("调查状态已更新为“开放中”。");
+    await screen.findByText("问卷状态已更新为“开放中”。");
     fireEvent.click(screen.getByRole("button", { name: "生成二维码" }));
 
-    await screen.findByAltText("培训方向意向移动端填写二维码");
+    await screen.findByAltText("培训方向问卷移动端填写二维码");
     expect(qrToDataUrlMock).toHaveBeenCalledWith(
       "https://training.invalid/intentions/survey-1?token=qr-token",
       expect.objectContaining({ width: 280 }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "关闭调查" }));
-    await screen.findByText("调查状态已更新为“已关闭”。");
-    expect(screen.queryByRole("button", { name: "生成二维码" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭问卷" }));
+    await screen.findByText("问卷状态已更新为“已关闭”。");
+    expect(
+      screen.queryByRole("button", { name: "生成二维码" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("shows aggregate counts and percentages without individual responses", async () => {
+  it("shows per-question aggregate statistics", async () => {
     apiFetchMock.mockResolvedValue({
       survey_id: "survey-1",
       total_active_students: 8,
       responded_count: 2,
       response_rate: 25,
-      options: [
+      questions: [
         {
-          option_id: "option-robot",
-          label: "机器人",
-          response_count: 1,
-          percentage: 50,
+          question_id: "question-first",
+          prompt: "第一志愿",
+          allow_multiple: false,
+          options: [
+            {
+              option_id: "option-robot",
+              label: "机器人",
+              response_count: 1,
+              percentage: 50,
+            },
+          ],
         },
       ],
     });
@@ -222,11 +294,48 @@ describe("administrator intention panel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "查看统计" }));
 
-    expect(await screen.findByText(/填写率 25%/)).toBeInTheDocument();
+    expect(await screen.findByText(/提交率 25%/)).toBeInTheDocument();
+    expect(screen.getByText("1. 第一志愿（单选）")).toBeInTheDocument();
     expect(screen.getByText("1 · 50%")).toBeInTheDocument();
     expect(
-      screen.getByRole("progressbar", { name: "机器人选择比例" }),
+      screen.getByRole("progressbar", {
+        name: "第一志愿 / 机器人选择比例",
+      }),
     ).toHaveAttribute("aria-valuenow", "50");
-    expect(screen.queryByText(/学生姓名|学号/)).not.toBeInTheDocument();
+  });
+
+  it("shows the identified latest-response roster only to the admin panel", async () => {
+    apiFetchMock.mockResolvedValue({
+      survey_id: "survey-1",
+      total: 1,
+      items: [
+        {
+          user_id: "student-1",
+          full_name: "测试学生",
+          student_number: "20260001",
+          email: "student@connect.hkust-gz.edu.cn",
+          answers: [
+            {
+              question_id: "question-first",
+              prompt: "第一志愿",
+              selected_options: ["视觉"],
+            },
+          ],
+          free_text: "愿意调剂",
+          submission_count: 2,
+          submitted_at: "2026-08-28T02:00:00Z",
+        },
+      ],
+    });
+    render(
+      <IntentionAdminPanel initialSurveys={[adminSurvey({ status: "open" })]} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看提交名单" }));
+
+    expect(await screen.findByText("测试学生")).toBeInTheDocument();
+    expect(screen.getByText(/20260001/)).toBeInTheDocument();
+    expect(screen.getByText("视觉")).toBeInTheDocument();
+    expect(screen.getByText(/提交 2 次/)).toBeInTheDocument();
   });
 });

@@ -10,7 +10,9 @@ import type {
   AdminCompetitionDetail,
   AdminRegistrationList,
   AdminSession,
+  AdminUserPage,
   AdminIntentionSurveyPage,
+  IntentionRoster,
   IntentionStats,
   IntentionSurvey,
   IntentionSurveyPage,
@@ -41,7 +43,6 @@ import type {
   Submission,
   Team,
   User,
-  UserPage,
 } from "@/lib/api/types";
 
 const internalApiBase =
@@ -96,8 +97,23 @@ export async function getSessions(): Promise<Session[]> {
   return result;
 }
 
-export async function getAdminUsers(): Promise<UserPage> {
-  const result = await serverApi<UserPage>("/admin/users?page_size=100");
+type AdminUserQuery = Readonly<{
+  activity?: "inactive";
+  pageSize?: number;
+}>;
+
+export async function getAdminUsers({
+  activity,
+  pageSize = 100,
+}: AdminUserQuery = {}): Promise<AdminUserPage> {
+  const safePageSize = Math.min(100, Math.max(1, Math.trunc(pageSize)));
+  const params = new URLSearchParams({ page_size: String(safePageSize) });
+  if (activity === "inactive") {
+    params.set("activity", activity);
+  }
+  const result = await serverApi<AdminUserPage>(
+    "/admin/users?" + params.toString(),
+  );
   if (result instanceof Response) {
 
     if (result.status === 401) {
@@ -367,6 +383,14 @@ export async function getAdminIntentionStats(surveyId: string): Promise<Intentio
   return resolveProtectedResult(
     await serverApi<IntentionStats>(
       "/admin/intentions/" + encodeURIComponent(surveyId) + "/stats",
+    ),
+  );
+}
+
+export async function getAdminIntentionRoster(surveyId: string): Promise<IntentionRoster> {
+  return resolveProtectedResult(
+    await serverApi<IntentionRoster>(
+      "/admin/intentions/" + encodeURIComponent(surveyId) + "/responses",
     ),
   );
 }

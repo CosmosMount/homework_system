@@ -5,5 +5,14 @@ import { getAdminIntentions, requireAdmin } from "@/lib/api/server";
 
 export default async function AdminIntentionsPage() {
   const [admin, surveys] = await Promise.all([requireAdmin(), getAdminIntentions()]);
-  return <AppShell user={admin}><AdminPageHeader eyebrow="ADMIN / INTENTIONS" title="学生意向调查" description="创建单选或多选意向调查，查看匿名汇总，并生成移动端填写二维码。" /><IntentionAdminPanel initialSurveys={surveys.items} /></AppShell>;
+  return (
+    <AppShell user={admin}>
+      <AdminPageHeader
+        description="创建包含多道单选或多选题的问卷，限制提交次数，并查看实名提交名单与分题统计。"
+        eyebrow="ADMIN / QUESTIONNAIRES"
+        title="问卷管理"
+      />
+      <IntentionAdminPanel initialSurveys={surveys.items} />
+    </AppShell>
+  );
 }

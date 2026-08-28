@@ -52,15 +52,24 @@ const dashboard: Dashboard = {
 
 const survey: IntentionSurvey = {
   id: "survey-1",
-  title: "培训方向意向",
+  title: "培训方向问卷",
   description_html: "<p>请选择</p>",
   status: "open",
-  allow_multiple: false,
   starts_at: null,
   ends_at: null,
-  option_count: 1,
+  question_count: 1,
   has_response: false,
-  options: [{ id: "option-1", label: "机器人", display_order: 0 }],
+  submissions_used: 0,
+  max_submissions: 1,
+  questions: [
+    {
+      id: "question-1",
+      prompt: "第一志愿",
+      allow_multiple: false,
+      display_order: 0,
+      options: [{ id: "option-1", label: "机器人", display_order: 0 }],
+    },
+  ],
   response: null,
   revision: 1,
 };
@@ -85,7 +94,7 @@ describe("intention QR detail page", () => {
     );
     expect(getIntentionMock).toHaveBeenCalledWith("survey-1", "qr-token");
     expect(
-      screen.getByRole("heading", { name: "培训方向意向" }),
+      screen.getByRole("heading", { name: "培训方向问卷" }),
     ).toBeInTheDocument();
   });
 });

@@ -7,21 +7,34 @@ import {
   requireAdmin,
 } from "@/lib/api/server";
 
-export default async function AdminUsersPage() {
-  const [admin, userPage, directions] = await Promise.all([
+type AdminUsersPageProps = Readonly<{
+  searchParams: Promise<{ activity?: string }>;
+}>;
+
+export default async function AdminUsersPage({
+  searchParams,
+}: AdminUsersPageProps) {
+  const [admin, directions, filters] = await Promise.all([
     requireAdmin(),
-    getAdminUsers(),
     getDirections(),
+    searchParams,
   ]);
+  const activity = filters.activity === "inactive" ? "inactive" : null;
+  const userPage = await getAdminUsers({
+    activity: activity ?? undefined,
+    pageSize: 100,
+  });
   return (
     <AppShell user={admin}>
       <AdminPageHeader
         eyebrow="ADMIN / USERS"
         title="用户管理"
-        description="管理学生与管理员账号及技术方向。系统没有注册审批；邮箱验证成功后学生会直接激活。"
+        description="管理账号、技术方向与最近进入时间；超过 10 天未进入的账号可在后端复核后安全清理。"
       />
       <UserAdminPanel
+        activity={activity}
         directions={directions}
+        initialTotal={userPage.total}
         initialUsers={userPage.items}
       />
     </AppShell>

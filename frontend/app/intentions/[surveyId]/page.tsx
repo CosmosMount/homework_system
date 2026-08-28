@@ -29,7 +29,7 @@ export default async function IntentionDetailPage({
   return (
     <AppShell user={user} unreadCount={dashboard.unread_count}>
       <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
-        STUDENT / INTENTIONS
+        STUDENT / QUESTIONNAIRES
       </p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">
         {survey.title}
