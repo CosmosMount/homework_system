@@ -204,3 +204,14 @@
 - 隔离构建基线为当前 HEAD，只叠加 `backend/app/intentions/service.py` 和 `backend/tests/test_intentions.py`，未纳入并行账号活跃度/清理改动。临时构建上下文已统一为非 root 用户可读权限，最终镜像正常读取应用和 Alembic 配置。
 - Backend 与 Worker 已强制重建为同一镜像 `sha256:409a55ff76ad6d75e03c20c254f042f6424a60c99a649363ed3d06b8bc1b3d69`；Frontend、PostgreSQL、MinIO 和 Nginx 未重建。
 - 六个常驻服务均 healthy，`live`、`ready`、`worker`、`nginx-health` 经 `127.0.0.1:5000` 均返回 200；容器内 `alembic current` 为 `20260827_0011 (head)`，部署后 Backend/Worker 最近日志无新外键、权限或启动异常。
+
+## 2026-08-28：账号活跃度与多题实名问卷运行态部署
+
+- 从已通过完整质量门的提交 `60b8fe9` 构建并部署固定标签：Backend/Worker `pnx-training-backend:questionnaire-account-20260828`（`sha256:8253599decbfb1e89dcb8a623d29f942ace011947f6b292588c0dfa5f4e45395`），Frontend `pnx-training-frontend:questionnaire-account-20260828`（`sha256:1252a6799ff1b034680317fafbaf4e9131ddea073ffd41628f9e0ac1e145a85b`）。两镜像均以 `appuser` 非 root 运行。
+- 迁移前 PostgreSQL 17 自定义格式备份为 `/tmp/pnx-training-before-questionnaire-0013-20260828T132500Z.dump`，权限 `0600`、大小 4,141,766 B、SHA-256 `5a3c6354bb47f3f8f5d3bd2739c5bd69127462388c8945f6b75e34561c037e31`；已使用 PostgreSQL 17 `pg_restore --list` 校验。该 `/tmp` 文件是临时恢复材料，如需跨主机重启保留必须迁移到受控加密备份位置。
+- 生产备份恢复到专用隔离 PostgreSQL 17 后，真实执行 `0011 → 0012 → 0013 → 0012 → 0013`；1 份旧调查、3 个选项、2 份回答和 2 条选择关系往返后数量一致，无孤立选项。隔离容器、匿名卷和网络已删除。
+- 运行库在停止 Nginx、Frontend、Backend 和 Worker 后完成 `0011 → 0012 → 0013`；Alembic 为 `20260828_0013 (head)` 且 `alembic check` 无模型漂移。旧调查迁为 ID 与调查相同的兼容问题，标题一致；两份旧回答的 `submission_count` 范围为 1～6。迁移未执行任何账号删除。
+- Worker 停止时超过 30 秒宽限期并以 137 退出；数据库连接随进程终止释放。新 Worker 启动后健康，无最近一小时 processing/retry Outbox，四个新应用服务最近十分钟日志无错误匹配。
+- Backend、Worker、Frontend、PostgreSQL、MinIO、Nginx 六服务均 healthy；`live`、`ready`、`worker`、`nginx-health` 为 200。`/intentions`、`/admin/intentions`、`/admin/users` 匿名访问为 307，学生问卷、管理员问卷和实名名单 API 匿名访问为 401。运行 Frontend 编译包包含问卷管理、提交名单、提交次数与账号活跃度界面。
+- 最近成功知识库快照保持 212 篇文档、986 个媒体引用，最新同步 Outbox 保持 `sent`、`attempt_count=1`；本次未触发飞书同步。现有 6 条验证邮件和 4 条历史知识库 `dead` Outbox 未被本次部署修改。
+- 应用回滚可恢复先前镜像；`0013 → 0012` 会丢失多题标题和次数限制语义，若必须数据库降级应先停止写入并使用本次备份在隔离环境验证，禁止直接覆盖运行库。
