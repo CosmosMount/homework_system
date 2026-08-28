@@ -118,8 +118,11 @@ def test_intention_schema_rejects_blank_duplicate_and_invalid_selection_payloads
 async def test_admin_creates_sanitized_intention_survey_and_options() -> None:
     now = datetime.now(UTC)
     service, session = make_service(now)
-    add_survey = Mock()
-    add_option = Mock()
+    persistence_order: list[str] = []
+    add_survey = Mock(side_effect=lambda _survey: persistence_order.append("survey"))
+    add_option = Mock(side_effect=lambda _option: persistence_order.append("option"))
+    session.flush.side_effect = lambda: persistence_order.append("flush")
+    session.commit.side_effect = lambda: persistence_order.append("commit")
     service._repo = cast(
         IntentionRepository,
         SimpleNamespace(add_survey=add_survey, add_option=add_option),
@@ -141,6 +144,8 @@ async def test_admin_creates_sanitized_intention_survey_and_options() -> None:
     assert survey.public_token_hash != "initial-token"
     assert len(survey.public_token_hash) == 64
     assert [call.args[0].label for call in add_option.call_args_list] == ["机器人", "视觉"]
+    assert persistence_order == ["survey", "flush", "option", "option", "commit"]
+    session.flush.assert_awaited_once()
     session.commit.assert_awaited_once()
 
 

@@ -308,6 +308,7 @@ class IntentionService:
             revision=1,
         )
         self._repo.add_survey(survey)
+        await self._session.flush()
         for index, item in enumerate(payload.options):
             self._repo.add_option(
                 IntentionOption(
