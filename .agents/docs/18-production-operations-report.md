@@ -215,3 +215,10 @@
 - Backend、Worker、Frontend、PostgreSQL、MinIO、Nginx 六服务均 healthy；`live`、`ready`、`worker`、`nginx-health` 为 200。`/intentions`、`/admin/intentions`、`/admin/users` 匿名访问为 307，学生问卷、管理员问卷和实名名单 API 匿名访问为 401。运行 Frontend 编译包包含问卷管理、提交名单、提交次数与账号活跃度界面。
 - 最近成功知识库快照保持 212 篇文档、986 个媒体引用，最新同步 Outbox 保持 `sent`、`attempt_count=1`；本次未触发飞书同步。现有 6 条验证邮件和 4 条历史知识库 `dead` Outbox 未被本次部署修改。
 - 应用回滚可恢复先前镜像；`0013 → 0012` 会丢失多题标题和次数限制语义，若必须数据库降级应先停止写入并使用本次备份在隔离环境验证，禁止直接覆盖运行库。
+## 2026-08-28：入口安全、高并发与 Docker 版本收敛
+
+- 两套 Nginx 增加 limit_req_status 429；现有 Nginx 重启后 healthy。
+- 多来源隔离登录 100/200/300 档全部 0 错误；100 Session/2,000 次读取 P95 331.674 ms、错误率 0%。单 IP 大量账号的 429 保留为预期防洪策略。
+- PNX 端口映射仅 Nginx 0.0.0.0:5000；Compose 内 Backend、Frontend、PostgreSQL、MinIO 无宿主机端口映射。宿主机 5432/3000 属于另一个项目或宿主进程，本轮未修改。
+- 匿名 API、Host/转发头、Origin/CSRF、非法方法、请求体上限、路径遍历和 source map 探测通过；Gitleaks 无泄漏。Trivy 发现 Backend Alpine 的 4 个 CVE，需后续升级基础镜像。
+- 保留当前 questionnaire-account-20260828 与回滚候选 intention-fix-20260828、user-status-ui-20260828；删除已退出 PNX migrate 容器及其余旧 PNX 应用标签。运行卷、备份和六服务保留；隔离项目资源已删除。全局构建缓存未清理以免影响其他项目。
