@@ -336,3 +336,21 @@
 - 知识库定向 8 项测试、完整前端 20 个测试文件/77 项测试、ESLint、严格 TypeScript 和 Next.js 生产构建通过。
 - 本轮只涉及 Frontend，不触发飞书同步，不修改管理员手动接口、Worker、Backend 或数据库。
 - 隔离构建差异只有共享主导航、主导航折叠事件、知识库阅读器和知识库测试；Frontend `sha256:2ad76bd…` 已上线，六服务 healthy，四个健康端点 200，页面/API 匿名守卫 307/401。
+
+
+## 2026-08-28：意向调查创建外键顺序修复
+
+### Fixed
+
+- 修复管理员创建带选项的意向调查返回 500：父调查加入 Session 后先执行 `flush()`，再写入选项，避免 `intention_options.survey_id` 在父记录落库前触发外键约束。
+- 父调查和全部选项仍处于同一事务，任一步失败都会整体回滚；不增加重复写入路径，不改变 API、Schema、数据库结构或迁移。
+
+### Testing
+
+- 创建回归新增 `survey → flush → option → option → commit` 严格顺序断言；意向调查定向 10 项、隔离源码完整后端测试、Ruff、146 个 Python 文件格式检查和 146 个源文件严格 Mypy 通过。
+- 使用真实运行 PostgreSQL 完成多选调查与两个选项的事务冒烟，随后回滚外层事务；调查与审计测试记录均为 0，无数据残留。
+
+### Operations
+
+- 从当前 HEAD 隔离叠加本次两个代码文件构建，未纳入并行账号活跃度/清理改动；Backend 和 Worker 已统一部署镜像 `sha256:409a55ff76ad6d75e03c20c254f042f6424a60c99a649363ed3d06b8bc1b3d69`。
+- 六个 Compose 服务均 healthy，`live`、`ready`、`worker`、`nginx-health` 均为 200；Alembic 为 `20260827_0011 (head)`，最近 Backend/Worker 日志无新异常。

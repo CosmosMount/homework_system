@@ -57,3 +57,6 @@
 - 最新定向 8 项知识库前端测试、完整 20 文件/77 项测试、ESLint、严格 TypeScript 和工作树/隔离源码 Next.js 生产构建通过。
 - 最新隔离镜像差异仅含共享主导航、折叠事件、知识库阅读器和测试 4 个文件；Frontend 运行镜像为 `sha256:2ad76bd…`，六服务 healthy，四个健康端点为 200，页面/API 匿名守卫为 307/401。
 - 最新同步仍为 `succeeded`、212 篇文档、977 个媒体引用，最新知识库 Outbox 仍为 `sent`、`attempt_count=1`；未触发新同步、未迁移数据库，管理员手动接口和 Worker 保持不变。
+- 管理员创建带选项的意向调查曾因 ORM 先插入 `intention_options` 而触发外键 500；`IntentionService.create()` 现先 `flush()` 父调查，再在同一事务写入选项，失败继续整体回滚。
+- 该修复通过意向定向 10 项、隔离源码完整后端测试、Ruff、146 文件格式检查、146 个源文件严格 Mypy 及真实 PostgreSQL 回滚冒烟；没有测试数据残留，也不涉及 API、Schema 或迁移。
+- Backend/Worker 当前运行同一隔离修复镜像 `sha256:409a55ff…`，并行账号活跃度/清理改动未纳入；六服务 healthy，四个健康端点为 200，Alembic 保持 `20260827_0011 (head)`。

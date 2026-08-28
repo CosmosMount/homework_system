@@ -4,6 +4,8 @@
 
 学生赛事入口目前仍按“赛事列表”组织，单一校内赛产品约束下需要直接成为队伍中心；同时平台缺少用于收集学生方向/参与意向的调查能力和移动端填写入口。
 
+2026-08-28 运行态回归发现管理员创建带选项的调查时返回 500：父调查和选项同时进入 SQLAlchemy Session，但 ORM 未建立可保证插入顺序的关系依赖，实际先插入选项并触发 `intention_options.survey_id` 外键失败。本计划继续作为该意向调查域的唯一正式计划，追加最小持久化顺序修复，不新建重复计划。
+
 ## 目标与决策
 
 - 学生 `/competitions` 只展示当前未归档校内赛公告摘要、我的队伍状态和可加入队伍目录；队伍目录支持名称搜索，只返回仍在成形且未满的公开摘要。
@@ -15,6 +17,7 @@
 
 - `backend/app/competitions/`：队伍公开目录、自动分配服务/接口/Schema。
 - `backend/app/intentions/`：模型、仓储、服务、路由和 Schema。
+- `backend/app/intentions/service.py`：创建时先落库父调查，再写入选项，保持现有事务原子性。
 - `backend/migrations/versions/20260827_0009_intention_surveys.py`：调查、选项、回答及索引，可回滚。
 - `frontend/app/competitions/`、`frontend/components/competitions/`：学生队伍中心与交互。
 - `frontend/app/intentions/`、`frontend/app/admin/intentions/`：学生填写、管理员编辑/统计/二维码。
@@ -27,6 +30,15 @@
 - 前端测试覆盖学生单一校内赛队伍中心、搜索、自动分配、意向填写和管理员二维码入口；运行 ESLint、严格 TypeScript、生产构建。
 - 运行 Ruff、格式、Mypy、完整后端测试；迁移升级/回滚验证。
 - 按用户偏好重建 Backend、Worker、Frontend 并重启 Nginx，检查健康端点和 5000 端口。
+- 创建回归严格断言 `survey → flush → option → option → commit`；使用真实 PostgreSQL 验证父调查和选项可在同一事务写入，并在冒烟后完整回滚测试数据。
+
+## 2026-08-28 创建故障修订结果
+
+- `IntentionService.create()` 在 `add_survey()` 后显式 `flush()`，确保父调查主键及外键目标先落库；选项仍在同一事务内写入，任一失败继续整体回滚。
+- 意向调查定向 10 项、隔离源码完整后端测试、Ruff、146 个 Python 文件格式检查和 146 个源文件严格 Mypy 均通过。
+- 真实运行 PostgreSQL 冒烟成功创建多选调查及两个选项，外层事务随后回滚；调查和审计测试记录均为 0，无数据残留。
+- 隔离镜像只包含本次服务和测试差异，Backend/Worker 已部署为同一镜像 `sha256:409a55ff…`；六服务 healthy，四个健康端点为 200，Alembic 保持 `20260827_0011 (head)`，最近日志无新异常。
+- 本修订不改变 API、Schema、数据库结构或迁移，不影响已有调查和最近成功知识库快照。
 
 ## 回滚
 

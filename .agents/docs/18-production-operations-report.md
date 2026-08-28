@@ -194,3 +194,13 @@
 - Frontend 已替换为 `sha256:2ad76bd178810d82cf1d0b7d2d3517fa891998d949977e5514ecaff51ac1ed39`，Nginx 已重启；六服务 healthy，`live`、`ready`、`worker`、`nginx-health` 均为 200。
 - `/knowledge`、`/admin/knowledge` 匿名访问为 307，`/api/v1/knowledge`、`/api/v1/admin/knowledge` 匿名访问为 401；最新同步仍为 `succeeded|212|977`，Outbox 仍为 `sent|1`。
 - Backend、Worker、PostgreSQL、MinIO、管理员手动同步接口和 Alembic `20260827_0011` 均未修改；本轮无迁移且未重新同步飞书。
+
+
+## 2026-08-28：意向调查创建 500 修复部署
+
+- Backend 日志定位为 `intention_options.survey_id` 外键失败：创建服务将父调查和选项同时加入 Session，ORM 实际先插入选项。失败事务已自动回滚，没有半成品调查。
+- 服务层在加入父调查后显式 `flush()`，再加入选项并提交；父子记录仍处于一个原子事务，不改变 API、Schema、数据库结构或 Alembic 迁移。
+- 意向调查定向 10 项、隔离源码完整后端测试、Ruff、146 个 Python 文件格式检查和 146 个源文件严格 Mypy 通过。真实运行 PostgreSQL 冒烟成功写入父调查和两个选项，随后回滚外层事务；测试调查和审计记录均为 0。
+- 隔离构建基线为当前 HEAD，只叠加 `backend/app/intentions/service.py` 和 `backend/tests/test_intentions.py`，未纳入并行账号活跃度/清理改动。临时构建上下文已统一为非 root 用户可读权限，最终镜像正常读取应用和 Alembic 配置。
+- Backend 与 Worker 已强制重建为同一镜像 `sha256:409a55ff76ad6d75e03c20c254f042f6424a60c99a649363ed3d06b8bc1b3d69`；Frontend、PostgreSQL、MinIO 和 Nginx 未重建。
+- 六个常驻服务均 healthy，`live`、`ready`、`worker`、`nginx-health` 经 `127.0.0.1:5000` 均返回 200；容器内 `alembic current` 为 `20260827_0011 (head)`，部署后 Backend/Worker 最近日志无新外键、权限或启动异常。
