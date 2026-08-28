@@ -96,14 +96,14 @@ stateDiagram-v2
     disqualified --> archived: 赛事归档
 ```
 
-## 学生意向调查
+## 学生问卷
 
-- **INT-001**：管理员可以创建包含标题、已清洗 Markdown 说明和 1～30 个选项的意向调查；调查可配置为单选或多选，标题和选项去除首尾空白后不得为空或重复。
-- **INT-002**：意向调查状态为 `draft`、`open`、`closed`、`archived`，只允许按该顺序推进；仅 `open` 且处于可选开始/结束时间窗口内的调查允许学生读取和填写。
-- **INT-003**：登录学生可以填写当前开放调查，并在调查关闭前修改自己的选择和可选补充说明；同一学生对同一调查始终只有一份当前回答。
-- **INT-004**：单选调查必须且只能提交一个有效选项，多选调查可以提交一个或多个有效选项；服务端验证所有选项属于当前调查，个人答案仅本人可读取。
-- **INT-005**：管理员可以查看有效学生总数、填写人数、填写率及每个选项的人数和比例，但管理 API 和页面不得返回个人答案、姓名或学号。
-- **INT-006**：管理员可以为未关闭调查生成移动端填写二维码；二维码 token 使用不可猜测随机值、数据库只保存 SHA-256，重新生成后旧 token 立即失效。二维码只定位调查，学生扫码后仍必须登录，并在登录后返回原调查填写页。
+- **INT-001**：管理员可以创建包含标题、已清洗 Markdown 说明和 1～30 道必答选择题的问卷；每题包含题目、1～30 个选项并独立配置为单选或多选，标题、题目和选项去除首尾空白后不得为空，同一题内选项不得重复。
+- **INT-002**：问卷状态为 `draft`、`open`、`closed`、`archived`，只允许按该顺序推进；仅 `open` 且处于可选开始/结束时间窗口内的问卷允许学生读取和填写，开放后不得修改题目结构和提交次数上限。
+- **INT-003**：管理员可以把每人最多提交次数设置为 1～100 的正整数或不限。登录学生每次成功保存全部题目的答案和可选补充说明即消耗一次提交；同一学生对同一问卷只保留一份最新答案和累计提交次数，达到上限后服务端必须拒绝再次提交，不限次数时可在关闭前继续提交。
+- **INT-004**：每道单选题必须且只能提交一个有效选项，多选题必须提交一个或多个有效选项；服务端必须验证问题属于当前问卷、选项属于对应问题、全部问题均已回答且没有重复问题/选项。学生只能读取本人的最新答案和提交次数。
+- **INT-005**：管理员可以查看有效学生总数、提交人数、提交率及每道题各选项的人数和比例；管理员还可以查看实名提交名单，字段限于姓名、学号、学校邮箱、最新答案、累计提交次数、最后提交时间和补充说明。名单与个人答案仅管理接口可返回，不向其他学生公开，也不得写入日志或审计详情。
+- **INT-006**：管理员可以为未关闭问卷生成移动端填写二维码；二维码 token 使用不可猜测随机值、数据库只保存 SHA-256，重新生成后旧 token 立即失效。二维码只定位问卷，学生扫码后仍必须登录，并在登录后返回原问卷填写页。
 
 ## 飞书培训知识库
 
@@ -170,8 +170,8 @@ stateDiagram-v2
 | 创建赛事版本 | 禁止 | 仅有效队长 | 禁止代交 |
 | 查看赛事版本与评语 | 禁止 | 当前团队成员 | 全部 |
 | 查看优秀作业 | 禁止 | 仅所属受众的作业内 | 全部作业 |
-| 填写或修改意向调查 | 禁止 | 仅开放调查且仅本人 | 可在学生视图填写本人答案 |
-| 查看意向汇总、管理调查与二维码 | 禁止 | 禁止 | 允许 |
+| 填写问卷 | 禁止 | 仅开放问卷、本人且未达提交上限 | 可在学生视图填写本人答案 |
+| 查看问卷统计/实名名单、管理问卷与二维码 | 禁止 | 禁止 | 允许 |
 | 查看培训知识库快照 | 禁止 | 允许 | 允许 |
 | 手动同步和查看知识库运行状态 | 禁止 | 禁止 | 仅真实管理员视图 |
 | 管理用户、通知、作业、赛事、优秀标记 | 禁止 | 禁止 | 允许 |
@@ -190,7 +190,7 @@ stateDiagram-v2
 | SUB-001～SUB-008 | 作业版本、管理员提交反馈 | `/submission-versions`、`/submissions/*`、管理员反馈接口 | `submissions`、`submission_versions`、`version_files`、`feedback` | HW-T04～HW-T09、HW-T13 |
 | COMP-001～COMP-006 | 校内赛公告/报名、管理员赛事 | `/competitions*`、`/admin/competitions*` | `competitions`、`competition_registrations`（`competition_tasks` 仅兼容历史数据） | COMP-T01～COMP-T04 |
 | TEAM-001～TEAM-008 | 校内赛队伍中心、我的队伍、管理员队伍 | `/teams*`、`/competitions/*/teams`、`/competitions/*/auto-assign`、`/admin/teams*` | `teams`、`team_members`、报名表与一赛一队部分唯一索引 | TEAM-T01～TEAM-T10 |
-| INT-001～INT-006 | 学生意向列表/填写、管理员意向管理/统计/二维码 | `/intentions*`、`/admin/intentions*` | `intention_surveys`、`intention_options`、`intention_responses`、`intention_response_options` | INT-T01～INT-T08 |
+| INT-001～INT-006 | 学生问卷列表/填写、管理员问卷管理/统计/实名名单/二维码 | `/intentions*`、`/admin/intentions*` | `intention_surveys`、`intention_questions`、`intention_options`、`intention_responses`、`intention_response_options` | INT-T01～INT-T13 |
 | KB-001～KB-008 | 培训文档阅读器、管理员同步页 | `/knowledge*`、`/admin/knowledge*` | `knowledge_sync_runs`、节点、文档、媒体及引用表、`outbox_jobs` | KB-T01～KB-T12 |
 | SHOW-001～SHOW-005 | 作业详情的优秀作业区块、管理员提交详情 | `/assignments/*/excellent-submissions*`、管理员标记接口 | `assignment_excellent_submissions`、作业/版本外键和删除保护 | SHOW-T01～SHOW-T05 |
 | FILE-001～FILE-007 | 作业/赛题上传器、通知附件、授权下载 | `/uploads*`、`/files/*/download-url` | `files`、`upload_sessions`、`upload_parts`、正式资源附件关联 | FILE-T01～FILE-T09 |

@@ -210,29 +210,36 @@ erDiagram
 - Service 验证 `competition_id` 与 `teams.competition_id` 一致。
 - 索引 `(team_id, left_at)`。
 
-## 学生意向调查
+## 学生问卷
 
 ### `intention_surveys`
 
-`id`, `title`, `description_markdown`, `description_html`, `status`, `allow_multiple`, `starts_at`, `ends_at`, `public_token_hash`, `created_by`, `updated_by`, `created_at`, `updated_at`, `revision`。
+`id`, `title`, `description_markdown`, `description_html`, `status`, `max_submissions`, `starts_at`, `ends_at`, `public_token_hash`, `created_by`, `updated_by`, `created_at`, `updated_at`, `revision`。
 
 - `status` 只允许 `draft`、`open`、`closed`、`archived`，Service 只允许顺序推进。
 - 标题去除首尾空白后长度为 1～200；开始和结束时间同时存在时必须 `starts_at < ends_at`。
 - `description_html` 由统一安全 Markdown 渲染器生成；`public_token_hash` 是唯一 64 位 SHA-256 十六进制值，不保存二维码明文 token。
-- 索引 `(status, starts_at, ends_at)` 支持学生开放调查查询。
+- `max_submissions` 为 1～100 的正整数或 `NULL`（不限次数）；索引 `(status, starts_at, ends_at)` 支持学生开放问卷查询。
+
+### `intention_questions`
+
+`id`, `survey_id`, `prompt`, `allow_multiple`, `display_order`。
+
+- 问卷删除时级联删除问题；`prompt` 去空白后长度 1～200，`display_order >= 0`。
+- `(survey_id, display_order)` 唯一；每题独立使用 `allow_multiple` 表达单选或多选。
 
 ### `intention_options`
 
-`id`, `survey_id`, `label`, `display_order`。
+`id`, `question_id`, `label`, `display_order`。
 
-- `survey_id` 删除时级联删除选项；`label` 去空白后非空，`display_order >= 0`。
-- `(survey_id, display_order)` 唯一；Service 额外按去空白后的大小写折叠标签拒绝重复选项。
+- `question_id` 删除时级联删除选项；`label` 去空白后非空，`display_order >= 0`。
+- `(question_id, display_order)` 唯一；Service 额外按去空白后的大小写折叠标签拒绝同题重复选项。
 
 ### `intention_responses`
 
-`id`, `survey_id`, `user_id`, `free_text`, `submitted_at`, `created_at`, `updated_at`, `revision`。
+`id`, `survey_id`, `user_id`, `free_text`, `submission_count`, `submitted_at`, `created_at`, `updated_at`, `revision`。
 
-- `(survey_id, user_id)` 唯一，保证同一学生只保留一份可修改当前回答；修改时更新选择、提交时间和 revision，不创建公开历史版本。
+- `(survey_id, user_id)` 唯一，保证同一学生只保留一份最新回答；每次成功覆盖时原子增加正整数 `submission_count`、更新时间和 revision，不保留被覆盖的答案历史。
 - `user_id` 使用 `RESTRICT`，调查删除时级联删除回答；正式产品通过归档保留调查，不提供删除 API。
 
 ### `intention_response_options`
@@ -240,8 +247,8 @@ erDiagram
 `response_id`, `option_id`，复合主键 `(response_id, option_id)`。
 
 - 回答删除时级联删除选择；选项仍被引用时 `RESTRICT`。
-- Service 在写入前锁定调查和本人回答，验证选项全部属于当前调查，并按 `allow_multiple` 限制选择数量；数据库唯一约束处理并发首次填写。
-- 管理员统计只聚合回答数和选项选择数，不连接或返回用户姓名、学号和补充说明。
+- Service 在写入前锁定问卷和本人回答，验证全部问题、问题归属、选项归属及每题选择数量，并在同一事务校验/增加提交次数；数据库唯一约束处理并发首次填写。
+- 管理员统计只聚合回答数和分题选项选择数；实名名单通过受管理员保护的查询连接 `users`，批量装载最新选择，只返回需求允许字段。
 
 ## 提交、版本和评语
 
@@ -369,7 +376,7 @@ CHECK (
 | HW | `assignments`, 受众配置与快照, `assignment_extensions` |
 | COMP、TEAM | `competitions`, `competition_registrations`, `teams`, `team_members`；`competition_tasks` 仅保留历史兼容数据 |
 | SUB | `submissions`, `submission_versions`, `version_files`, `feedback` |
-| INT | `intention_surveys`, `intention_options`, `intention_responses`, `intention_response_options` |
+| INT | `intention_surveys`, `intention_questions`, `intention_options`, `intention_responses`, `intention_response_options` |
 | SHOW | `assignment_excellent_submissions`、作业与版本外键、源附件删除保护 |
 | FILE | `files`, `upload_sessions`, `upload_parts` |
 | NFR-006 | `audit_logs` |
@@ -386,6 +393,7 @@ CHECK (
 7. 认证增量迁移 `20260826_0008` 为 `sessions.student_view` 增加可回滚的非空布尔列，默认关闭；降级仅删除该列，不恢复已撤销 Session 或审计记录。
 8. 意向调查迁移 `20260827_0009` 创建上述四张表、外键、唯一约束和状态/时间检查；downgrade 按响应选项、回答、选项、调查顺序删除，可完成 `0008 → 0009 → 0008 → 0009` 往返。
 9. 作业受众数据迁移 `20260827_0010` 为现有 active student 补录仍开放且匹配的作业，使用专用 `created_at` 标记；downgrade 只删除该标记行，可完成 `0009 → 0010 → 0009 → 0010` 往返。
+10. 问卷升级迁移 `20260828_0013` 接在账号活跃度 `0012` 后：为每份旧调查创建 ID 等于原调查 ID 的兼容问题，把旧选项迁到 `question_id`，以原回答 revision 初始化 `submission_count`，旧调查 `max_submissions=NULL` 保持不限。downgrade 按题序展平选项并保留选择关系，但旧结构无法保留问题标题和次数限制语义，生产降级前必须备份；验证 `0012 → 0013 → 0012 → 0013`。
 
 ## 飞书知识库快照
 

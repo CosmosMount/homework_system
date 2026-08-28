@@ -290,30 +290,31 @@
 个人取消资格原因只返回管理员和对应学生本人；联动队伍的 `disqualification_reason` 使用不含个人原因的固定通用说明。管理员补录使 `invalid` 队伍达到最低人数时恢复 `locked`；从 `locked` 队伍移除成员后低于最低人数且没有豁免时转为 `invalid`。所有上述纠错请求必须提供非空原因并写审计。
 
 
-## 学生意向接口
+## 学生问卷接口
 
 ### 学生读取与回答
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /intentions` | 返回当前 `open` 且处于填写窗口内的调查摘要及本人是否已回答 | INT-002～INT-004 |
-| `GET /intentions/{survey_id}` | 返回清洗说明、选项和本人当前回答；可选 `token` 不匹配时返回 404 | INT-001～INT-004、INT-006 |
-| `PUT /intentions/{survey_id}/response` | `{selected_option_ids,free_text?}` 首次填写或覆盖本人当前回答 | INT-002～INT-004 |
+| `GET /intentions` | 返回当前 `open` 且处于填写窗口内的问卷摘要、题目数、提交上限及本人已提交次数 | INT-002～INT-004 |
+| `GET /intentions/{survey_id}` | 返回清洗说明、多道题目/选项、提交上限和本人最新回答；可选 `token` 不匹配时返回 404 | INT-001～INT-004、INT-006 |
+| `PUT /intentions/{survey_id}/response` | `{answers:[{question_id,selected_option_ids}],free_text?}` 覆盖本人最新回答并原子增加一次提交次数 | INT-002～INT-004 |
 
-学生接口按有效角色鉴权；普通管理员视图不能代填，管理员学生视图可以按本人账号填写。调查关闭、未开始或已过结束时间时，读取不可见，写入返回 `409 INTENTION_CLOSED`。单选多于一个、选项不属于调查或重复选项均被拒绝。
+学生接口按有效角色鉴权；普通管理员视图不能代填，管理员学生视图可以按本人账号填写。问卷关闭、未开始或已过结束时间时，读取不可见，写入返回 `409 INTENTION_CLOSED`；达到上限返回 `409 INTENTION_SUBMISSION_LIMIT_REACHED`。缺少题目、重复题目、单选数量错误、问题不属于问卷、选项不属于对应问题或重复选项均被拒绝。
 
 ### 管理接口
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /admin/intentions` | 返回全部调查及选项数、填写人数，不含个人回答 | INT-001～INT-005 |
-| `POST /admin/intentions` | 创建 `draft` 单选/多选调查并清洗 Markdown | INT-001～INT-002 |
-| `PATCH /admin/intentions/{survey_id}` | 按 `revision` 修改尚未开放的标题、说明、选项和时间窗口 | INT-001～INT-002 |
-| `POST /admin/intentions/{survey_id}/{action}` | `action` 为 `open`、`closed` 或 `archived`，按顺序开放、关闭或归档调查 | INT-002 |
-| `GET /admin/intentions/{survey_id}/stats` | 返回有效学生数、填写人数/比例和各选项人数/比例 | INT-005 |
+| `GET /admin/intentions` | 返回全部问卷及题目数、提交人数和每人提交上限，不含个人回答 | INT-001～INT-005 |
+| `POST /admin/intentions` | 使用 `{title,description_markdown,questions,max_submissions?,starts_at?,ends_at?}` 创建 `draft` 多题问卷并清洗 Markdown；`max_submissions=null` 表示不限 | INT-001～INT-003 |
+| `PATCH /admin/intentions/{survey_id}` | 按 `revision` 修改尚未开放的标题、说明、题目、提交上限和时间窗口 | INT-001～INT-003 |
+| `POST /admin/intentions/{survey_id}/{action}` | `action` 为 `open`、`closed` 或 `archived`，按顺序开放、关闭或归档问卷 | INT-002 |
+| `GET /admin/intentions/{survey_id}/stats` | 返回有效学生数、提交人数/比例和每道题各选项人数/比例 | INT-005 |
+| `GET /admin/intentions/{survey_id}/responses` | 返回实名提交名单：身份、最新分题答案、补充说明、累计提交次数和最后提交时间 | INT-005 |
 | `POST /admin/intentions/{survey_id}/qr-token` | 轮换二维码 token 并返回 `{survey_id,token,fill_url,generated_at}` | INT-006 |
 
-状态只能 `draft → open → closed → archived`。统计响应不得包含 `user_id`、姓名、学号或补充说明。二维码 token 使用高熵随机值，数据库只保存 SHA-256；每次生成使旧 token 失效，`closed`/`archived` 调查拒绝生成，填写地址仍由 Session 登录保护。
+状态只能 `draft → open → closed → archived`。统计接口不含个人信息；实名名单接口必须使用真实管理员依赖，学生和管理员学生视图均返回 403。名单只返回当前最新答案，不返回被覆盖的历史内容。二维码 token 使用高熵随机值，数据库只保存 SHA-256；每次生成使旧 token 失效，`closed`/`archived` 问卷拒绝生成，填写地址仍由 Session 登录保护。
 
 ## 优秀作业接口
 

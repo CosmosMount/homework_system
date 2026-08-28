@@ -354,3 +354,93 @@
 
 - 从当前 HEAD 隔离叠加本次两个代码文件构建，未纳入并行账号活跃度/清理改动；Backend 和 Worker 已统一部署镜像 `sha256:409a55ff76ad6d75e03c20c254f042f6424a60c99a649363ed3d06b8bc1b3d69`。
 - 六个 Compose 服务均 healthy，`live`、`ready`、`worker`、`nginx-health` 均为 200；Alembic 为 `20260827_0011 (head)`，最近 Backend/Worker 日志无新异常。
+
+
+## 2026-08-28：意向调查升级为多题实名问卷
+
+### Added
+
+- 问卷支持 1～30 道必答单选/多选题，管理员可动态增加/删除“第一志愿、第二志愿”等题目，并把每人提交上限设为 1～100 次或不限。
+- 新增仅真实管理员可访问的实名提交名单，展示姓名、学号、学校邮箱、最新分题答案、补充说明、累计提交次数和最后提交时间；原统计升级为按题目分组。
+- 新增可回滚 `20260828_0013`：创建 `intention_questions`，增加 `max_submissions`/`submission_count`，把旧单题调查、选项和回答原位迁移为兼容问卷。
+
+### Changed
+
+- 学生与管理员界面统一称“问卷”；兼容保留 `/intentions` 路由和内部表前缀，旧二维码与站内链接不失效。
+- 每次成功提交覆盖本人最新答案并消耗一次提交次数；达到上限后学生表单只读，服务端返回 `INTENTION_SUBMISSION_LIMIT_REACHED`。
+- ADR-035 部分替代 ADR-028 的单题、无限改答和仅匿名汇总决策；二维码哈希、登录要求、状态机和本人读取边界继续有效。
+
+### Security
+
+- 学生接口仍只返回本人最新答案；实名名单路由复用真实管理员守卫，管理员学生视图也不能读取。
+- 问卷答案和补充说明不得进入日志、分析或审计详情；提交审计只保留问卷 UUID 和累计次数。
+
+### Validation
+
+- 完整后端 218 项、完整前端 20 文件/79 项测试通过；前端 ESLint、严格 TypeScript 和 Next.js 生产构建通过，问卷定向 Ruff、格式检查和 7 个源/测试文件严格 Mypy 通过。
+- `0012 → 0013` 与 `0013 → 0012` 离线 PostgreSQL DDL 成功生成；当前环境无 Docker socket 权限且 `sudo` 需要密码，未应用运行库或执行真实 PostgreSQL 往返。
+- 完整后端 Ruff/Mypy 被工作树既有账号清理改动的 `backend/app/users/service.py:215` 未定义 `payload` 阻塞，完整格式检查只额外命中同组既有未格式化文件；本轮未改动该逻辑。
+
+## 2026-08-28：管理员角色按钮无请求修复
+
+### Fixed
+
+- 修复用户管理页通过 `FormData(form)` 读取提交按钮值导致角色、禁用和恢复分支全部静默跳过的问题。
+- 现在从原生 `SubmitEvent.submitter` 读取实际点击按钮；高风险原因仍由表单字段读取，后端 CSRF、管理员鉴权、审计和最后管理员保护保持不变。
+
+### Testing
+
+- 新增“设为管理员”回归，断言点击后调用 `POST /admin/users/{id}/role`，请求体为目标角色与操作原因，成功响应后界面更新为管理员。
+- 工作树账号管理定向 7 项、完整前端 20 文件/79 项、ESLint、严格 TypeScript、Next.js 生产构建通过。
+- 从干净运行基线隔离生成的热修源码通过完整前端 19 文件/71 项、ESLint、严格 TypeScript 和容器生产构建。
+
+### Operations
+
+- Frontend 已替换为只含本次修复的隔离镜像 `sha256:f9cc27716b81325ee43ae144c235f8be7c33f18ba89e3d5f8c20c120b7900132`；并行账号清理和问卷改造未纳入运行镜像。
+- Nginx 继续映射主机 5000 端口；六个常驻服务 healthy，`live`、`ready`、`worker`、`nginx-health` 均为 200，`/admin/users` 匿名访问为 307。
+- 上线后的真实管理员页面已完成两次角色变更、一次禁用和一次恢复，四次对应 API 写请求均返回 200。
+- Alembic 保持 `20260827_0011 (head)`；本次未修改 Backend、Worker、API、数据库、迁移或现有用户数据。
+
+## 2026-08-28：账号状态标签 UI 优化
+
+### Changed
+
+- 管理员用户卡片不再展示 `active`、`pending_email`、`disabled` 英文数据库枚举，分别改为“正常”“待验证”“已禁用”。
+- 状态标签采用圆角胶囊、浅色语义背景、边框、状态圆点与中文文字；角色标签采用独立低饱和蓝灰样式，避免与账号状态争夺层级。
+- 超过十天未进入提示改为带时钟图标的“X 天未登录”；搜索支持中文角色和账号状态名称。
+
+### Testing
+
+- 新增三种状态中文呈现、胶囊样式、英文枚举不渲染和“已禁用”中文搜索回归。
+- 工作树账号管理定向 8 项、完整前端 20 文件/80 项、ESLint、严格 TypeScript 和 Next.js 生产构建通过。
+- 隔离运行基线完整前端 20 文件/72 项、最终定向回归、ESLint、严格 TypeScript 与容器生产构建通过。
+
+### Operations
+
+- 从干净运行基线叠加角色按钮修复与本轮状态 UI 构建，未纳入并行账号清理和问卷改造；Frontend 运行镜像为 `sha256:4ebd888cf8df782f971356c79650ee866235f92021f193c4fad40ab55d63c4e1`。
+- 运行生产包已确认包含新的“待验证”文案；六服务 healthy，`live`、`ready`、`worker`、`nginx-health` 均为 200，Nginx 继续映射主机 5000 端口，`/admin/users` 匿名访问为 307。
+- Alembic 保持 `20260827_0011 (head)`；未修改 Backend、Worker、API、权限、数据库、迁移或用户数据。
+
+## 2026-08-28：分提交整理、完整质量门与并发探测
+
+### Fixed
+
+- 修复账号清理工作树中 `restore_user()` 误引用不存在的 `payload`；邮箱变更前的 Session 锁恢复到 `patch_user()`，不改变账号清理产品规则。
+- 按后端账号、后端问卷、前端交互和权威记录拆分提交，保持 Alembic `0011 → 0012 → 0013` 单一迁移链。
+
+### Commits
+
+- `b328035 feat(accounts): track inactivity and protect cleanup`
+- `2468f05 feat(questionnaires): support multi-question submissions`
+- `86a90c4 feat(frontend): add account activity and questionnaire flows`
+
+### Validation
+
+- Ruff、161 文件格式检查、146 个源文件严格 Mypy、218 项完整后端测试通过；Alembic 单一源码 head 为 `20260828_0013`。
+- 前端 ESLint、严格 TypeScript、20 个测试文件/80 项测试和 Next.js 生产构建通过。
+- 100 并发、10 轮、5,000 次无写入混合探测错误率 0%，持续 4.077 秒、吞吐 1,226.374 req/s，总体 P95 286.163 ms；探测后 `live`、`ready`、`worker` 和 `nginx-health` 均为 200。
+
+### Limits
+
+- 历史隔离容量项目已删除且当前用户无 Docker socket 权限，未执行 300 账号/100 独立登录 Session 的正式 NFR-T03 场景、20 路 multipart 或 `0011 ↔ 0012 ↔ 0013` 真实 PostgreSQL 往返；本次无认证探测不替代上述验收。
+- 运行 Compose 仍为 `20260827_0011` 的隔离热修版本；未部署本批提交、未应用迁移、未执行账号删除，也未写入容量数据。
