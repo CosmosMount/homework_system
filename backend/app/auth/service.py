@@ -278,6 +278,15 @@ class AuthenticationService:
     async def revoke_all_sessions_for_user(self, user_id: UUID) -> None:
         await self._auth.revoke_all_sessions(user_id, self._clock())
 
+    async def acquire_admin_lifecycle_lock(self) -> None:
+        await self._auth.acquire_initial_admin_bootstrap_lock()
+
+    async def lock_sessions_for_user(self, user_id: UUID) -> datetime | None:
+        return await self._auth.lock_sessions_for_user(user_id)
+
+    async def lock_one_time_tokens_for_user(self, user_id: UUID) -> None:
+        await self._auth.lock_one_time_tokens_for_user(user_id)
+
     def enqueue_security_alert(self, *, user: User, event: str) -> None:
         self._enqueue_security_alert(user=user, event=event)
 
@@ -392,6 +401,7 @@ class AuthenticationService:
         request_id: str,
         ip_prefix: str,
     ) -> EmailVerificationResponse:
+        await self._auth.acquire_initial_admin_bootstrap_lock()
         now = self._clock()
         token_record = await self._auth.get_one_time_token_for_update(sha256_hexdigest(token))
         if token_record is None or token_record.purpose != "email_verification":
@@ -424,7 +434,6 @@ class AuthenticationService:
                 message="验证链接无效。",
             )
 
-        await self._auth.acquire_initial_admin_bootstrap_lock()
         initial_admin_granted = user.role == "student" and not await self._auth.has_active_user()
         if initial_admin_granted:
             user.role = "admin"
@@ -523,6 +532,7 @@ class AuthenticationService:
         now = self._clock()
         if user.role == "student":
             await self._auth.acquire_initial_admin_bootstrap_lock()
+            await self._auth.lock_sessions_for_user(user.id)
             locked_user = await self._users.get_by_id(user.id, for_update=True)
             if locked_user is None or locked_user.status != "active":
                 await self._session.rollback()
@@ -568,6 +578,7 @@ class AuthenticationService:
         if needs_rehash:
             user.password_hash = self._passwords.hash(password)
 
+        await self._users.touch_activity(user, at=now)
         absolute_expires_at = now + timedelta(days=14)
         idle_lifetime = timedelta(hours=4 if user.role == "admin" else 12)
         raw_session = random_urlsafe_token()
@@ -637,13 +648,21 @@ class AuthenticationService:
         if session_record.token_hash != current_hash:
             session_record.token_hash = current_hash
             changed = True
-        if now - session_record.last_seen_at >= timedelta(minutes=5):
+        activity_refresh_due = now - session_record.last_seen_at >= timedelta(minutes=5)
+        if activity_refresh_due:
             idle_lifetime = timedelta(hours=4 if user.role == "admin" else 12)
             session_record.last_seen_at = now
             session_record.idle_expires_at = min(
                 now + idle_lifetime,
                 session_record.absolute_expires_at,
             )
+            changed = True
+        if (
+            activity_refresh_due
+            or user.last_active_at is None
+            or session_record.last_seen_at > user.last_active_at
+        ):
+            await self._users.touch_activity(user, at=now)
             changed = True
         if changed:
             await self._session.commit()
@@ -850,6 +869,7 @@ class AuthenticationService:
                 code="TOKEN_EXPIRED",
                 message="重置链接已过期。",
             )
+        await self._auth.lock_sessions_for_user(token_record.user_id)
         user = await self._users.get_by_id(token_record.user_id, for_update=True)
         if user is None:
             await self._session.rollback()

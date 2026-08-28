@@ -14,6 +14,58 @@ def test_admin_user_status_filter_uses_public_status_parameter() -> None:
     assert "account_status" not in parameter_names
 
 
+def test_admin_user_activity_filter_and_page_response_are_explicit() -> None:
+    schema = create_app(Settings(app_env="test")).openapi()
+    operation = schema["paths"]["/api/v1/admin/users"]["get"]
+    parameters = {
+        parameter["name"]: parameter
+        for parameter in operation["parameters"]
+        if parameter["in"] == "query"
+    }
+
+    assert {"page", "page_size", "activity"} <= set(parameters)
+    assert "inactive" in str(parameters["activity"]["schema"])
+    response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+    assert response_schema == {"$ref": "#/components/schemas/UserPage"}
+
+    user_page = schema["components"]["schemas"]["UserPage"]
+    assert {"items", "page", "page_size", "total"} <= set(user_page["required"])
+    admin_user = schema["components"]["schemas"]["AdminUserResponse"]
+    assert {"last_active_at", "is_inactive", "inactive_days"} <= set(admin_user["required"])
+    assert admin_user["properties"]["inactive_days"]["minimum"] == 0
+
+
+def test_admin_user_delete_requires_reason_and_returns_empty_204() -> None:
+    schema = create_app(Settings(app_env="test")).openapi()
+    operation = schema["paths"]["/api/v1/admin/users/{user_id}"]["delete"]
+    request_schema = operation["requestBody"]["content"]["application/json"]["schema"]
+
+    assert request_schema == {"$ref": "#/components/schemas/UserDeleteRequest"}
+    delete_request = schema["components"]["schemas"]["UserDeleteRequest"]
+    assert delete_request["required"] == ["reason"]
+    assert delete_request["properties"]["reason"]["minLength"] == 3
+    assert delete_request["properties"]["reason"]["maxLength"] == 500
+    assert set(operation["responses"]) >= {"204", "422"}
+    assert "content" not in operation["responses"]["204"]
+
+
+def test_admin_user_mutations_return_activity_aware_user_schema() -> None:
+    schema = create_app(Settings(app_env="test")).openapi()
+    paths = schema["paths"]
+    response_ref = {"$ref": "#/components/schemas/AdminUserResponse"}
+
+    operations = [
+        paths["/api/v1/admin/users/{user_id}"]["patch"],
+        paths["/api/v1/admin/users/{user_id}/disable"]["post"],
+        paths["/api/v1/admin/users/{user_id}/restore"]["post"],
+        paths["/api/v1/admin/users/{user_id}/role"]["post"],
+    ]
+    for operation in operations:
+        assert (
+            operation["responses"]["200"]["content"]["application/json"]["schema"] == response_ref
+        )
+
+
 def test_login_request_accepts_identifier_and_legacy_email_alias() -> None:
     primary = LoginRequest.model_validate({"identifier": "student", "password": "test-password"})
     legacy = LoginRequest.model_validate(

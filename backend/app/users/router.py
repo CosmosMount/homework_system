@@ -8,16 +8,17 @@ from app.core.config import Settings
 from app.core.network import request_ip_prefix
 from app.core.request_context import current_request_id
 from app.users.schemas import (
+    AdminUserResponse,
     CohortCreateRequest,
     CohortPatchRequest,
     CohortResponse,
     DirectionCreateRequest,
     DirectionPatchRequest,
     DirectionResponse,
+    UserDeleteRequest,
     UserDisableRequest,
     UserPage,
     UserPatchRequest,
-    UserResponse,
     UserRestoreRequest,
     UserRoleRequest,
 )
@@ -62,6 +63,7 @@ async def list_users(
     cohort_id: UUID | None = None,
     direction_id: UUID | None = None,
     search: Annotated[str | None, Query(max_length=200)] = None,
+    activity: Literal["inactive"] | None = None,
 ) -> UserPage:
     return await service.list_users(
         page=page,
@@ -71,10 +73,11 @@ async def list_users(
         cohort_id=cohort_id,
         direction_id=direction_id,
         search=search,
+        activity=activity,
     )
 
 
-@router.post("/users/{user_id}/disable", response_model=UserResponse)
+@router.post("/users/{user_id}/disable", response_model=AdminUserResponse)
 async def disable_user(
     user_id: UUID,
     payload: UserDisableRequest,
@@ -82,7 +85,7 @@ async def disable_user(
     service: UserAdministrationServiceDependency,
     admin: AdminContextDependency,
     _csrf: CsrfDependency,
-) -> UserResponse:
+) -> AdminUserResponse:
     return await service.disable_user(
         user_id,
         reason=payload.reason,
@@ -90,7 +93,7 @@ async def disable_user(
     )
 
 
-@router.post("/users/{user_id}/restore", response_model=UserResponse)
+@router.post("/users/{user_id}/restore", response_model=AdminUserResponse)
 async def restore_user(
     user_id: UUID,
     payload: UserRestoreRequest,
@@ -98,7 +101,7 @@ async def restore_user(
     service: UserAdministrationServiceDependency,
     admin: AdminContextDependency,
     _csrf: CsrfDependency,
-) -> UserResponse:
+) -> AdminUserResponse:
     return await service.restore_user(
         user_id,
         reason=payload.reason,
@@ -106,7 +109,7 @@ async def restore_user(
     )
 
 
-@router.patch("/users/{user_id}", response_model=UserResponse)
+@router.patch("/users/{user_id}", response_model=AdminUserResponse)
 async def patch_user(
     user_id: UUID,
     payload: UserPatchRequest,
@@ -114,7 +117,7 @@ async def patch_user(
     service: UserAdministrationServiceDependency,
     admin: AdminContextDependency,
     _csrf: CsrfDependency,
-) -> UserResponse:
+) -> AdminUserResponse:
     return await service.patch_user(
         user_id,
         payload,
@@ -122,7 +125,7 @@ async def patch_user(
     )
 
 
-@router.post("/users/{user_id}/role", response_model=UserResponse)
+@router.post("/users/{user_id}/role", response_model=AdminUserResponse)
 async def change_role(
     user_id: UUID,
     payload: UserRoleRequest,
@@ -130,10 +133,26 @@ async def change_role(
     service: UserAdministrationServiceDependency,
     admin: AdminContextDependency,
     _csrf: CsrfDependency,
-) -> UserResponse:
+) -> AdminUserResponse:
     return await service.change_role(
         user_id,
         payload,
+        audit=_audit_context(request, admin),
+    )
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: UUID,
+    payload: UserDeleteRequest,
+    request: Request,
+    service: UserAdministrationServiceDependency,
+    admin: AdminContextDependency,
+    _csrf: CsrfDependency,
+) -> None:
+    await service.delete_user(
+        user_id,
+        reason=payload.reason,
         audit=_audit_context(request, admin),
     )
 

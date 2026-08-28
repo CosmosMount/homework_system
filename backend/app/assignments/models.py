@@ -136,7 +136,7 @@ class AssignmentAudienceUser(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         primary_key=True,
     )
     cohort_id_at_publish: Mapped[UUID | None] = mapped_column(

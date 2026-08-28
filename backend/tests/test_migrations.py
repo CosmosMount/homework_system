@@ -13,7 +13,7 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260827_0011"]
+    assert script.get_heads() == ["20260827_0012"]
 
 
 def test_alembic_config_accepts_percent_encoded_database_password() -> None:

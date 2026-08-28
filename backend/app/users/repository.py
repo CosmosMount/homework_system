@@ -1,9 +1,14 @@
 from collections.abc import Sequence
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Select, exists, false, func, or_, select
+from sqlalchemy import Select, exists, false, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
+from app.auth.models import AuthSecurityEvent
+from app.notifications.models import OutboxJob
 from app.users.models import Cohort, Direction, User
 
 
@@ -35,6 +40,24 @@ class UserRepository:
 
     def add(self, user: User) -> None:
         self._session.add(user)
+
+    async def touch_activity(self, user: User, *, at: datetime) -> datetime:
+        latest = await self._session.scalar(
+            update(User)
+            .where(User.id == user.id)
+            .values(
+                last_active_at=func.greatest(
+                    func.coalesce(User.last_active_at, at),
+                    at,
+                )
+            )
+            .returning(User.last_active_at)
+            .execution_options(synchronize_session=False)
+        )
+        if latest is None:
+            raise RuntimeError("user disappeared while updating account activity")
+        set_committed_value(user, "last_active_at", latest)
+        return latest
 
     async def existing_cohort_ids(self, cohort_ids: Sequence[UUID]) -> set[UUID]:
         if not cohort_ids:
@@ -101,6 +124,8 @@ class UserRepository:
         cohort_id: UUID | None,
         direction_id: UUID | None,
         search: str | None,
+        activity: str | None,
+        inactive_before: datetime | None,
     ) -> tuple[list[User], int]:
         filters = []
         if status is not None:
@@ -120,6 +145,20 @@ class UserRepository:
                     User.student_number.ilike(query),
                 )
             )
+        if activity == "inactive":
+            if inactive_before is None:
+                raise ValueError("inactive_before is required for inactive filtering")
+            activity_reference = func.coalesce(
+                User.last_active_at,
+                User.email_verified_at,
+                User.created_at,
+            )
+            filters.extend(
+                (
+                    User.status == "active",
+                    activity_reference < inactive_before,
+                )
+            )
 
         count_statement = select(func.count()).select_from(User).where(*filters)
         total = int(await self._session.scalar(count_statement) or 0)
@@ -132,6 +171,54 @@ class UserRepository:
         )
         users = list((await self._session.scalars(statement)).all())
         return users, total
+
+    async def delete_if_unreferenced(self, user: User) -> bool:
+        try:
+            async with self._session.begin_nested():
+                await self._session.execute(
+                    update(AuthSecurityEvent)
+                    .where(
+                        or_(
+                            AuthSecurityEvent.user_id == user.id,
+                            AuthSecurityEvent.email_normalized == user.email_normalized,
+                        )
+                    )
+                    .values(user_id=None, email_normalized=None)
+                )
+                mail_jobs = list(
+                    (
+                        await self._session.scalars(
+                            select(OutboxJob)
+                            .where(OutboxJob.payload["recipient"].as_string() == user.email)
+                            .with_for_update()
+                        )
+                    ).all()
+                )
+                for job in mail_jobs:
+                    redacted_payload = dict(job.payload)
+                    redacted_payload["recipient"] = None
+                    redacted_payload.pop("full_name", None)
+                    job.payload = redacted_payload
+                    job.secret_payload_ciphertext = None
+                    if job.status in {"pending", "processing", "retry"}:
+                        job.status = "dead"
+                        job.locked_by = None
+                        job.locked_at = None
+                        job.last_error_code = "USER_DELETED"
+                        job.last_error_summary = "账号已删除，邮件任务已取消。"
+                await self._session.delete(user)
+                await self._session.flush()
+        except IntegrityError as exc:
+            original = getattr(exc, "orig", None)
+            sqlstate = getattr(original, "sqlstate", None) or getattr(
+                original,
+                "pgcode",
+                None,
+            )
+            if sqlstate != "23503":
+                raise
+            return False
+        return True
 
     async def get_cohort(self, cohort_id: UUID, *, for_update: bool = False) -> Cohort | None:
         statement = select(Cohort).where(Cohort.id == cohort_id)

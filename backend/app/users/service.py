@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -16,6 +16,7 @@ from app.core.security import is_campus_email, normalize_email
 from app.users.models import Cohort, Direction, User
 from app.users.repository import UserRepository
 from app.users.schemas import (
+    AdminUserResponse,
     CohortCreateRequest,
     CohortPatchRequest,
     CohortResponse,
@@ -24,9 +25,10 @@ from app.users.schemas import (
     DirectionResponse,
     UserPage,
     UserPatchRequest,
-    UserResponse,
     UserRoleRequest,
 )
+
+ACCOUNT_INACTIVITY_THRESHOLD = timedelta(days=10)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,8 +94,32 @@ class UserAdministrationService:
             message="资源已被其他操作更新，请刷新后重试。",
         )
 
-    async def _response(self, user: User) -> UserResponse:
-        return await self._auth.user_response(user)
+    @staticmethod
+    def _activity_reference(user: User) -> datetime:
+        return user.last_active_at or user.email_verified_at or user.created_at
+
+    @classmethod
+    def _is_inactive(cls, user: User, *, now: datetime) -> bool:
+        return (
+            user.status == "active"
+            and cls._activity_reference(user) < now - ACCOUNT_INACTIVITY_THRESHOLD
+        )
+
+    async def _response(
+        self,
+        user: User,
+        *,
+        now: datetime | None = None,
+    ) -> AdminUserResponse:
+        response_time = now or self._clock()
+        base = await self._auth.user_response(user)
+        inactive_for = response_time - self._activity_reference(user)
+        return AdminUserResponse(
+            **base.model_dump(),
+            last_active_at=user.last_active_at,
+            is_inactive=self._is_inactive(user, now=response_time),
+            inactive_days=max(0, inactive_for.days),
+        )
 
     async def list_users(
         self,
@@ -105,7 +131,9 @@ class UserAdministrationService:
         cohort_id: UUID | None,
         direction_id: UUID | None,
         search: str | None,
+        activity: str | None,
     ) -> UserPage:
+        now = self._clock()
         users, total = await self._users.list_users(
             page=page,
             page_size=page_size,
@@ -114,9 +142,13 @@ class UserAdministrationService:
             cohort_id=cohort_id,
             direction_id=direction_id,
             search=search,
+            activity=activity,
+            inactive_before=(
+                now - ACCOUNT_INACTIVITY_THRESHOLD if activity == "inactive" else None
+            ),
         )
         return UserPage(
-            items=[await self._response(user) for user in users],
+            items=[await self._response(user, now=now) for user in users],
             page=page,
             page_size=page_size,
             total=total,
@@ -128,7 +160,9 @@ class UserAdministrationService:
         *,
         reason: str,
         audit: AuditContext,
-    ) -> UserResponse:
+    ) -> AdminUserResponse:
+        await self._auth.acquire_admin_lifecycle_lock()
+        await self._auth.lock_sessions_for_user(user_id)
         user = await self._users.get_by_id(user_id, for_update=True)
         if user is None:
             await self._session.rollback()
@@ -175,7 +209,7 @@ class UserAdministrationService:
         *,
         reason: str,
         audit: AuditContext,
-    ) -> UserResponse:
+    ) -> AdminUserResponse:
         user = await self._users.get_by_id(user_id, for_update=True)
         if user is None:
             await self._session.rollback()
@@ -208,7 +242,9 @@ class UserAdministrationService:
         payload: UserPatchRequest,
         *,
         audit: AuditContext,
-    ) -> UserResponse:
+    ) -> AdminUserResponse:
+        if "email" in payload.model_fields_set:
+            await self._auth.lock_sessions_for_user(user_id)
         user = await self._users.get_by_id(user_id, for_update=True)
         if user is None:
             await self._session.rollback()
@@ -321,7 +357,9 @@ class UserAdministrationService:
         payload: UserRoleRequest,
         *,
         audit: AuditContext,
-    ) -> UserResponse:
+    ) -> AdminUserResponse:
+        await self._auth.acquire_admin_lifecycle_lock()
+        await self._auth.lock_sessions_for_user(user_id)
         user = await self._users.get_by_id(user_id, for_update=True)
         if user is None:
             await self._session.rollback()
@@ -367,6 +405,113 @@ class UserAdministrationService:
         )
         await self._session.commit()
         return await self._response(user)
+
+    async def delete_user(
+        self,
+        user_id: UUID,
+        *,
+        reason: str,
+        audit: AuditContext,
+    ) -> None:
+        await self._auth.acquire_admin_lifecycle_lock()
+        user = await self._users.get_by_id(user_id)
+        if user is None:
+            await self._session.rollback()
+            raise self._not_found("用户")
+
+        normalized_reason = reason.strip()
+        if user.id == audit.actor.user.id:
+            self._add_audit(
+                audit,
+                action="user.delete",
+                target_type="user",
+                target_id=user.id,
+                change_summary={
+                    "reason": normalized_reason,
+                    "blocked": "current_actor",
+                },
+                result="denied",
+            )
+            await self._session.commit()
+            raise ApplicationError(
+                status_code=409,
+                code="STATE_CONFLICT",
+                message="不能删除当前登录的管理员账号。",
+            )
+
+        await self._auth.lock_one_time_tokens_for_user(user.id)
+        latest_session_activity = await self._auth.lock_sessions_for_user(user.id)
+        user = await self._users.get_by_id(user_id, for_update=True)
+        if user is None:
+            await self._session.rollback()
+            raise self._not_found("用户")
+        if latest_session_activity is not None and (
+            user.last_active_at is None or latest_session_activity > user.last_active_at
+        ):
+            await self._users.touch_activity(user, at=latest_session_activity)
+
+        now = self._clock()
+        blocked: str | None = None
+        message = "账号当前不满足永久删除条件。"
+        if not self._is_inactive(user, now=now):
+            blocked = "not_inactive"
+            message = "只能删除严格超过 10 天未进入系统的激活账号。"
+        elif (
+            user.role == "admin"
+            and user.status == "active"
+            and await self._users.active_admin_count() <= 1
+        ):
+            blocked = "last_active_admin"
+            message = "不能删除系统中最后一个激活管理员。"
+
+        if blocked is not None:
+            self._add_audit(
+                audit,
+                action="user.delete",
+                target_type="user",
+                target_id=user.id,
+                change_summary={"reason": normalized_reason, "blocked": blocked},
+                result="denied",
+            )
+            await self._session.commit()
+            raise ApplicationError(
+                status_code=409,
+                code="STATE_CONFLICT",
+                message=message,
+            )
+
+        deleted = await self._users.delete_if_unreferenced(user)
+        if not deleted:
+            self._add_audit(
+                audit,
+                action="user.delete",
+                target_type="user",
+                target_id=user.id,
+                change_summary={
+                    "reason": normalized_reason,
+                    "blocked": "retained_business_data",
+                },
+                result="denied",
+            )
+            await self._session.commit()
+            raise ApplicationError(
+                status_code=409,
+                code="USER_DELETE_BLOCKED",
+                message="账号存在必须保留的业务记录，请改为禁用账号。",
+            )
+
+        self._add_audit(
+            audit,
+            action="user.delete",
+            target_type="user",
+            target_id=user_id,
+            change_summary={
+                "reason": normalized_reason,
+                "previous_role": user.role,
+                "previous_status": user.status,
+            },
+        )
+        await self._session.commit()
 
     @staticmethod
     def _cohort_response(cohort: Cohort) -> CohortResponse:

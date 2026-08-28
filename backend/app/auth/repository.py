@@ -45,6 +45,19 @@ class AuthRepository:
             ).all()
         )
 
+    async def lock_sessions_for_user(self, user_id: UUID) -> datetime | None:
+        seen_values = list(
+            (
+                await self._session.scalars(
+                    select(Session.last_seen_at)
+                    .where(Session.user_id == user_id)
+                    .order_by(Session.id)
+                    .with_for_update()
+                )
+            ).all()
+        )
+        return max(seen_values) if seen_values else None
+
     async def list_active_sessions(self, *, now: datetime) -> list[tuple[Session, User]]:
         statement = (
             select(Session, User)
@@ -105,6 +118,18 @@ class AuthRepository:
             select(OneTimeToken).where(OneTimeToken.token_hash == token_hash).with_for_update()
         )
         return result
+
+    async def lock_one_time_tokens_for_user(self, user_id: UUID) -> None:
+        list(
+            (
+                await self._session.scalars(
+                    select(OneTimeToken.id)
+                    .where(OneTimeToken.user_id == user_id)
+                    .order_by(OneTimeToken.id)
+                    .with_for_update()
+                )
+            ).all()
+        )
 
     async def acquire_initial_admin_bootstrap_lock(self) -> None:
         await self._session.execute(

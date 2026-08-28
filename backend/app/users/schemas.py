@@ -29,8 +29,14 @@ class UserResponse(BaseModel):
     revision: int
 
 
+class AdminUserResponse(UserResponse):
+    last_active_at: datetime | None
+    is_inactive: bool
+    inactive_days: int = Field(ge=0)
+
+
 class UserPage(BaseModel):
-    items: list[UserResponse]
+    items: list[AdminUserResponse]
     page: int
     page_size: int
     total: int
@@ -41,6 +47,10 @@ class UserDisableRequest(BaseModel):
 
 
 class UserRestoreRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class UserDeleteRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 

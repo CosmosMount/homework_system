@@ -104,6 +104,15 @@ async def test_first_verified_user_becomes_audited_initial_admin() -> None:
         now=now,
         has_active_user=False,
     )
+    lock_order: list[str] = []
+    acquire_lock.side_effect = lambda: lock_order.append("advisory")
+    get_token = cast(AsyncMock, service._auth.get_one_time_token_for_update)
+
+    def lock_token(_token_hash: str) -> OneTimeToken:
+        lock_order.append("one_time_token")
+        return token
+
+    get_token.side_effect = lock_token
     add_assignment_audiences = AsyncMock(return_value=0)
     service._assignments = cast(
         AssignmentRepository,
@@ -124,6 +133,7 @@ async def test_first_verified_user_becomes_audited_initial_admin() -> None:
     assert user.email_verified_at == now
     assert user.revision == 2
     assert token.used_at == now
+    assert lock_order[:2] == ["advisory", "one_time_token"]
     acquire_lock.assert_awaited_once()
     invalidate_tokens.assert_awaited_once_with(
         user_id=user.id,

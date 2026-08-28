@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
@@ -34,6 +34,7 @@ def make_user(*, status: str) -> User:
         cohort_id=None,
         direction_id=None,
         email_verified_at=now if status == "active" else None,
+        last_active_at=None,
         disabled_at=None,
         disabled_by=None,
         disabled_reason=None,
@@ -68,12 +69,14 @@ def build_service(
     )
     get_by_email = AsyncMock(return_value=user)
     has_other_accounts = AsyncMock(return_value=True)
+    touch_activity = AsyncMock()
     service._users = cast(
         UserRepository,
         SimpleNamespace(
             get_by_email=get_by_email,
             get_by_id=AsyncMock(return_value=user),
             has_other_accounts=has_other_accounts,
+            touch_activity=touch_activity,
         ),
     )
     count_security_events = AsyncMock(return_value=0)
@@ -85,11 +88,65 @@ def build_service(
             add_security_event=Mock(),
             add_session=add_session,
             acquire_initial_admin_bootstrap_lock=AsyncMock(),
+            lock_sessions_for_user=AsyncMock(),
             revoke_all_sessions=AsyncMock(),
         ),
     )
     service._audit = cast(AuditRepository, SimpleNamespace(add=Mock()))
     return service, get_by_email, count_security_events, add_session, commit
+
+
+def build_authenticate_service(
+    user: User,
+    session_record: Session,
+    *,
+    now: datetime,
+) -> tuple[AuthenticationService, AsyncMock, AsyncMock, AsyncMock]:
+    commit = AsyncMock()
+    rollback = AsyncMock()
+    service = AuthenticationService(
+        cast(
+            AsyncSession,
+            SimpleNamespace(commit=commit, rollback=rollback),
+        ),
+        Settings(app_env="test"),
+        clock=lambda: now,
+    )
+    find_session = AsyncMock(return_value=(session_record, user))
+    service._auth = cast(
+        AuthRepository,
+        SimpleNamespace(find_session_with_user=find_session),
+    )
+    touch_activity = AsyncMock()
+    service._users = cast(
+        UserRepository,
+        SimpleNamespace(touch_activity=touch_activity),
+    )
+    service._sessions = cast(
+        Any,
+        SimpleNamespace(
+            candidate_hashes=Mock(return_value=("candidate-hash",)),
+            current_hash=Mock(return_value=session_record.token_hash),
+        ),
+    )
+    return service, touch_activity, commit, rollback
+
+
+def make_session(user: User, *, now: datetime, last_seen_at: datetime) -> Session:
+    return Session(
+        id=uuid4(),
+        user_id=user.id,
+        token_hash="current-hash",
+        csrf_secret_hash="csrf-hash",
+        created_at=last_seen_at,
+        last_seen_at=last_seen_at,
+        idle_expires_at=now + timedelta(hours=1),
+        absolute_expires_at=now + timedelta(days=1),
+        revoked_at=None,
+        student_view=False,
+        ip_prefix="192.0.2.0/24",
+        user_agent_summary="Test / Test",
+    )
 
 
 @pytest.mark.asyncio
@@ -119,7 +176,12 @@ async def test_active_connect_user_can_login_with_username_or_email(
     )
     add_session.assert_called_once()
     cast(AsyncMock, service._users.has_other_accounts).assert_awaited_once_with(user.id)
+    cast(AsyncMock, service._auth.lock_sessions_for_user).assert_awaited_once_with(user.id)
     cast(AsyncMock, service._auth.revoke_all_sessions).assert_not_awaited()
+    cast(AsyncMock, service._users.touch_activity).assert_awaited_once_with(
+        user,
+        at=datetime(2026, 8, 25, 8, 0, tzinfo=UTC),
+    )
     cast(Mock, service._audit.add).assert_not_called()
     commit.assert_awaited_once()
 
@@ -145,7 +207,9 @@ async def test_inactive_user_cannot_bypass_status_with_username(status: str) -> 
     get_by_email.assert_awaited_once_with("student@connect.hkust-gz.edu.cn")
     add_session.assert_not_called()
     cast(AsyncMock, service._auth.acquire_initial_admin_bootstrap_lock).assert_not_awaited()
+    cast(AsyncMock, service._auth.lock_sessions_for_user).assert_not_awaited()
     cast(AsyncMock, service._users.has_other_accounts).assert_not_awaited()
+    cast(AsyncMock, service._users.touch_activity).assert_not_awaited()
     commit.assert_awaited_once()
 
 
@@ -176,7 +240,12 @@ async def test_only_active_account_is_promoted_to_audited_admin_on_login() -> No
     assert result.user.role == "admin"
     has_other_accounts.assert_awaited_once_with(user.id)
     acquire_lock.assert_awaited_once()
+    cast(AsyncMock, service._auth.lock_sessions_for_user).assert_awaited_once_with(user.id)
     revoke_all_sessions.assert_awaited_once_with(user.id, now)
+    cast(AsyncMock, service._users.touch_activity).assert_awaited_once_with(
+        user,
+        at=now,
+    )
     session_record = add_session.call_args.args[0]
     assert session_record.idle_expires_at == now + timedelta(hours=4)
     audit = audit_add.call_args.args[0]
@@ -191,6 +260,103 @@ async def test_only_active_account_is_promoted_to_audited_admin_on_login() -> No
         "reason": "single_verified_account",
     }
     commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_request_refreshes_activity_at_five_minute_boundary() -> None:
+    now = datetime(2026, 8, 25, 8, 0, tzinfo=UTC)
+    user = make_user(status="active")
+    user.last_active_at = now - timedelta(minutes=5)
+    session_record = make_session(
+        user,
+        now=now,
+        last_seen_at=now - timedelta(minutes=5),
+    )
+    service, touch_activity, commit, rollback = build_authenticate_service(
+        user,
+        session_record,
+        now=now,
+    )
+
+    context = await service.authenticate("raw-session-token")
+
+    assert context.user is user
+    assert context.session is session_record
+    assert session_record.last_seen_at == now
+    assert session_record.idle_expires_at == now + timedelta(hours=12)
+    touch_activity.assert_awaited_once_with(user, at=now)
+    commit.assert_awaited_once()
+    rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_request_within_throttle_does_not_write_activity() -> None:
+    now = datetime(2026, 8, 25, 8, 0, tzinfo=UTC)
+    user = make_user(status="active")
+    last_seen_at = now - timedelta(minutes=4)
+    user.last_active_at = last_seen_at
+    session_record = make_session(user, now=now, last_seen_at=last_seen_at)
+    service, touch_activity, commit, rollback = build_authenticate_service(
+        user,
+        session_record,
+        now=now,
+    )
+
+    await service.authenticate("raw-session-token")
+
+    assert session_record.last_seen_at == last_seen_at
+    touch_activity.assert_not_awaited()
+    commit.assert_not_awaited()
+    rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_request_repairs_missing_account_activity() -> None:
+    now = datetime(2026, 8, 25, 8, 0, tzinfo=UTC)
+    user = make_user(status="active")
+    user.last_active_at = None
+    session_record = make_session(
+        user,
+        now=now,
+        last_seen_at=now - timedelta(minutes=1),
+    )
+    service, touch_activity, commit, _ = build_authenticate_service(
+        user,
+        session_record,
+        now=now,
+    )
+
+    await service.authenticate("raw-session-token")
+
+    touch_activity.assert_awaited_once_with(user, at=now)
+    commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_disabled_session_does_not_update_account_activity() -> None:
+    now = datetime(2026, 8, 25, 8, 0, tzinfo=UTC)
+    user = make_user(status="active")
+    user.status = "disabled"
+    user.last_active_at = now - timedelta(days=20)
+    session_record = make_session(
+        user,
+        now=now,
+        last_seen_at=now - timedelta(minutes=10),
+    )
+    service, touch_activity, commit, rollback = build_authenticate_service(
+        user,
+        session_record,
+        now=now,
+    )
+
+    with pytest.raises(ApplicationError) as caught:
+        await service.authenticate("raw-session-token")
+
+    assert caught.value.status_code == 401
+    assert session_record.revoked_at == now
+    touch_activity.assert_not_awaited()
+    commit.assert_awaited_once()
+    rollback.assert_not_awaited()
 
 
 @pytest.mark.asyncio
