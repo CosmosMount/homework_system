@@ -26,6 +26,7 @@ def _load(name: str) -> ModuleType:
 common = _load("_common")
 read_load = _load("read_load")
 multipart_load = _load("multipart_load")
+login_burst = _load("login_burst")
 
 
 def test_password_file_must_be_absolute_private_and_single_line(tmp_path: Path) -> None:
@@ -80,16 +81,40 @@ def test_performance_cli_defaults_match_stage_six_capacity_targets() -> None:
     upload_args = multipart_load.build_parser().parse_args(
         ["--base-url", "http://127.0.0.1:5000", "--password-file", "/tmp/password"]
     )
+    login_args = login_burst.build_parser().parse_args(
+        ["--base-url", "http://127.0.0.1:5000", "--password-file", "/tmp/password"]
+    )
 
     assert read_args.sessions == 100
     assert read_args.rounds == 5
+    assert read_args.origin is None
+    assert login_args.accounts == 15
+    assert login_args.origin is None
     assert upload_args.uploads == 20
     assert upload_args.expected_part_size_bytes == 16_777_216
     assert upload_args.stream_block_size_bytes == 1_048_576
 
 
 def test_performance_tools_never_accept_inline_passwords() -> None:
-    for script in ("read_load.py", "multipart_load.py"):
+    for script in ("login_burst.py", "read_load.py", "multipart_load.py"):
         source = (PERFORMANCE_DIRECTORY / script).read_text(encoding="utf-8")
         assert '"--password"' not in source
         assert "response.text" not in source
+
+
+def test_login_burst_rejects_invalid_account_ranges() -> None:
+    args = login_burst.build_parser().parse_args(
+        [
+            "--base-url",
+            "http://127.0.0.1:5000",
+            "--password-file",
+            "/tmp/password",
+            "--accounts",
+            "15",
+            "--student-start",
+            "290",
+        ]
+    )
+
+    with pytest.raises(login_burst.ConfigurationError, match="STUDENT_RANGE_INVALID"):
+        login_burst.validate_args(args)

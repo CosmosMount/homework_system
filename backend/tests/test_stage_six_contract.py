@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_COMPOSE = ROOT / "infra/compose/compose.production.yml"
+DEVELOPMENT_NGINX = ROOT / "infra/nginx/nginx.conf"
 PRODUCTION_NGINX = ROOT / "infra/nginx/nginx.production.conf"
 PRODUCTION_ENV = ROOT / ".env.production.example"
 
@@ -82,6 +83,16 @@ def test_production_nginx_enforces_https_and_security_headers() -> None:
     assert "X-Frame-Options DENY" in nginx
     assert "proxy_request_buffering off;" in nginx
     assert "server_tokens off;" in nginx
+
+
+def test_nginx_auth_rate_limit_uses_429_and_ignores_forwarded_ip_spoofing() -> None:
+    for path in (DEVELOPMENT_NGINX, PRODUCTION_NGINX):
+        nginx = path.read_text(encoding="utf-8")
+
+        assert "limit_req_status 429;" in nginx
+        assert "limit_req zone=auth_limit burst=20 nodelay;" in nginx
+        assert "proxy_set_header X-Real-IP $remote_addr;" in nginx
+        assert "proxy_set_header X-Forwarded-For $remote_addr;" in nginx
 
 
 def test_production_template_contains_paths_not_secret_values() -> None:
