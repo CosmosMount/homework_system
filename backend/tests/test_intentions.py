@@ -16,6 +16,7 @@ from app.core.errors import ApplicationError
 from app.core.security import sha256_hexdigest
 from app.intentions.models import (
     IntentionOption,
+    IntentionQuestion,
     IntentionResponse,
     IntentionResponseOption,
     IntentionSurvey,
@@ -24,21 +25,27 @@ from app.intentions.repository import (
     IntentionRepository,
     SurveyListRecord,
     SurveyOptionCount,
+    SurveyRosterRecord,
 )
 from app.intentions.schemas import (
+    IntentionAnswerRequest,
     IntentionOptionInput,
+    IntentionQuestionInput,
     IntentionResponseRequest,
     IntentionSurveyCreateRequest,
 )
 from app.intentions.service import IntentionAuditContext, IntentionService
+from app.users.models import User
 
 
-def make_context(role: str = "student") -> AuthenticatedContext:
+def make_context(role: str = "student", *, student_view: bool = False) -> AuthenticatedContext:
     return cast(
         AuthenticatedContext,
         SimpleNamespace(
             user=SimpleNamespace(id=uuid4(), role=role),
-            session=SimpleNamespace(student_view=False),
+            session=SimpleNamespace(student_view=student_view),
+            effective_role="student" if student_view else role,
+            is_admin=role == "admin" and not student_view,
         ),
     )
 
@@ -55,16 +62,16 @@ def make_survey(
     now: datetime,
     *,
     status: str = "open",
-    allow_multiple: bool = False,
+    max_submissions: int | None = None,
 ) -> IntentionSurvey:
     actor_id = uuid4()
     return IntentionSurvey(
         id=uuid4(),
-        title="培训方向意向",
+        title="培训方向问卷",
         description_markdown="## 请选择",
         description_html="<h2>请选择</h2>",
         status=status,
-        allow_multiple=allow_multiple,
+        max_submissions=max_submissions,
         starts_at=None,
         ends_at=None,
         public_token_hash=sha256_hexdigest("initial-token"),
@@ -76,10 +83,22 @@ def make_survey(
     )
 
 
-def make_option(survey_id: object, label: str, order: int) -> IntentionOption:
-    return IntentionOption(
+def make_question(
+    survey_id: object, prompt: str, order: int, *, allow_multiple: bool = False
+) -> IntentionQuestion:
+    return IntentionQuestion(
         id=uuid4(),
         survey_id=survey_id,
+        prompt=prompt,
+        allow_multiple=allow_multiple,
+        display_order=order,
+    )
+
+
+def make_option(question_id: object, label: str, order: int) -> IntentionOption:
+    return IntentionOption(
+        id=uuid4(),
+        question_id=question_id,
         label=label,
         display_order=order,
     )
@@ -96,61 +115,101 @@ def make_service(now: datetime) -> tuple[IntentionService, AsyncMock]:
     return service, session
 
 
-def test_intention_schema_rejects_blank_duplicate_and_invalid_selection_payloads() -> None:
-    valid_option = [IntentionOptionInput(label="视觉")]
+def question_payload(
+    prompt: str, *labels: str, allow_multiple: bool = False
+) -> IntentionQuestionInput:
+    return IntentionQuestionInput(
+        prompt=prompt,
+        options=[IntentionOptionInput(label=label) for label in labels],
+        allow_multiple=allow_multiple,
+    )
+
+
+def answer(question: IntentionQuestion, *options: IntentionOption) -> IntentionAnswerRequest:
+    return IntentionAnswerRequest(
+        question_id=question.id,
+        selected_option_ids=[option.id for option in options],
+    )
+
+
+def test_questionnaire_schema_rejects_blank_duplicate_and_invalid_limits() -> None:
+    valid_question = question_payload("第一志愿", "视觉")
 
     with pytest.raises(ValidationError):
-        IntentionSurveyCreateRequest(title="   ", options=valid_option)
+        IntentionSurveyCreateRequest(title="   ", questions=[valid_question])
+    with pytest.raises(ValidationError):
+        question_payload("第一志愿", "视觉", " 视觉 ")
+    with pytest.raises(ValidationError):
+        IntentionQuestionInput(prompt="  ", options=[IntentionOptionInput(label="视觉")])
     with pytest.raises(ValidationError):
         IntentionSurveyCreateRequest(
-            title="培训方向",
-            options=[IntentionOptionInput(label="视觉"), IntentionOptionInput(label=" 视觉 ")],
+            title="培训方向", questions=[valid_question], max_submissions=0
         )
-    with pytest.raises(ValidationError):
-        IntentionOptionInput(label="  ")
 
     option_id = uuid4()
     with pytest.raises(ValidationError):
-        IntentionResponseRequest(selected_option_ids=[option_id, option_id])
+        IntentionAnswerRequest(question_id=uuid4(), selected_option_ids=[option_id, option_id])
 
 
 @pytest.mark.asyncio
-async def test_admin_creates_sanitized_intention_survey_and_options() -> None:
+async def test_admin_creates_sanitized_multi_question_questionnaire() -> None:
     now = datetime.now(UTC)
     service, session = make_service(now)
     persistence_order: list[str] = []
     add_survey = Mock(side_effect=lambda _survey: persistence_order.append("survey"))
+    add_question = Mock(side_effect=lambda _question: persistence_order.append("question"))
     add_option = Mock(side_effect=lambda _option: persistence_order.append("option"))
     session.flush.side_effect = lambda: persistence_order.append("flush")
     session.commit.side_effect = lambda: persistence_order.append("commit")
     service._repo = cast(
         IntentionRepository,
-        SimpleNamespace(add_survey=add_survey, add_option=add_option),
+        SimpleNamespace(
+            add_survey=add_survey,
+            add_question=add_question,
+            add_option=add_option,
+        ),
     )
     payload = IntentionSurveyCreateRequest(
-        title="  培训方向意向  ",
+        title="  培训方向问卷  ",
         description_markdown="## 说明\n<script>alert(1)</script>",
-        options=[IntentionOptionInput(label="机器人"), IntentionOptionInput(label="视觉")],
-        allow_multiple=True,
+        questions=[
+            question_payload("第一志愿", "机器人", "视觉"),
+            question_payload("第二志愿", "机器人", "视觉", allow_multiple=True),
+        ],
+        max_submissions=2,
     )
 
     result = await service.create(payload, audit_context=make_audit_context("admin"))
 
     survey = cast(IntentionSurvey, add_survey.call_args.args[0])
-    assert result.title == "培训方向意向"
-    assert result.option_count == 2
+    assert result.title == "培训方向问卷"
+    assert result.question_count == 2
+    assert result.max_submissions == 2
     assert "<h3" in survey.description_html
     assert "<script" not in survey.description_html.lower()
-    assert survey.public_token_hash != "initial-token"
     assert len(survey.public_token_hash) == 64
-    assert [call.args[0].label for call in add_option.call_args_list] == ["机器人", "视觉"]
-    assert persistence_order == ["survey", "flush", "option", "option", "commit"]
-    session.flush.assert_awaited_once()
+    assert [call.args[0].prompt for call in add_question.call_args_list] == [
+        "第一志愿",
+        "第二志愿",
+    ]
+    assert persistence_order == [
+        "survey",
+        "flush",
+        "question",
+        "question",
+        "flush",
+        "option",
+        "option",
+        "option",
+        "option",
+        "commit",
+    ]
+    assert session.flush.await_count == 2
     session.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_intention_status_moves_forward_only() -> None:
+async def test_questionnaire_status_moves_forward_only() -> None:
     now = datetime.now(UTC)
     survey = make_survey(now, status="draft")
     service, session = make_service(now)
@@ -158,11 +217,7 @@ async def test_intention_status_moves_forward_only() -> None:
         IntentionRepository,
         SimpleNamespace(
             get_survey=AsyncMock(return_value=survey),
-            list_surveys=AsyncMock(
-                return_value=[
-                    SurveyListRecord(survey, option_count=2, responded_count=0, has_response=False)
-                ]
-            ),
+            list_surveys=AsyncMock(return_value=[SurveyListRecord(survey, 2, 0, False)]),
         ),
     )
     audit_context = make_audit_context("admin")
@@ -185,104 +240,161 @@ async def test_intention_status_moves_forward_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_student_can_submit_and_modify_an_open_intention() -> None:
+async def test_student_submits_all_single_and_multiple_choice_questions() -> None:
     now = datetime.now(UTC)
-    survey = make_survey(now, allow_multiple=True)
-    first = make_option(survey.id, "机器人", 0)
-    second = make_option(survey.id, "视觉", 1)
+    survey = make_survey(now, max_submissions=2)
+    first_question = make_question(survey.id, "第一志愿", 0)
+    second_question = make_question(survey.id, "第二志愿", 1, allow_multiple=True)
+    robot_first = make_option(first_question.id, "机器人", 0)
+    vision_first = make_option(first_question.id, "视觉", 1)
+    robot_second = make_option(second_question.id, "机器人", 0)
+    vision_second = make_option(second_question.id, "视觉", 1)
+    questions = [first_question, second_question]
+    options = [robot_first, vision_first, robot_second, vision_second]
     service, session = make_service(now)
     add_response = Mock()
     add_response_option = Mock()
-    get_response = AsyncMock(return_value=None)
-    response_options = AsyncMock(return_value=[])
     service._repo = cast(
         IntentionRepository,
         SimpleNamespace(
             get_survey=AsyncMock(return_value=survey),
-            options=AsyncMock(return_value=[first, second]),
-            get_response=get_response,
-            response_options=response_options,
+            questions=AsyncMock(return_value=questions),
+            options=AsyncMock(return_value=options),
+            get_response=AsyncMock(return_value=None),
             add_response=add_response,
             add_response_option=add_response_option,
         ),
     )
-    audit_context = make_audit_context()
 
     created = await service.submit_response(
         survey.id,
         IntentionResponseRequest(
-            selected_option_ids=[first.id, second.id], free_text="  愿意担任队长  "
+            answers=[
+                answer(first_question, vision_first),
+                answer(second_question, robot_second, vision_second),
+            ],
+            free_text="  愿意担任队长  ",
         ),
-        audit_context=audit_context,
+        audit_context=make_audit_context(),
     )
+
     response = cast(IntentionResponse, add_response.call_args.args[0])
-    assert created.selected_option_ids == [first.id, second.id]
+    assert created.submission_count == 1
     assert created.free_text == "愿意担任队长"
-    assert response.revision == 1
-
-    existing_link = IntentionResponseOption(response_id=response.id, option_id=first.id)
-    get_response.return_value = response
-    response_options.return_value = [existing_link]
-    updated = await service.submit_response(
-        survey.id,
-        IntentionResponseRequest(selected_option_ids=[second.id], free_text="  "),
-        audit_context=audit_context,
-    )
-
-    assert updated.selected_option_ids == [second.id]
-    assert updated.free_text is None
-    assert response.revision == 2
-    session.delete.assert_awaited_once_with(existing_link)
-    session.flush.assert_awaited_once()
-    assert session.commit.await_count == 2
+    assert created.answers[0].selected_option_ids == [vision_first.id]
+    assert created.answers[1].selected_option_ids == [robot_second.id, vision_second.id]
+    assert response.submission_count == 1
+    assert add_response_option.call_count == 3
+    session.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_single_choice_and_closed_survey_reject_invalid_answers() -> None:
+async def test_submission_limit_allows_update_then_rejects_next_attempt() -> None:
     now = datetime.now(UTC)
-    survey = make_survey(now)
-    first = make_option(survey.id, "机器人", 0)
-    second = make_option(survey.id, "视觉", 1)
+    survey = make_survey(now, max_submissions=2)
+    question = make_question(survey.id, "第一志愿", 0)
+    robot = make_option(question.id, "机器人", 0)
+    vision = make_option(question.id, "视觉", 1)
+    response = IntentionResponse(
+        id=uuid4(),
+        survey_id=survey.id,
+        user_id=uuid4(),
+        free_text=None,
+        submission_count=1,
+        submitted_at=now,
+        created_at=now,
+        updated_at=now,
+        revision=1,
+    )
+    old_link = IntentionResponseOption(response_id=response.id, option_id=robot.id)
     service, session = make_service(now)
     service._repo = cast(
         IntentionRepository,
         SimpleNamespace(
             get_survey=AsyncMock(return_value=survey),
-            options=AsyncMock(return_value=[first, second]),
+            questions=AsyncMock(return_value=[question]),
+            options=AsyncMock(return_value=[robot, vision]),
+            get_response=AsyncMock(return_value=response),
+            response_options=AsyncMock(return_value=[old_link]),
+            add_response_option=Mock(),
+        ),
+    )
+    payload = IntentionResponseRequest(answers=[answer(question, vision)])
+
+    updated = await service.submit_response(survey.id, payload, audit_context=make_audit_context())
+    assert updated.submission_count == 2
+    assert response.submission_count == 2
+    session.delete.assert_awaited_once_with(old_link)
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.submit_response(survey.id, payload, audit_context=make_audit_context())
+    assert blocked.value.code == "INTENTION_SUBMISSION_LIMIT_REACHED"
+    assert session.commit.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_question_cross_question_option_and_single_multiple_are_rejected() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now)
+    first_question = make_question(survey.id, "第一志愿", 0)
+    second_question = make_question(survey.id, "第二志愿", 1)
+    first = make_option(first_question.id, "机器人", 0)
+    second = make_option(first_question.id, "视觉", 1)
+    other = make_option(second_question.id, "嵌入式", 0)
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            questions=AsyncMock(return_value=[first_question, second_question]),
+            options=AsyncMock(return_value=[first, second, other]),
             get_response=AsyncMock(return_value=None),
         ),
     )
 
+    with pytest.raises(ApplicationError) as missing:
+        await service.submit_response(
+            survey.id,
+            IntentionResponseRequest(answers=[answer(first_question, first)]),
+            audit_context=make_audit_context(),
+        )
+    assert missing.value.status_code == 422
+
+    with pytest.raises(ApplicationError) as crossed:
+        await service.submit_response(
+            survey.id,
+            IntentionResponseRequest(
+                answers=[answer(first_question, other), answer(second_question, other)]
+            ),
+            audit_context=make_audit_context(),
+        )
+    assert crossed.value.status_code == 400
+
     with pytest.raises(ApplicationError) as multiple:
         await service.submit_response(
             survey.id,
-            IntentionResponseRequest(selected_option_ids=[first.id, second.id]),
+            IntentionResponseRequest(
+                answers=[answer(first_question, first, second), answer(second_question, other)]
+            ),
             audit_context=make_audit_context(),
         )
     assert multiple.value.status_code == 422
-
-    survey.status = "closed"
-    with pytest.raises(ApplicationError) as closed:
-        await service.submit_response(
-            survey.id,
-            IntentionResponseRequest(selected_option_ids=[first.id]),
-            audit_context=make_audit_context(),
-        )
-    assert closed.value.code == "INTENTION_CLOSED"
     assert session.commit.await_count == 0
 
 
 @pytest.mark.asyncio
-async def test_intention_response_integrity_conflict_is_recoverable() -> None:
+async def test_questionnaire_response_integrity_conflict_is_recoverable() -> None:
     now = datetime.now(UTC)
     survey = make_survey(now)
-    option = make_option(survey.id, "机器人", 0)
+    question = make_question(survey.id, "第一志愿", 0)
+    option = make_option(question.id, "机器人", 0)
     service, session = make_service(now)
     session.commit.side_effect = IntegrityError("insert", {}, Exception("unique"))
     service._repo = cast(
         IntentionRepository,
         SimpleNamespace(
             get_survey=AsyncMock(return_value=survey),
+            questions=AsyncMock(return_value=[question]),
             options=AsyncMock(return_value=[option]),
             get_response=AsyncMock(return_value=None),
             add_response=Mock(),
@@ -293,7 +405,7 @@ async def test_intention_response_integrity_conflict_is_recoverable() -> None:
     with pytest.raises(ApplicationError) as blocked:
         await service.submit_response(
             survey.id,
-            IntentionResponseRequest(selected_option_ids=[option.id]),
+            IntentionResponseRequest(answers=[answer(question, option)]),
             audit_context=make_audit_context(),
         )
 
@@ -306,7 +418,7 @@ async def test_intention_response_integrity_conflict_is_recoverable() -> None:
     ("total_students", "responded", "response_count", "expected_rate", "expected_option"),
     [(0, 0, 0, 0.0, 0.0), (8, 2, 1, 25.0, 50.0)],
 )
-async def test_admin_stats_handle_zero_and_nonzero_denominators(
+async def test_admin_stats_are_grouped_by_question(
     total_students: int,
     responded: int,
     response_count: int,
@@ -315,7 +427,8 @@ async def test_admin_stats_handle_zero_and_nonzero_denominators(
 ) -> None:
     now = datetime.now(UTC)
     survey = make_survey(now)
-    option = make_option(survey.id, "机器人", 0)
+    question = make_question(survey.id, "第一志愿", 0)
+    option = make_option(question.id, "机器人", 0)
     service, _session = make_service(now)
     service._repo = cast(
         IntentionRepository,
@@ -323,8 +436,15 @@ async def test_admin_stats_handle_zero_and_nonzero_denominators(
             get_survey=AsyncMock(return_value=survey),
             responded_count=AsyncMock(return_value=responded),
             active_student_count=AsyncMock(return_value=total_students),
+            questions=AsyncMock(return_value=[question]),
             option_counts=AsyncMock(
-                return_value=[SurveyOptionCount(option=option, response_count=response_count)]
+                return_value=[
+                    SurveyOptionCount(
+                        question=question,
+                        option=option,
+                        response_count=response_count,
+                    )
+                ]
             ),
         ),
     )
@@ -332,7 +452,69 @@ async def test_admin_stats_handle_zero_and_nonzero_denominators(
     result = await service.stats(survey.id, context=make_context("admin"))
 
     assert result.response_rate == expected_rate
-    assert result.options[0].percentage == expected_option
+    assert result.questions[0].prompt == "第一志愿"
+    assert result.questions[0].options[0].percentage == expected_option
+
+
+@pytest.mark.asyncio
+async def test_admin_roster_returns_identity_latest_answers_and_submission_count() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now)
+    question = make_question(survey.id, "第一志愿", 0)
+    option = make_option(question.id, "视觉", 0)
+    response = IntentionResponse(
+        id=uuid4(),
+        survey_id=survey.id,
+        user_id=uuid4(),
+        free_text="愿意调剂",
+        submission_count=2,
+        submitted_at=now,
+        created_at=now,
+        updated_at=now,
+        revision=2,
+    )
+    user = SimpleNamespace(
+        id=response.user_id,
+        full_name="测试学生",
+        student_number="20260001",
+        email="student@connect.hkust-gz.edu.cn",
+    )
+    link = IntentionResponseOption(response_id=response.id, option_id=option.id)
+    service, _session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            questions=AsyncMock(return_value=[question]),
+            options=AsyncMock(return_value=[option]),
+            roster=AsyncMock(
+                return_value=[SurveyRosterRecord(response=response, user=cast(User, user))]
+            ),
+            response_options_for_responses=AsyncMock(return_value={response.id: [link]}),
+        ),
+    )
+
+    result = await service.roster(survey.id, context=make_context("admin"))
+
+    assert result.total == 1
+    assert result.items[0].full_name == "测试学生"
+    assert result.items[0].answers[0].selected_options == ["视觉"]
+    assert result.items[0].submission_count == 2
+
+
+@pytest.mark.asyncio
+async def test_roster_rejects_students_and_admin_student_view() -> None:
+    now = datetime.now(UTC)
+    service, _session = make_service(now)
+
+    with pytest.raises(ApplicationError) as student_blocked:
+        await service.roster(uuid4(), context=make_context())
+    assert student_blocked.value.status_code == 403
+
+    admin_student_view = make_context("admin", student_view=True)
+    with pytest.raises(ApplicationError) as view_blocked:
+        await service.roster(uuid4(), context=admin_student_view)
+    assert view_blocked.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -341,7 +523,8 @@ async def test_qr_token_rotation_hashes_secret_and_invalidates_old_token(
 ) -> None:
     now = datetime.now(UTC)
     survey = make_survey(now)
-    option = make_option(survey.id, "机器人", 0)
+    question = make_question(survey.id, "第一志愿", 0)
+    option = make_option(question.id, "机器人", 0)
     service, session = make_service(now)
     tokens = iter(["first-qr-token", "second-qr-token"])
     monkeypatch.setattr("app.intentions.service.random_urlsafe_token", lambda _size: next(tokens))
@@ -349,6 +532,7 @@ async def test_qr_token_rotation_hashes_secret_and_invalidates_old_token(
         IntentionRepository,
         SimpleNamespace(
             get_survey=AsyncMock(return_value=survey),
+            questions=AsyncMock(return_value=[question]),
             options=AsyncMock(return_value=[option]),
             get_response=AsyncMock(return_value=None),
         ),
@@ -373,7 +557,7 @@ async def test_qr_token_rotation_hashes_secret_and_invalidates_old_token(
 
 
 @pytest.mark.asyncio
-async def test_closed_intention_cannot_generate_another_qr_token() -> None:
+async def test_closed_questionnaire_cannot_generate_another_qr_token() -> None:
     now = datetime.now(UTC)
     survey = make_survey(now, status="closed")
     service, session = make_service(now)

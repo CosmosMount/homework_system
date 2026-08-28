@@ -85,6 +85,28 @@ def test_login_openapi_exposes_identifier_instead_of_legacy_email() -> None:
     assert "email" not in login_request["properties"]
 
 
+def test_questionnaire_openapi_exposes_questions_limits_stats_and_admin_roster() -> None:
+    schema = create_app(Settings(app_env="test")).openapi()
+    paths = schema["paths"]
+
+    assert "/api/v1/admin/intentions/{survey_id}/responses" in paths
+    roster_operation = paths["/api/v1/admin/intentions/{survey_id}/responses"]["get"]
+    assert roster_operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/IntentionRosterResponse"
+    }
+
+    create_request = schema["components"]["schemas"]["IntentionSurveyCreateRequest"]
+    assert {"title", "questions"} <= set(create_request["required"])
+    assert "max_submissions" in create_request["properties"]
+    question = schema["components"]["schemas"]["IntentionQuestionInput"]
+    assert {"prompt", "options"} <= set(question["required"])
+
+    response_request = schema["components"]["schemas"]["IntentionResponseRequest"]
+    assert "answers" in response_request["required"]
+    stats = schema["components"]["schemas"]["IntentionStatsResponse"]
+    assert "questions" in stats["required"]
+
+
 def test_stage_three_openapi_contains_dashboard_announcements_notifications_and_uploads() -> None:
     schema = create_app(Settings(app_env="test")).openapi()
     paths = schema["paths"]

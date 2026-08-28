@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.intentions.models import (
     IntentionOption,
+    IntentionQuestion,
     IntentionResponse,
     IntentionResponseOption,
     IntentionSurvey,
@@ -16,15 +17,23 @@ from app.users.models import User
 @dataclass(frozen=True, slots=True)
 class SurveyListRecord:
     survey: IntentionSurvey
-    option_count: int
+    question_count: int
     responded_count: int
     has_response: bool
+    submissions_used: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class SurveyOptionCount:
+    question: IntentionQuestion
     option: IntentionOption
     response_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class SurveyRosterRecord:
+    response: IntentionResponse
+    user: User
 
 
 class IntentionRepository:
@@ -33,6 +42,9 @@ class IntentionRepository:
 
     def add_survey(self, survey: IntentionSurvey) -> None:
         self._session.add(survey)
+
+    def add_question(self, question: IntentionQuestion) -> None:
+        self._session.add(question)
 
     def add_option(self, option: IntentionOption) -> None:
         self._session.add(option)
@@ -58,9 +70,9 @@ class IntentionRepository:
         student_user_id: UUID | None = None,
         open_only: bool = False,
     ) -> list[SurveyListRecord]:
-        option_count = (
-            select(IntentionOption.survey_id.label("survey_id"), func.count().label("value"))
-            .group_by(IntentionOption.survey_id)
+        question_count = (
+            select(IntentionQuestion.survey_id.label("survey_id"), func.count().label("value"))
+            .group_by(IntentionQuestion.survey_id)
             .subquery()
         )
         response_count = (
@@ -75,42 +87,68 @@ class IntentionRepository:
             await self._session.execute(
                 select(
                     IntentionSurvey,
-                    func.coalesce(option_count.c.value, 0),
+                    func.coalesce(question_count.c.value, 0),
                     func.coalesce(response_count.c.value, 0),
                 )
-                .outerjoin(option_count, option_count.c.survey_id == IntentionSurvey.id)
+                .outerjoin(question_count, question_count.c.survey_id == IntentionSurvey.id)
                 .outerjoin(response_count, response_count.c.survey_id == IntentionSurvey.id)
                 .where(*filters)
                 .order_by(IntentionSurvey.created_at.desc(), IntentionSurvey.id.desc())
             )
         ).all()
-        response_ids: set[UUID] = set()
+        student_responses: dict[UUID, int] = {}
         if student_user_id is not None and rows:
-            response_ids = set(
-                await self._session.scalars(
-                    select(IntentionResponse.survey_id).where(
-                        IntentionResponse.user_id == student_user_id,
-                        IntentionResponse.survey_id.in_([row[0].id for row in rows]),
+            student_responses = {
+                row[0]: int(row[1])
+                for row in (
+                    await self._session.execute(
+                        select(
+                            IntentionResponse.survey_id,
+                            IntentionResponse.submission_count,
+                        ).where(
+                            IntentionResponse.user_id == student_user_id,
+                            IntentionResponse.survey_id.in_([row[0].id for row in rows]),
+                        )
                     )
-                )
-            )
+                ).all()
+            }
         return [
             SurveyListRecord(
                 survey=row[0],
-                option_count=int(row[1]),
+                question_count=int(row[1]),
                 responded_count=int(row[2]),
-                has_response=row[0].id in response_ids,
+                has_response=row[0].id in student_responses,
+                submissions_used=student_responses.get(row[0].id, 0),
             )
             for row in rows
         ]
+
+    async def questions(self, survey_id: UUID) -> list[IntentionQuestion]:
+        return list(
+            (
+                await self._session.scalars(
+                    select(IntentionQuestion)
+                    .where(IntentionQuestion.survey_id == survey_id)
+                    .order_by(IntentionQuestion.display_order, IntentionQuestion.id)
+                )
+            ).all()
+        )
 
     async def options(self, survey_id: UUID) -> list[IntentionOption]:
         return list(
             (
                 await self._session.scalars(
                     select(IntentionOption)
-                    .where(IntentionOption.survey_id == survey_id)
-                    .order_by(IntentionOption.display_order, IntentionOption.id)
+                    .join(
+                        IntentionQuestion,
+                        IntentionQuestion.id == IntentionOption.question_id,
+                    )
+                    .where(IntentionQuestion.survey_id == survey_id)
+                    .order_by(
+                        IntentionQuestion.display_order,
+                        IntentionOption.display_order,
+                        IntentionOption.id,
+                    )
                 )
             ).all()
         )
@@ -138,6 +176,25 @@ class IntentionRepository:
             ).all()
         )
 
+    async def response_options_for_responses(
+        self, response_ids: list[UUID]
+    ) -> dict[UUID, list[IntentionResponseOption]]:
+        if not response_ids:
+            return {}
+        rows = list(
+            (
+                await self._session.scalars(
+                    select(IntentionResponseOption).where(
+                        IntentionResponseOption.response_id.in_(response_ids)
+                    )
+                )
+            ).all()
+        )
+        grouped: dict[UUID, list[IntentionResponseOption]] = {}
+        for row in rows:
+            grouped.setdefault(row.response_id, []).append(row)
+        return grouped
+
     async def active_student_count(self) -> int:
         return int(
             await self._session.scalar(
@@ -151,17 +208,29 @@ class IntentionRepository:
     async def option_counts(self, survey_id: UUID) -> list[SurveyOptionCount]:
         rows = (
             await self._session.execute(
-                select(IntentionOption, func.count(IntentionResponseOption.response_id))
+                select(
+                    IntentionQuestion,
+                    IntentionOption,
+                    func.count(IntentionResponseOption.response_id),
+                )
+                .join(IntentionOption, IntentionOption.question_id == IntentionQuestion.id)
                 .outerjoin(
                     IntentionResponseOption,
                     IntentionResponseOption.option_id == IntentionOption.id,
                 )
-                .where(IntentionOption.survey_id == survey_id)
-                .group_by(IntentionOption.id)
-                .order_by(IntentionOption.display_order, IntentionOption.id)
+                .where(IntentionQuestion.survey_id == survey_id)
+                .group_by(IntentionQuestion.id, IntentionOption.id)
+                .order_by(
+                    IntentionQuestion.display_order,
+                    IntentionOption.display_order,
+                    IntentionOption.id,
+                )
             )
         ).all()
-        return [SurveyOptionCount(option=row[0], response_count=int(row[1])) for row in rows]
+        return [
+            SurveyOptionCount(question=row[0], option=row[1], response_count=int(row[2]))
+            for row in rows
+        ]
 
     async def responded_count(self, survey_id: UUID) -> int:
         return int(
@@ -172,3 +241,14 @@ class IntentionRepository:
             )
             or 0
         )
+
+    async def roster(self, survey_id: UUID) -> list[SurveyRosterRecord]:
+        rows = (
+            await self._session.execute(
+                select(IntentionResponse, User)
+                .join(User, User.id == IntentionResponse.user_id)
+                .where(IntentionResponse.survey_id == survey_id)
+                .order_by(IntentionResponse.submitted_at.desc(), User.full_name, User.id)
+            )
+        ).all()
+        return [SurveyRosterRecord(response=row[0], user=row[1]) for row in rows]

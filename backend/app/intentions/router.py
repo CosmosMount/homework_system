@@ -17,6 +17,7 @@ from app.intentions.schemas import (
     IntentionQrResponse,
     IntentionResponseRequest,
     IntentionResponseResponse,
+    IntentionRosterResponse,
     IntentionStatsResponse,
     IntentionSurveyCreateRequest,
     IntentionSurveyDetail,
@@ -117,6 +118,15 @@ async def intention_stats(
     context: AdminContextDependency,
 ) -> IntentionStatsResponse:
     return await service.stats(survey_id, context=context)
+
+
+@router.get("/admin/intentions/{survey_id}/responses", response_model=IntentionRosterResponse)
+async def intention_roster(
+    survey_id: UUID,
+    service: IntentionServiceDependency,
+    context: AdminContextDependency,
+) -> IntentionRosterResponse:
+    return await service.roster(survey_id, context=context)
 
 
 @router.post("/admin/intentions/{survey_id}/qr-token", response_model=IntentionQrResponse)
