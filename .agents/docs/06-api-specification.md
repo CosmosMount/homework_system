@@ -113,7 +113,7 @@
 
 ### `GET /dashboard`
 
-返回当前用户、未读数、最近 5 条通知、最近 5 个作业和进行中赛事/队伍。每个集合只含当前用户可见资源；优秀作业不出现在工作台，只在对应作业内读取。对应 NEWS-005、HW-006、TEAM-006、SHOW-002。
+返回当前用户、有效未读总数 `unread_count`、按 `announcements/assignments/competitions/help_requests` 分类的 `unread_counts`、最近 5 条通知、最近 5 个作业和进行中赛事/队伍。已归档公告提醒不进入总数或分类计数。每个集合只含当前用户可见资源；优秀作业不出现在工作台，只在对应作业内读取。对应 NEWS-005、HW-006、TEAM-006、SHOW-002。
 
 ### 站内通知接口
 
@@ -307,14 +307,15 @@
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
 | `GET /admin/intentions` | 返回全部问卷及题目数、提交人数和每人提交上限，不含个人回答 | INT-001～INT-005 |
+| `GET /admin/intentions/{survey_id}` | 返回任意状态问卷的管理摘要、revision、完整问题与选项，不含个人回答 | INT-001～INT-002 |
 | `POST /admin/intentions` | 使用 `{title,description_markdown,questions,max_submissions?,starts_at?,ends_at?}` 创建 `draft` 多题问卷并清洗 Markdown；`max_submissions=null` 表示不限 | INT-001～INT-003 |
-| `PATCH /admin/intentions/{survey_id}` | 按 `revision` 修改尚未开放的标题、说明、题目、提交上限和时间窗口 | INT-001～INT-003 |
+| `PATCH /admin/intentions/{survey_id}` | 按 `revision` 原子替换 `draft` 的标题、说明、题目、提交上限和时间窗口，成功返回刷新后的完整问卷；非草稿或 revision 冲突返回 409 | INT-001～INT-003 |
 | `POST /admin/intentions/{survey_id}/{action}` | `action` 为 `open`、`closed` 或 `archived`，按顺序开放、关闭或归档问卷 | INT-002 |
 | `GET /admin/intentions/{survey_id}/stats` | 返回有效学生数、提交人数/比例和每道题各选项人数/比例 | INT-005 |
 | `GET /admin/intentions/{survey_id}/responses` | 返回实名提交名单：身份、最新分题答案、补充说明、累计提交次数和最后提交时间 | INT-005 |
 | `POST /admin/intentions/{survey_id}/qr-token` | 轮换二维码 token 并返回 `{survey_id,token,fill_url,generated_at}` | INT-006 |
 
-状态只能 `draft → open → closed → archived`。统计接口不含个人信息；实名名单接口必须使用真实管理员依赖，学生和管理员学生视图均返回 403。名单只返回当前最新答案，不返回被覆盖的历史内容。二维码 token 使用高熵随机值，数据库只保存 SHA-256；每次生成使旧 token 失效，`closed`/`archived` 问卷拒绝生成，填写地址仍由 Session 登录保护。
+状态只能 `draft → open → closed → archived`。管理详情和修改接口必须使用真实管理员依赖，学生和管理员学生视图均返回 403；详情不含个人答案。统计接口不含个人信息；实名名单接口同样只允许真实管理员，名单只返回当前最新答案，不返回被覆盖的历史内容。二维码 token 使用高熵随机值，数据库只保存 SHA-256；每次生成使旧 token 失效，`closed`/`archived` 问卷拒绝生成，填写地址仍由 Session 登录保护。
 
 ## 优秀作业接口
 
@@ -413,3 +414,48 @@
 稳定错误：未配置为 `503 KNOWLEDGE_SYNC_NOT_CONFIGURED`；已有进行中运行为 `409 KNOWLEDGE_SYNC_IN_PROGRESS`；文档或媒体不属于当前快照统一为 `404 RESOURCE_NOT_FOUND`；MinIO 签名失败为 `503 DEPENDENCY_UNAVAILABLE`。管理员学生视图调用管理接口返回 `403 FORBIDDEN`。
 
 参考仓库提交 `c28f8a0` 的同步顺序和页面排布对齐属于 Service、Worker 与前端内部实现，不新增公开 API。首次上线前台初始化是仅接管唯一活动运行的内部运维命令；管理员 `POST /admin/knowledge/sync` 保持为后续更新的唯一产品写入口。
+
+## 反馈答疑接口
+
+全部反馈答疑接口要求有效 Session；本人接口按有效学生角色授权，公开答疑接口允许任一有效登录角色，管理接口只允许真实管理员且未开启学生视图。对应 HELP-001～HELP-007。
+
+### 登录态匿名公开答疑
+
+| 方法与路径 | 行为 | 需求 |
+| --- | --- | --- |
+| `GET /help-requests/public` | `page,page_size`；只分页返回已解决问题的匿名摘要 | HELP-007 |
+| `GET /help-requests/public/{request_id}` | 只返回已解决问题的安全正文和最新答复；开放问题、系统反馈与不存在统一 404 | HELP-007 |
+
+公开列表不查询 `users` 并复用不含提交者字段的 `HelpRequestPage`；详情使用独立最小响应 `PublicHelpRequestDetail`，不含提交者、通知 ID 或 Markdown 源文字段。匿名请求返回 401；公开可见性固定由 `request_type=question AND status=resolved` 派生，不接受类型、状态或作者筛选参数。
+
+### 学生创建与读取
+
+| 方法与路径 | 行为 | 需求 |
+| --- | --- | --- |
+| `GET /help-requests` | `type,status,page,page_size`；只分页返回本人创建的工单 | HELP-002 |
+| `POST /help-requests` | 创建“系统反馈”或“问题答疑”工单，返回 `201` 详情 | HELP-001～HELP-002 |
+| `GET /help-requests/{request_id}` | 只返回本人工单、安全正文、管理员处理结果和该工单当前未读提醒 ID；他人与不存在统一 404 | HELP-002 |
+
+创建主体：
+
+```json
+{"request_type":"system_feedback","title":"移动端按钮无法使用","content_markdown":"## 复现步骤\\n..."}
+```
+
+`request_type` 只能为 `system_feedback` 或 `question`；标题 1～200 字符，详情 1～20,000 字符，均在去除首尾空白后校验。普通管理员视图调用学生接口返回 403；管理员学生视图按本人账号创建和读取。
+
+### 管理员查看与处理
+
+| 方法与路径 | 行为 | 需求 |
+| --- | --- | --- |
+| `GET /admin/help-requests` | `type,status,query,page,page_size`；返回全部工单和提交学生安全身份摘要 | HELP-003 |
+| `GET /admin/help-requests/{request_id}` | 返回学生姓名、学号、学校邮箱、完整工单和当前答复 | HELP-003 |
+| `PUT /admin/help-requests/{request_id}/resolution` | `{resolution_markdown,revision}`；首次答复或修订答复，原子写状态、审计和站内通知 | HELP-004～HELP-005 |
+
+答复请求：
+
+```json
+{"resolution_markdown":"已修复移动端按钮，请刷新后重试。","revision":1}
+```
+
+本人详情额外包含只属于当前用户、当前工单的未读 `notification_ids`，用于调用既有单条已读接口；不返回通知事件键。管理员成功响应包含 `request_type`、`status`、安全正文/答复、提交学生摘要、`resolved_by`、`resolved_at`、时间和 `revision`，不返回日志、通知内部事件键或其他学生工单。空答复返回 `400 VALIDATION_ERROR`，过期 revision 返回 `409 REVISION_CONFLICT`，不可见资源返回 `404 RESOURCE_NOT_FOUND`；学生和管理员学生视图调用管理接口返回 `403 FORBIDDEN`。

@@ -23,6 +23,7 @@ homework_system/
 │   │   ├── announcements/
 │   │   ├── assignments/
 │   │   ├── competitions/
+│   │   ├── help_requests/
 │   │   ├── submissions/
 │   │   ├── uploads/
 │   │   ├── notifications/
@@ -82,7 +83,7 @@ flowchart TB
 ## 前端架构
 
 - 使用 Next.js App Router、TypeScript 严格模式和 Tailwind CSS。
-- 页面与只读详情默认使用 Server Component；表单、筛选、未读状态、队伍交互和上传器使用 Client Component。
+- 页面与只读详情默认使用 Server Component；表单、筛选、未读状态、队伍交互、反馈答疑处理和上传器使用 Client Component。
 - 浏览器统一调用同源 `/api/v1`；服务端渲染时由封装的 API Client 显式转发请求 Cookie 和请求 ID。
 - 外部 API 响应在边界使用 schema 验证，域组件只接收已验证类型。
 - 服务端数据依赖 Next.js 缓存标签；写操作成功后按资源标签失效。认证、提交版本和管理后台读取默认不使用跨用户共享缓存。
@@ -121,9 +122,10 @@ PostgreSQL / MinIO / SMTP Adapter
 | `assignments` | 个人任务、发布时快照与新学生激活补录、截止、延期和优秀作业标记 | HW-001～HW-007、SHOW-001～SHOW-005 |
 | `competitions` | 校内赛公告、阶段、报名、公开队伍目录与自动分配 | COMP-001～COMP-006、TEAM-001～TEAM-008 |
 | `intentions` | 多题问卷、本人最新回答与次数上限、管理员分题统计/实名名单、二维码 token | INT-001～INT-006 |
+| `help_requests` | 学生本人私密工单、已解答问题的登录态匿名公开读取、管理员处理结果与答复通知 | HELP-001～HELP-007 |
 | `submissions` | 两类提交的聚合、不可变版本和私密评语 | SUB-001～SUB-008 |
 | `uploads` | 分片会话、对象校验、下载授权、清理 | FILE-001～FILE-007 |
-| `notifications` | 站内通知、已读、Outbox 和邮件 | NEWS-005～NEWS-006、MAIL-001～MAIL-005 |
+| `notifications` | 站内通知、按目标业务分类徽标、已读、Outbox 和邮件 | NEWS-005～NEWS-006、MAIL-001～MAIL-005 |
 | `audit` | 关键写操作差异与安全事件 | NFR-006 |
 
 ## 写入事务模式
@@ -151,6 +153,8 @@ sequenceDiagram
 
 业务结果和 Outbox 在同一事务中提交，SMTP 调用不占用用户请求事务。
 
+反馈答疑创建在一个事务内写工单和审计；管理员答复事务锁定工单、校验 revision、更新答复与状态，并同时写审计和站内通知。该流程不创建邮件 Outbox，任一步失败都整体回滚。公开可见性不单独写状态：读取层只选择 `request_type=question AND status=resolved`，并使用不连接用户表的匿名响应映射。
+
 ## 提交流程
 
 1. 客户端创建上传会话，服务端校验作业、身份、截止和剩余大小；赛事上传仅服务历史兼容路径。
@@ -168,7 +172,7 @@ sequenceDiagram
 - 加入队伍时锁定报名和目标队伍；自动分配锁定赛事及候选 `forming` 队伍，按人数、创建时间和 ID 稳定选择，必要时建队；两条路径都依赖一赛一队部分唯一索引处理并发双加入。
 - 问卷提交先锁定问卷行再锁定本人现有回答，原子校验开放窗口和剩余提交次数，并依赖 `(survey_id, user_id)` 唯一约束处理首次提交并发；回答只保留最新选项，`submission_count` 单调增加。管理员名单批量读取回答选项，避免逐人查询；二维码轮换锁定问卷行且只持久化 token SHA-256。
 - 创建版本时锁定提交聚合；客户端幂等键保证网络重试不产生两个版本。
-- 发布、归档、提前关闭和队伍锁定使用条件更新，状态不匹配返回 409。
+- 发布、归档、提前关闭和队伍锁定使用条件更新，状态不匹配返回 409；公告归档事务同时锁定并标记该公告的未读站内提醒为已读。
 - MinIO 与 PostgreSQL 不能跨系统事务；对象先完成校验再入版本，孤立对象由 Worker 延迟清理。
 
 ## 配置

@@ -36,9 +36,9 @@ stateDiagram-v2
 
 - **NEWS-001**：管理员可以创建包含标题、摘要、已清洗 Markdown 正文和附件的通知。
 - **NEWS-002**：通知受众可以是全部学生，或选择一个或多个技术方向及其交集；未设置方向的学生只接收“全部学生”通知，发布前必须展示预计接收人数。历史届次受众继续按原规则兼容读取。
-- **NEWS-003**：通知状态为 `draft`、`scheduled`、`published`、`archived`。草稿不可被学生访问；定时通知到达发布时间后由 Worker 原子发布；归档通知仍可访问但不进入默认列表。
+- **NEWS-003**：通知状态为 `draft`、`scheduled`、`published`、`archived`。草稿不可被学生访问；定时通知到达发布时间后由 Worker 原子发布；归档通知仍可访问但不进入默认列表，且其既有未读公告提醒不再计入学生徽标。
 - **NEWS-004**：管理员可以置顶已发布通知并设置置顶结束时间。学生列表先显示有效置顶项，再按发布时间倒序显示普通项。
-- **NEWS-005**：通知首次发布时必须为每个目标学生建立站内通知记录。学生可以标记单条已读或全部已读，导航显示未读数量。
+- **NEWS-005**：通知首次发布时必须为每个目标学生建立站内通知记录。学生可以标记单条已读或全部已读；导航按提醒实际目标分别在“通知”“作业”“校内赛”和“反馈答疑”入口显示未读数量，已读提醒不得继续计数。
 - **NEWS-006**：管理员可以为通知启用邮件提醒。邮件必须通过 Outbox 异步发送，站内发布成功不因 SMTP 故障回滚。
 - **NEWS-007**：管理员可以编辑已发布通知，修改立即对站内生效并写入审计日志；系统默认不重复发邮件，管理员可显式执行一次“发送更新提醒”。
 - **NEWS-008**：学生只能读取自己属于目标受众的通知；直接请求非目标通知必须返回 `404 RESOURCE_NOT_FOUND`，避免泄露内容存在性。
@@ -98,7 +98,7 @@ stateDiagram-v2
 
 ## 学生问卷
 
-- **INT-001**：管理员可以创建包含标题、已清洗 Markdown 说明和 1～30 道必答选择题的问卷；每题包含题目、1～30 个选项并独立配置为单选或多选，标题、题目和选项去除首尾空白后不得为空，同一题内选项不得重复。
+- **INT-001**：管理员可以创建并查看包含标题、已清洗 Markdown 说明和 1～30 道必答选择题的完整问卷；每题包含题目、1～30 个选项并独立配置为单选或多选，标题、题目和选项去除首尾空白后不得为空，同一题内选项不得重复。`draft` 问卷允许管理员按 revision 修改标题、说明、时间窗口、提交上限和完整题目结构；其他状态只读。
 - **INT-002**：问卷状态为 `draft`、`open`、`closed`、`archived`，只允许按该顺序推进；仅 `open` 且处于可选开始/结束时间窗口内的问卷允许学生读取和填写，开放后不得修改题目结构和提交次数上限。
 - **INT-003**：管理员可以把每人最多提交次数设置为 1～100 的正整数或不限。登录学生每次成功保存全部题目的答案和可选补充说明即消耗一次提交；同一学生对同一问卷只保留一份最新答案和累计提交次数，达到上限后服务端必须拒绝再次提交，不限次数时可在关闭前继续提交。
 - **INT-004**：每道单选题必须且只能提交一个有效选项，多选题必须提交一个或多个有效选项；服务端必须验证问题属于当前问卷、选项属于对应问题、全部问题均已回答且没有重复问题/选项。学生只能读取本人的最新答案和提交次数。
@@ -115,6 +115,16 @@ stateDiagram-v2
 - **KB-006**：知识块存 PostgreSQL JSONB；图片、白板和安全附件存 MinIO，对象键只由服务端生成，文件内容不得写入 PostgreSQL。
 - **KB-007**：知识库目录、文档和媒体接口全部要求登录；媒体下载必须确认资源被当前成功快照引用后返回短时签名地址。
 - **KB-008**：部署方只需填写 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`（或 secret file）和 `FEISHU_WIKI_URL`；Worker 或首次上线内部运维命令从受信 Wiki URL 解析整个空间或单篇文档目标，只访问固定飞书 API HTTPS 主机，外链只允许安全协议。参考仓库的可选 `FEISHU_DOCUMENT_ID`、硬编码租户域名和公开静态 token 文件名不得引入；危险、超限或下载失败附件只提供整篇飞书原文回退，不泄露令牌、对象键或飞书错误正文。
+
+## 反馈答疑
+
+- **HELP-001**：登录学生可以创建反馈答疑工单，类型只能是“系统反馈”或“问题答疑”；每条工单必须包含去除首尾空白后非空的标题和详情。详情使用服务端统一安全 Markdown 清洗，不接收附件、评分或手动公开设置。
+- **HELP-002**：学生只能分页查看本人创建的工单和详情，响应包含中文可映射的类型、状态、创建/更新时间以及管理员处理结果；直接请求他人工单与不存在工单统一返回 `404 RESOURCE_NOT_FOUND`。普通管理员视图不能通过学生接口创建工单，管理员学生视图可以按本人账号使用学生路径。
+- **HELP-003**：真实管理员可以按类型、状态和关键词分页查看全部工单及提交学生的姓名、学号和学校邮箱，并读取完整详情；学生和管理员学生视图不得访问任何管理接口。
+- **HELP-004**：工单状态只允许 `open` 和 `resolved`。管理员提交非空处理结果或答复时原子进入 `resolved`；已解决工单允许管理员按当前 `revision` 修订答复，过期 revision 返回 `409 REVISION_CONFLICT`。学生不能自行修改、删除、手动公开、关闭或重新打开工单。
+- **HELP-005**：管理员首次答复或修订答复时，必须在同一事务写入审计和一条幂等站内通知；通知只包含安全标题和本人详情链接，不包含问题、反馈或答复正文，不发送邮件。事务失败不得留下半成品答复、审计或通知；未读解决提醒显示在“反馈答疑”入口，学生打开对应本人工单详情后通过受保护写接口标记该工单提醒为已读。
+- **HELP-006**：反馈答疑不是匿名互联网论坛、即时聊天或多轮消息系统，不提供评论、追问、附件、点赞、评分、排名或自动回复；管理员处理记录、系统反馈和未解答问题按内部业务数据保护，不进入普通日志或分析事件。
+- **HELP-007**：有效登录用户可以分页查看 `request_type=question AND status=resolved` 的匿名公开答疑并进入详情；公开响应只包含类型、状态、标题、安全问题正文、安全答复和时间/revision，不返回或查询提问者 UUID、姓名、学号、邮箱。未解答问题和全部系统反馈在公开接口统一返回 `404 RESOURCE_NOT_FOUND`；首次答复问题后自动公开，答复修订立即反映，不新增公开字段或手动开关。
 
 ## 优秀作业
 
@@ -171,9 +181,12 @@ stateDiagram-v2
 | 查看赛事版本与评语 | 禁止 | 当前团队成员 | 全部 |
 | 查看优秀作业 | 禁止 | 仅所属受众的作业内 | 全部作业 |
 | 填写问卷 | 禁止 | 仅开放问卷、本人且未达提交上限 | 可在学生视图填写本人答案 |
-| 查看问卷统计/实名名单、管理问卷与二维码 | 禁止 | 禁止 | 允许 |
+| 查看完整问卷、统计/实名名单，编辑草稿、管理状态与二维码 | 禁止 | 禁止 | 仅真实管理员视图允许 |
 | 查看培训知识库快照 | 禁止 | 允许 | 允许 |
 | 手动同步和查看知识库运行状态 | 禁止 | 禁止 | 仅真实管理员视图 |
+| 创建、查看反馈答疑 | 禁止 | 仅创建和查看本人 | 普通管理员视图仅管理；学生视图按本人使用 |
+| 查看已解答匿名公开答疑 | 禁止 | 允许 | 允许 |
+| 查看全部反馈答疑并填写/修订答复 | 禁止 | 禁止 | 仅真实管理员视图 |
 | 管理用户、通知、作业、赛事、优秀标记 | 禁止 | 禁止 | 允许 |
 
 ## 需求追溯入口
@@ -185,13 +198,14 @@ stateDiagram-v2
 | 需求 | 页面 | API | 数据实体/约束 | 验收场景 |
 | --- | --- | --- | --- | --- |
 | AUTH-001～AUTH-011 | 注册、邮箱验证、登录、管理员用户、个人 Session | `/auth/*`、`/admin/users/*` | `users`、`sessions`、`one_time_tokens`、`auth_security_events`、技术方向（届次历史兼容）、审计 | AUTH-T01～AUTH-T14、SEC-T01、SEC-T03 |
-| NEWS-001～NEWS-008 | 学生工作台、通知列表/详情、管理员通知 | `/announcements*`、`/admin/announcements*`、`/notifications*` | `announcements`、通知受众关联、`announcement_files`、`student_notifications`、Outbox | NEWS-T01～NEWS-T07 |
+| NEWS-001～NEWS-008 | 学生工作台、通知列表/详情、管理员通知 | `/announcements*`、`/admin/announcements*`、`/notifications*` | `announcements`、通知受众关联、`announcement_files`、`student_notifications`、Outbox | NEWS-T01～NEWS-T08 |
 | HW-001～HW-007 | 作业列表/详情、个人版本、管理员作业/提交 | `/assignments*`、`/admin/assignments*` | `assignments`、受众配置、`assignment_audience_users`、`assignment_extensions` | HW-T01～HW-T14 |
 | SUB-001～SUB-008 | 作业版本、管理员提交反馈 | `/submission-versions`、`/submissions/*`、管理员反馈接口 | `submissions`、`submission_versions`、`version_files`、`feedback` | HW-T04～HW-T09、HW-T13 |
 | COMP-001～COMP-006 | 校内赛公告/报名、管理员赛事 | `/competitions*`、`/admin/competitions*` | `competitions`、`competition_registrations`（`competition_tasks` 仅兼容历史数据） | COMP-T01～COMP-T04 |
 | TEAM-001～TEAM-008 | 校内赛队伍中心、我的队伍、管理员队伍 | `/teams*`、`/competitions/*/teams`、`/competitions/*/auto-assign`、`/admin/teams*` | `teams`、`team_members`、报名表与一赛一队部分唯一索引 | TEAM-T01～TEAM-T10 |
-| INT-001～INT-006 | 学生问卷列表/填写、管理员问卷管理/统计/实名名单/二维码 | `/intentions*`、`/admin/intentions*` | `intention_surveys`、`intention_questions`、`intention_options`、`intention_responses`、`intention_response_options` | INT-T01～INT-T13 |
+| INT-001～INT-006 | 学生问卷列表/填写、管理员问卷查看/草稿编辑/统计/实名名单/二维码 | `/intentions*`、`/admin/intentions*` | `intention_surveys`、`intention_questions`、`intention_options`、`intention_responses`、`intention_response_options` | INT-T01～INT-T15 |
 | KB-001～KB-008 | 培训文档阅读器、管理员同步页 | `/knowledge*`、`/admin/knowledge*` | `knowledge_sync_runs`、节点、文档、媒体及引用表、`outbox_jobs` | KB-T01～KB-T12 |
+| HELP-001～HELP-007 | 学生本人反馈答疑、登录态匿名公开答疑、管理员反馈答疑管理/处理 | `/help-requests*`、`/admin/help-requests*` | `help_requests`、`student_notifications`、审计 | HELP-T01～HELP-T11 |
 | SHOW-001～SHOW-005 | 作业详情的优秀作业区块、管理员提交详情 | `/assignments/*/excellent-submissions*`、管理员标记接口 | `assignment_excellent_submissions`、作业/版本外键和删除保护 | SHOW-T01～SHOW-T05 |
 | FILE-001～FILE-007 | 作业/赛题上传器、通知附件、授权下载 | `/uploads*`、`/files/*/download-url` | `files`、`upload_sessions`、`upload_parts`、正式资源附件关联 | FILE-T01～FILE-T09 |
 | MAIL-001～MAIL-005 | 认证邮件提示、通知发布结果、管理员邮件任务 | 认证邮件触发接口、通知发布、`/admin/mail-outbox*` | `outbox_jobs`、`student_notifications`、唯一事件键 | MAIL-T01～MAIL-T04、NEWS-T03 |

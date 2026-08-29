@@ -24,6 +24,8 @@
 | `upload_status` | `initialized`, `uploading`, `verifying`, `available`, `rejected`, `aborted`, `expired` |
 | `outbox_status` | `pending`, `processing`, `retry`, `sent`, `dead` |
 | `audience_match` | `union`, `intersection` |
+| `help_request_type` | `system_feedback`, `question` |
+| `help_request_status` | `open`, `resolved` |
 
 ## 实体关系
 
@@ -33,6 +35,7 @@ erDiagram
     DIRECTIONS ||--o{ USERS : assigns
     USERS ||--o{ SESSIONS : owns
     USERS ||--o{ STUDENT_NOTIFICATIONS : receives
+    USERS ||--o{ HELP_REQUESTS : submits
     ANNOUNCEMENTS }o--o{ COHORTS : targets
     ANNOUNCEMENTS }o--o{ DIRECTIONS : targets
     ASSIGNMENTS }o--o{ USERS : snapshots
@@ -138,6 +141,21 @@ erDiagram
 
 - `(user_id, event_key)` 唯一，保证重试不生成重复提醒。
 - 索引 `(user_id, read_at, created_at DESC)`。
+- 工作台按 `target_type/target_url` 把未读提醒归入公告、作业、校内赛和反馈答疑；公告分类只统计仍为 `published` 的目标，历史遗留的归档公告提醒不进入有效未读数。
+- 公告归档在同一事务把该公告当前未读提醒写入 `read_at`；学生读取公告或本人工单详情后仍通过既有受 CSRF 保护的单条已读接口更新，不通过 GET 隐式写入。
+
+## 反馈答疑
+
+### `help_requests`
+
+`id`, `request_type`, `status`, `title`, `content_markdown`, `content_html`, `resolution_markdown`, `resolution_html`, `created_by`, `resolved_by`, `resolved_at`, `created_at`, `updated_at`, `revision`。
+
+- `request_type` 只允许 `system_feedback`、`question`，`status` 只允许 `open`、`resolved`；标题去除首尾空白后长度为 1～200，学生正文为 1～20,000 字符。
+- `content_html` 和非空的 `resolution_html` 都由统一安全 Markdown 渲染器生成；数据库保存当前答复，不建立公开评论或多轮消息表。
+- `created_by` 和 `resolved_by` 均以 `RESTRICT` 引用 `users`。`open` 必须没有答复者、答复时间或答复正文；`resolved` 必须同时具有非空答复、答复者和答复时间。
+- 学生列表索引 `(created_by, created_at DESC, id DESC)`；管理员筛选索引 `(status, request_type, created_at DESC, id DESC)`。
+- 管理员首次答复或修订答复时锁定本行、校验 `revision`，并在同一事务写 `audit_logs` 和 `student_notifications`；通知事件键为 `help_request_resolved:{request_id}:{revision}`，只包含安全标题和本人详情链接。
+- 不新增 `is_public` 字段或迁移；登录态公开查询固定选择 `request_type='question' AND status='resolved'`，复用管理员筛选索引且不连接 `users`。因此开放问题和全部系统反馈始终私密，问题首次解决即公开，答复修订直接反映最新版本。
 
 ## 作业与受众快照
 
@@ -377,6 +395,7 @@ CHECK (
 | COMP、TEAM | `competitions`, `competition_registrations`, `teams`, `team_members`；`competition_tasks` 仅保留历史兼容数据 |
 | SUB | `submissions`, `submission_versions`, `version_files`, `feedback` |
 | INT | `intention_surveys`, `intention_questions`, `intention_options`, `intention_responses`, `intention_response_options` |
+| HELP | `help_requests`, `student_notifications`, `audit_logs` |
 | SHOW | `assignment_excellent_submissions`、作业与版本外键、源附件删除保护 |
 | FILE | `files`, `upload_sessions`, `upload_parts` |
 | NFR-006 | `audit_logs` |
@@ -394,6 +413,8 @@ CHECK (
 8. 意向调查迁移 `20260827_0009` 创建上述四张表、外键、唯一约束和状态/时间检查；downgrade 按响应选项、回答、选项、调查顺序删除，可完成 `0008 → 0009 → 0008 → 0009` 往返。
 9. 作业受众数据迁移 `20260827_0010` 为现有 active student 补录仍开放且匹配的作业，使用专用 `created_at` 标记；downgrade 只删除该标记行，可完成 `0009 → 0010 → 0009 → 0010` 往返。
 10. 问卷升级迁移 `20260828_0013` 接在账号活跃度 `0012` 后：为每份旧调查创建 ID 等于原调查 ID 的兼容问题，把旧选项迁到 `question_id`，以原回答 revision 初始化 `submission_count`，旧调查 `max_submissions=NULL` 保持不限。downgrade 按题序展平选项并保留选择关系，但旧结构无法保留问题标题和次数限制语义，生产降级前必须备份；验证 `0012 → 0013 → 0012 → 0013`。
+11. 反馈答疑迁移 `20260828_0014` 接在 `0013` 后，只创建 `help_requests` 表、检查约束、外键和查询索引，不回填或修改现有业务数据。downgrade 删除整张表并丢失已产生的工单与答复，生产降级前必须备份；验证 `0013 → 0014 → 0013 → 0014` 并保持单一 head。
+12. 已解答问题公开读取仅改变查询和响应，不改变 `0014` 表结构，不新增 Alembic revision；应用回滚不需要数据库降级。
 
 ## 飞书知识库快照
 
