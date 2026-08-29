@@ -13,10 +13,11 @@
 - 架构固定为 Next.js + FastAPI + PostgreSQL + MinIO + Nginx + Docker Compose，部署在校内服务器。
 - 单个提交版本的附件合计上限为 2 GB，使用预签名分片上传。
 - 站内通知与 SMTP 邮件配合，邮件和定时发布由 PostgreSQL Outbox Worker 可靠执行，不引入 Redis。
+- 反馈答疑采用登录态单工单模型：学生提交系统反馈或问题答疑并查看本人记录，真实管理员填写当前答复；已解答问题向有效登录用户匿名只读公开，开放问题和全部系统反馈仍私密。它不是匿名互联网论坛、即时聊天或多轮消息，也不支持评论、追问、附件、评分或邮件答复。
 
 ## 当前阶段
 
-阶段 1～6 已完成实现与真实 Linux Docker/浏览器/运维验收，首版发布候选已经形成。系统源码具备认证与两角色授权、通知与工作台、作业/赛事、意向调查、飞书知识库只读同步与阅读，以及共享 MinIO 存储；管理员可维护资料和登录人员，并可在当前 Session 临时切换学生视图。
+阶段 1～6 已完成实现与真实 Linux Docker/浏览器/运维验收，首版发布候选已经形成。系统源码具备认证与两角色授权、通知与工作台、作业/赛事、问卷、反馈答疑、飞书知识库只读同步与阅读，以及共享 MinIO 存储；管理员可维护资料和登录人员，并可在当前 Session 临时切换学生视图。
 
 当前知识库发布候选通过 29 项后端知识库定向测试、完整后端 213 项测试、前端 20 个文件/76 项测试、Ruff、格式检查、严格 Mypy、ESLint、严格 TypeScript 和 Next.js 生产构建；此前容器构建、依赖审计、三浏览器、秘密扫描和镜像安全门继续有效。
 
@@ -93,3 +94,34 @@
 - 隔离多来源登录 100/200/300 账号均 0 错误；100 Session/2,000 次登录后读取错误率 0%，P95 331.674 ms。Argon2 登录突发最慢分片 P95 为 3.53～8.90 秒，属于 CPU 排队观测。
 - 本机入口安全探测通过匿名鉴权、Host/转发头、Origin/CSRF、方法、请求体、路径遍历和 source map 边界；Gitleaks 0 泄漏。Trivy 发现 Backend Alpine 的 4 个 CVE，基础镜像升级待排期。
 - 当前 PNX 只保留 questionnaire-account-20260828 当前镜像和 intention-fix-20260828/user-status-ui-20260828 回滚候选；运行卷、备份和六服务均保留。
+
+## 2026-08-28 问卷查看与草稿编辑运行基线
+
+- 当前 Backend/Worker 镜像为 `pnx-training-backend:questionnaire-edit-20260828`（`sha256:06eb68d3c5b2…`），Frontend 为 `pnx-training-frontend:questionnaire-edit-20260828`（`sha256:a5d9264abc6a…`）；Nginx 主机端口仍为 5000，六服务 healthy。
+- 管理员可读取任意状态问卷完整内容；仅 `draft` 可按 revision 修改标题、说明、时间窗口、提交次数和题目/选项结构，其他状态只读。学生和管理员学生视图没有管理详情/修改权限。
+- Alembic 保持 `20260828_0013 (head)` 且无模型漂移，本轮不新增迁移。运行数据为 2 份问卷、3 道题、11 个选项、2 份回答、2 条选择关系。
+- 部署前备份为 `/tmp/pnx-training-before-questionnaire-edit-20260828T145330Z.dump`，4,145,718 字节、0600，SHA-256 `f089b9425488a48f4fa2d3b34744ab9423d86a00255b17c26c23caef373d08bf`。
+- 最近成功知识库快照仍为 212 篇文档、986 个媒体，未触发飞书同步。首次部署权限故障已通过恢复源码 0644、重建镜像解决；未使用的临时 `dev` 标签已删除。
+
+## 2026-08-29 反馈答疑运行基线
+
+- 新增 `HELP-001～HELP-006` 私密工单域、学生/管理员四个页面、六个受保护 API、`help_requests` 表和 `20260828_0014` 单一源码 head；学生本人 404、管理员学生视图、revision、Markdown 清洗、通知和脱敏审计边界已实现。
+- 管理员答复在锁行和 revision 校验后，同一事务写状态、当前答复、审计与 `help_request_resolved:{request_id}:{revision}` 站内通知；通知只含安全标题和 `/help/{request_id}`，不含正文且不创建邮件 Outbox。
+- 2026-08-29 正式修订新增 `HELP-007`：仅已解决问题提供登录态匿名公开列表/详情，查询不连接用户表且响应无提交者身份；不新增字段或迁移，系统反馈和开放问题继续私密。
+- 完整质量门通过：Ruff、169 文件格式检查、120 个源文件严格 Mypy、246 项后端测试；ESLint、严格 TypeScript、21 文件/89 项前端测试和 Next.js 生产构建。
+- 当前 Backend/Worker 为 `pnx-training-backend:help-public-20260829`（`sha256:942b9ee5e98d…`），Frontend 为 `pnx-training-frontend:help-public-20260829`（`sha256:93feb800a8c6…`），均以 `appuser` 运行；`.env` 已固定该标签。
+- 运行库为 `20260828_0014 (head)` 且无模型漂移；迁移前备份 `/tmp/pnx-training-before-help-requests-20260829T015203Z.dump` 为 4,147,113 字节、0600，SHA-256 `9bb10adf0edd852a9192f2eb9e65ba3c6a23ae908651192839089ab8369cd8a2`。
+- 生产副本隔离完成 `0013 → 0014 → 0013 → 0014`；用户 6、问卷 `2/3/11/2/2` 和知识库 `212/986` 前后不变，隔离容器和网络已清理。
+- 六服务 healthy，四健康端点为 200；公开页面匿名 307、两个公开 API 匿名 401，运行 OpenAPI 含八个反馈答疑操作；本轮未触发邮件、飞书同步、账号删除或上传。
+- 运行库现有 1 条 `question/resolved` 工单，未由本轮修改，已按派生规则进入登录态匿名公开范围；本轮不新增迁移，Alembic 仍为 `20260828_0014 (head)` 且无模型漂移。
+
+- 2026-08-29 学生提醒改为按公告、作业、校内赛和反馈答疑目标分类显示；已归档公告从查询侧立即排除，新归档事务同时写已读，本人工单解决提醒在详情通过单条已读接口消除。本轮无迁移、无新依赖，已随 `help-public-20260829` 部署。
+- 2026-08-29 已在用户授权后撤销本次部署添加的 Docker socket `user:pnx:rw-` 临时 ACL；`getfacl -cp /var/run/docker.sock` 复核仅剩基础 owner/group/mask/other 条目，部署权限已收敛。
+
+
+## 2026-08-29 学生提醒共享页面部署后基线
+
+- 当前 Frontend 为 `pnx-training-frontend:notification-badges-20260829`（`sha256:fd13387f14a5…`），以 `appuser` 运行；个人资料、登录设备和公开答疑详情均保持学生分类徽标，不再进入页面后暂时归零。
+- Backend/Worker 容器仍为 `pnx-training-backend:help-public-20260829`（`sha256:942b9ee5e98d…`），同一镜像已增加 `notification-badges-20260829` 别名；`.env` 使用该统一固定标签。
+- 六服务 healthy，四健康端点与登录页 200，三个目标页面匿名守卫 307，Dashboard API 匿名访问 401；Alembic 保持 `20260828_0014 (head)`，本轮无迁移或业务数据写入。
+- 本次部署使用的 Docker socket `user:pnx:rw-` 临时 ACL 已由用户撤销；复核仅剩基础 ACL，socket 为 `root:docker`、`0660`。

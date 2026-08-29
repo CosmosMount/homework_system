@@ -222,3 +222,83 @@
 - PNX 端口映射仅 Nginx 0.0.0.0:5000；Compose 内 Backend、Frontend、PostgreSQL、MinIO 无宿主机端口映射。宿主机 5432/3000 属于另一个项目或宿主进程，本轮未修改。
 - 匿名 API、Host/转发头、Origin/CSRF、非法方法、请求体上限、路径遍历和 source map 探测通过；Gitleaks 无泄漏。Trivy 发现 Backend Alpine 的 4 个 CVE，需后续升级基础镜像。
 - 保留当前 questionnaire-account-20260828 与回滚候选 intention-fix-20260828、user-status-ui-20260828；删除已退出 PNX migrate 容器及其余旧 PNX 应用标签。运行卷、备份和六服务保留；隔离项目资源已删除。全局构建缓存未清理以免影响其他项目。
+
+## 2026-08-28 问卷查看与草稿编辑部署
+
+### 备份与构建
+
+- 部署前从 `pnx-training-postgres-1` 生成 PostgreSQL 17 自定义格式备份 `/tmp/pnx-training-before-questionnaire-edit-20260828T145330Z.dump`，`pg_restore --list` 校验通过；大小 4,145,718 字节，权限 0600，SHA-256 为 `f089b9425488a48f4fa2d3b34744ab9423d86a00255b17c26c23caef373d08bf`。
+- 完整质量门通过后构建 Backend/Worker `pnx-training-backend:questionnaire-edit-20260828`（`sha256:06eb68d3c5b2a0f6bbb0dd8d0add1c363d188d3ccd69ddf8f70f08437b07501c`）和 Frontend `pnx-training-frontend:questionnaire-edit-20260828`（`sha256:a5d9264abc6a944a5b0e6a0a7f3a743d02f7af20cb748a6e34ed8a8b5dbbce9a`）。
+- `.env` 的 `APP_IMAGE_TAG` 固定为 `questionnaire-edit-20260828`；本轮没有数据库迁移，运行与源码 Alembic 都是 `20260828_0013`。
+
+### 部署过程与恢复
+
+- 第一次 Compose 调用未显式传 `--env-file .env`，Compose 按配置目录回退到 `dev` 并生成两个临时镜像；未写数据库。随即显式加载 `.env` 并按固定标签替换 Backend、Worker、Frontend、重启 Nginx。
+- 首个固定 Backend 镜像中三个经补丁回退写入的 Python 文件权限为 0600，非 root 应用用户导入时报 `PermissionError`，入口健康端点短暂返回 502。将本轮源码统一恢复为 0644、重建同一固定标签并再次替换 Backend/Worker 后恢复；两个未使用的 `dev` 标签已删除。
+
+### 最终验收
+
+- Backend、Worker、Frontend、Nginx、PostgreSQL、MinIO 全部 healthy；`live`、`ready`、`worker`、`nginx-health` 均为 200。管理页面匿名访问 307，管理详情 GET 和 PATCH 匿名访问 401。
+- 运行 Frontend 编译包包含“查看内容”“编辑问卷”“问卷修改已保存”；Backend OpenAPI 同一路径包含 GET/PATCH，最近一分钟新服务日志只有预期 200/401 请求，无错误。
+- Alembic 为 `20260828_0013 (head)` 且 `alembic check` 无升级操作；部署前后问卷、题目、选项、回答、选择关系数量均为 `2/3/11/2/2`。
+- 最近成功知识库同步仍为 `succeeded`、212 篇文档、986 个媒体；本轮没有调用飞书同步、账号删除、邮件发送或上传接口。
+
+### 回滚
+
+- 应用回滚只需把 `APP_IMAGE_TAG` 恢复为 `questionnaire-account-20260828` 并按同样方式重建 Backend、Worker、Frontend、重启 Nginx；本轮没有迁移需要降级。
+- 若需数据级恢复，可使用已校验备份执行受控 `pg_restore`；备份当前位于 `/tmp`，需要长期保留时应转移到受控持久介质。
+
+## 2026-08-29 反馈答疑部署
+
+### 备份与迁移验证
+
+- 部署前从 `pnx-training-postgres-1` 生成 PostgreSQL 17 自定义格式备份 `/tmp/pnx-training-before-help-requests-20260829T015203Z.dump`；`pg_restore --list` 共 277 项，文件大小 4,147,113 字节、权限 0600，SHA-256 为 `9bb10adf0edd852a9192f2eb9e65ba3c6a23ae908651192839089ab8369cd8a2`。该 `/tmp` 文件需迁移到受控持久介质才能跨主机重启长期保留。
+- 将生产备份恢复到独立 PostgreSQL 17 容器后，使用候选 Backend 真实完成 `0013 → 0014 → 0013 → 0014`；`alembic check` 无模型漂移，新表 5 个检查约束、2 个用户外键及学生/管理员列表索引完整。
+- 隔离往返前后用户、问卷/题目/选项/回答/选择关系、最近成功知识库文档/媒体计数均为 `6/2/3/11/2/2/212/986`；`help_requests` 初始为 0。隔离容器和网络已删除，未连接其他项目数据库。
+
+### 构建与部署
+
+- Backend 首个候选因新增源码目录为 0700、复制后属 root 所有，非 root `appuser` 在迁移事务前无法导入；生产库未受影响。将本次新增源码目录统一修正为 0755，并定向失效 runtime 缓存层后，非 root 导入与完整隔离迁移均通过。
+- 最终 Backend/Worker 为 `pnx-training-backend:help-requests-20260829`（`sha256:c87408a3f807b211588b0d815c980a48a7e2ecd39be3ed611360cd1853ec07d0`），Frontend 为 `pnx-training-frontend:help-requests-20260829`（`sha256:a32c3c9c72a2a19dadaf9da536c9a174c520873075763c08709e80c901977020`）；两镜像均声明 `appuser`。
+- 运行库在旧应用保持健康时事务升级 `0013 → 0014`，确认新表为空后把 `.env` 的 `APP_IMAGE_TAG` 固定为 `help-requests-20260829`，依次替换 Backend、Worker、Frontend，并重建 Nginx 刷新上游地址。
+
+### 最终验收
+
+- Backend、Worker、Frontend、PostgreSQL、MinIO、Nginx 六服务 healthy；`live`、`ready`、`worker`、`nginx-health` 均为 200。Alembic 为 `20260828_0014 (head)` 且无模型漂移。
+- `/help`、学生详情、`/admin/help`、管理员详情匿名访问均为 307；运行 OpenAPI 包含 6 个反馈答疑操作，匿名 GET/POST/PUT 均为 401。
+- 部署后 `help_requests=0`，用户 6、问卷 `2/3/11/2/2`、最近成功知识库 `succeeded/212/986` 保持不变；新服务日志只有预期 200/307/401，无启动、权限或事务异常。
+- 本轮未触发飞书同步、邮件、账号删除或上传。应用回滚可把标签切回 `questionnaire-edit-20260828` 并保留向后兼容的 `0014`；工单产生后不得直接降级到 `0013`，因为 downgrade 会删除全部工单数据。
+
+## 2026-08-29 已解答问题公开与分类提醒部署
+
+### 构建与替换
+
+- 完整质量门通过后构建 Backend/Worker `pnx-training-backend:help-public-20260829`（`sha256:942b9ee5e98d6658b4d870477eb1758562d3fd18bde1bf40f450d18629a54816`）和 Frontend `pnx-training-frontend:help-public-20260829`（`sha256:93feb800a8c6d17b3924c034424dec533efe6b88880dae7521256075b1f44239`），两者均声明 `appuser`。
+- 构建前发现经补丁替代路径新增的公开页面目录为 0700、反馈答疑源码部分为 0600；在构建前统一恢复目录 0755、源码 0644，候选 Backend 以非 root 用户成功导入并生成八个反馈答疑操作。
+- `.env` 的 `APP_IMAGE_TAG` 固定为 `help-public-20260829`；先替换 Backend/Worker 并等待健康，再替换 Frontend/Nginx。PostgreSQL、MinIO 未重启，旧 `help-requests-20260829` 镜像保留。
+
+### 运行态验收
+
+- Backend、Worker、Frontend、PostgreSQL、MinIO、Nginx 六服务 healthy；`live`、`ready`、`worker`、`nginx-health` 均返回 200，新应用服务近期日志无错误匹配。
+- `/help`、`/help/public/{id}`、`/admin/help`、`/admin/help/{id}` 匿名访问为 307；两个公开 API 匿名访问为 401，说明页面和接口仍要求有效登录。
+- 运行 Backend OpenAPI 含八个反馈答疑操作和两个公开路径；`PublicHelpRequestDetail` 只含工单 ID、类型、状态、标题、安全正文/答复、时间和 revision，不含提交者身份、通知 ID 或 Markdown 源文。
+- Alembic 保持 `20260828_0014 (head)`，`alembic check` 无新升级操作。本轮不新增字段或迁移，没有执行数据库写入；运行库现有 1 条 `question/resolved` 工单，部署后按派生规则自动进入公开范围。
+- 完整后端 Ruff、169 文件格式、120 源文件严格 Mypy、246 项 Pytest 通过；完整前端 ESLint、严格 TypeScript、21 文件/89 项 Vitest 与主机/容器生产构建通过。
+- 本轮部署镜像同时包含已完成的学生提醒分类与徽标消除修复；该修复无迁移、无新依赖，权限和提醒幂等规则不变。
+- 本轮未调用飞书同步、邮件、账号删除或上传接口。
+
+### 回滚
+
+- 应用回滚只需把 `APP_IMAGE_TAG` 恢复为 `help-requests-20260829`，按相同顺序替换 Backend/Worker、Frontend/Nginx；本轮没有数据库迁移需要降级，现有 `0014` 和工单数据应保留。
+- 2026-08-29 收尾已在用户授权后撤销部署期间添加的 Docker socket `user:pnx:rw-` 临时 ACL；`getfacl -cp /var/run/docker.sock` 复核仅剩 owner、group、mask 与 other 基础条目，不再存在命名用户 `pnx` 权限。
+
+
+## 2026-08-29 学生提醒共享页面 Frontend 增量部署
+
+- 本轮只部署 `/profile`、`/sessions` 与 `/help/public/{request_id}` 的学生分类徽标取数补丁；源码已通过完整前端 22 个测试文件/90 项测试、ESLint、严格 TypeScript 和主机生产构建，容器内 Next.js 生产构建再次通过并包含三个目标路由。
+- 构建前把新增通知组件目录/源码恢复为标准 `0755/0644`；Frontend 固定镜像为 `pnx-training-frontend:notification-badges-20260829`（`sha256:fd13387f14a56c518c9be2ef61860bf466ff0f7434cc340352d9875236836a86`），以 `appuser`（UID/GID 10001）运行。
+- `.env` 的 `APP_IMAGE_TAG` 已固定为 `notification-badges-20260829`。Backend/Worker 容器继续运行 `help-public-20260829`，未重建或替换；原 Backend 镜像 `sha256:942b9ee5e98d…` 只增加同名固定别名，保证统一标签下 Compose 可复现。
+- 仅强制重建 Frontend，待其 healthy 后重启 Nginx 刷新上游；PostgreSQL、MinIO、Backend 和 Worker 未重启。六服务最终均 healthy 且重启计数为 0。
+- `live`、`ready`、`worker`、`nginx-health` 和登录页均为 200；`/profile`、`/sessions`、`/help/public/{id}` 匿名访问为 307，Dashboard API 匿名访问为 401；Frontend/Nginx 近十分钟无严重错误关键字。
+- Alembic 保持 `20260828_0014 (head)`；本轮无迁移、数据库写入、飞书同步、邮件、账号删除或上传。应用回滚只需把统一标签恢复为 `help-public-20260829` 并按相同方式替换 Frontend、重启 Nginx。
+- 用户完成撤销本次临时 Docker socket `user:pnx:rw-` ACL；`getfacl -cp /var/run/docker.sock` 复核仅剩基础 owner/group/mask/other 条目，socket 恢复为 `root:docker`、`0660`。
