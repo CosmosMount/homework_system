@@ -4,6 +4,7 @@ import Image from "next/image";
 import { type FormEvent, useState } from "react";
 import QRCode from "qrcode";
 
+import { IntentionAdminDetail } from "@/components/admin/intention-admin-detail";
 import {
   buttonClassName,
   commandButtonClassName,
@@ -454,6 +455,16 @@ export function IntentionAdminPanel({
                   查看提交名单
                 </button>
               </div>
+
+              <IntentionAdminDetail
+                disabled={pending}
+                onUpdated={(updated) =>
+                  setSurveys((current) =>
+                    current.map((item) => (item.id === updated.id ? updated : item)),
+                  )
+                }
+                survey={survey}
+              />
 
               {surveyQr ? (
                 <div className="mt-5 flex flex-col items-start gap-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4 sm:flex-row sm:items-center">

@@ -13,6 +13,7 @@ from app.core.network import request_ip_prefix
 from app.core.request_context import current_request_id
 from app.intentions.schemas import (
     AdminIntentionSurvey,
+    AdminIntentionSurveyDetail,
     AdminIntentionSurveyPage,
     IntentionQrResponse,
     IntentionResponseRequest,
@@ -86,6 +87,15 @@ async def list_admin_intentions(
     return await service.list_admin(context=context)
 
 
+@router.get("/admin/intentions/{survey_id}", response_model=AdminIntentionSurveyDetail)
+async def get_admin_intention(
+    survey_id: UUID,
+    service: IntentionServiceDependency,
+    context: AdminContextDependency,
+) -> AdminIntentionSurveyDetail:
+    return await service.admin_detail(survey_id, context=context)
+
+
 @router.post(
     "/admin/intentions", response_model=AdminIntentionSurvey, status_code=status.HTTP_201_CREATED
 )
@@ -99,7 +109,7 @@ async def create_admin_intention(
     return await service.create(payload, audit_context=_audit_context(request, context))
 
 
-@router.patch("/admin/intentions/{survey_id}", response_model=AdminIntentionSurvey)
+@router.patch("/admin/intentions/{survey_id}", response_model=AdminIntentionSurveyDetail)
 async def patch_admin_intention(
     survey_id: UUID,
     payload: IntentionSurveyPatchRequest,
@@ -107,7 +117,7 @@ async def patch_admin_intention(
     service: IntentionServiceDependency,
     context: AdminContextDependency,
     _csrf: CsrfDependency,
-) -> AdminIntentionSurvey:
+) -> AdminIntentionSurveyDetail:
     return await service.patch(survey_id, payload, audit_context=_audit_context(request, context))
 
 

@@ -5,6 +5,7 @@ import { IntentionAdminPanel } from "@/components/admin/intention-admin-panel";
 import { IntentionForm } from "@/components/intentions/intention-form";
 import type {
   AdminIntentionSurvey,
+  AdminIntentionSurveyDetail,
   IntentionSurvey,
 } from "@/lib/api/types";
 
@@ -88,6 +89,37 @@ function adminSurvey(
     created_at: "2026-08-27T00:00:00Z",
     updated_at: "2026-08-27T00:00:00Z",
     revision: 1,
+    ...overrides,
+  };
+}
+
+function adminDetail(
+  overrides: Partial<AdminIntentionSurveyDetail> = {},
+): AdminIntentionSurveyDetail {
+  return {
+    ...adminSurvey(),
+    questions: [
+      {
+        id: "question-first",
+        prompt: "第一志愿",
+        allow_multiple: false,
+        display_order: 0,
+        options: [
+          { id: "option-robot", label: "机器人", display_order: 0 },
+          { id: "option-vision", label: "视觉", display_order: 1 },
+        ],
+      },
+      {
+        id: "question-second",
+        prompt: "第二志愿",
+        allow_multiple: true,
+        display_order: 1,
+        options: [
+          { id: "option-control", label: "电控", display_order: 0 },
+          { id: "option-embedded", label: "嵌入式", display_order: 1 },
+        ],
+      },
+    ],
     ...overrides,
   };
 }
@@ -337,5 +369,104 @@ describe("administrator questionnaire panel", () => {
     expect(screen.getByText(/20260001/)).toBeInTheDocument();
     expect(screen.getByText("视觉")).toBeInTheDocument();
     expect(screen.getByText(/提交 2 次/)).toBeInTheDocument();
+  });
+
+  it("loads and displays complete content for a non-draft questionnaire", async () => {
+    const opened = adminDetail({ status: "open", revision: 2 });
+    apiFetchMock.mockResolvedValue(opened);
+    render(
+      <IntentionAdminPanel
+        initialSurveys={[adminSurvey({ status: "open", revision: 2 })]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看内容" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "问卷内容" }),
+    ).toBeInTheDocument();
+    expect(apiFetchMock).toHaveBeenCalledWith("/admin/intentions/survey-1");
+    expect(screen.getByText("1. 第一志愿（单选）")).toBeInTheDocument();
+    expect(screen.getByText("机器人")).toBeInTheDocument();
+    expect(screen.getByText("2. 第二志愿（多选）")).toBeInTheDocument();
+    expect(
+      screen.getByText(/已开放、关闭或归档的问卷只能查看/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "编辑问卷" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("edits a draft questionnaire and refreshes its visible content", async () => {
+    const draftDetail = adminDetail();
+    const updated = adminDetail({
+      title: "更新后的培训方向问卷",
+      description_markdown: "更新说明",
+      max_submissions: 3,
+      revision: 2,
+      questions: [
+        {
+          id: "question-new-first",
+          prompt: "首选方向",
+          allow_multiple: false,
+          display_order: 0,
+          options: [
+            { id: "option-new-robot", label: "机器人", display_order: 0 },
+            { id: "option-new-vision", label: "视觉", display_order: 1 },
+            { id: "option-new-mechanical", label: "机械", display_order: 2 },
+          ],
+        },
+        draftDetail.questions[1]!,
+      ],
+    });
+    apiFetchMock.mockResolvedValue(draftDetail);
+    csrfFetchMock.mockResolvedValue(updated);
+    render(<IntentionAdminPanel initialSurveys={[adminSurvey()]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑问卷" }));
+    const titleInput = await screen.findByLabelText("编辑问卷标题");
+    fireEvent.change(titleInput, {
+      target: { value: "  更新后的培训方向问卷  " },
+    });
+    fireEvent.change(screen.getByLabelText("编辑说明（Markdown，可选）"), {
+      target: { value: "更新说明" },
+    });
+    fireEvent.change(screen.getByLabelText("编辑题目 1"), {
+      target: { value: "首选方向" },
+    });
+    fireEvent.change(screen.getByLabelText("编辑选项 1"), {
+      target: { value: "机器人\n视觉\n机械" },
+    });
+    fireEvent.change(screen.getByLabelText("编辑每人最多提交次数"), {
+      target: { value: "3" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+
+    await screen.findByText("问卷修改已保存。");
+    expect(csrfFetchMock).toHaveBeenCalledWith("/admin/intentions/survey-1", {
+      method: "PATCH",
+      body: JSON.stringify({
+        revision: 1,
+        title: "更新后的培训方向问卷",
+        description_markdown: "更新说明",
+        questions: [
+          {
+            prompt: "首选方向",
+            allow_multiple: false,
+            options: [{ label: "机器人" }, { label: "视觉" }, { label: "机械" }],
+          },
+          {
+            prompt: "第二志愿",
+            allow_multiple: true,
+            options: [{ label: "电控" }, { label: "嵌入式" }],
+          },
+        ],
+        max_submissions: 3,
+        starts_at: null,
+        ends_at: null,
+      }),
+    });
+    expect(screen.getByText("1. 首选方向（单选）")).toBeInTheDocument();
+    expect(screen.getByText("机械")).toBeInTheDocument();
   });
 });

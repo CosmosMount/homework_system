@@ -26,6 +26,7 @@ from app.intentions.models import (
 from app.intentions.repository import IntentionRepository, SurveyListRecord, SurveyOptionCount
 from app.intentions.schemas import (
     AdminIntentionSurvey,
+    AdminIntentionSurveyDetail,
     AdminIntentionSurveyPage,
     IntentionAnswerResponse,
     IntentionOptionResponse,
@@ -374,6 +375,32 @@ class IntentionService:
         ]
         return AdminIntentionSurveyPage(items=items, total=len(items))
 
+    async def admin_detail(
+        self, survey_id: UUID, *, context: AuthenticatedContext
+    ) -> AdminIntentionSurveyDetail:
+        self._require_admin(context)
+        survey = await self._repo.get_survey(survey_id)
+        if survey is None:
+            raise self._not_found()
+        questions = await self._repo.questions(survey_id)
+        options = await self._repo.options(survey_id)
+        summary = cast(
+            AdminIntentionSurvey,
+            self._summary(
+                SurveyListRecord(
+                    survey,
+                    len(questions),
+                    await self._repo.responded_count(survey_id),
+                    False,
+                ),
+                student=False,
+            ),
+        )
+        return AdminIntentionSurveyDetail(
+            **summary.model_dump(),
+            questions=self._question_schemas(questions, options),
+        )
+
     async def _add_questions(self, survey_id: UUID, payload: IntentionSurveyCreateRequest) -> None:
         question_records: list[tuple[IntentionQuestion, IntentionQuestionInput]] = []
         for question_index, question_payload in enumerate(payload.questions):
@@ -441,7 +468,7 @@ class IntentionService:
         payload: IntentionSurveyPatchRequest,
         *,
         audit_context: IntentionAuditContext,
-    ) -> AdminIntentionSurvey:
+    ) -> AdminIntentionSurveyDetail:
         self._require_admin(audit_context.actor)
         survey = await self._repo.get_survey(survey_id, for_update=True)
         if survey is None:
@@ -470,18 +497,7 @@ class IntentionService:
             audit_context, action="intention.update", target_id=survey.id, now=survey.updated_at
         )
         await self._session.commit()
-        return cast(
-            AdminIntentionSurvey,
-            self._summary(
-                SurveyListRecord(
-                    survey,
-                    len(payload.questions),
-                    await self._repo.responded_count(survey_id),
-                    False,
-                ),
-                student=False,
-            ),
-        )
+        return await self.admin_detail(survey_id, context=audit_context.actor)
 
     async def transition(
         self,

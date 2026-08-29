@@ -33,6 +33,7 @@ from app.intentions.schemas import (
     IntentionQuestionInput,
     IntentionResponseRequest,
     IntentionSurveyCreateRequest,
+    IntentionSurveyPatchRequest,
 )
 from app.intentions.service import IntentionAuditContext, IntentionService
 from app.users.models import User
@@ -206,6 +207,129 @@ async def test_admin_creates_sanitized_multi_question_questionnaire() -> None:
     ]
     assert session.flush.await_count == 2
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["draft", "open", "closed", "archived"])
+async def test_admin_can_read_complete_questionnaire_in_every_status(status: str) -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, status=status, max_submissions=3)
+    first = make_question(survey.id, "第一志愿", 0)
+    second = make_question(survey.id, "第二志愿", 1, allow_multiple=True)
+    options = [
+        make_option(first.id, "机器人", 0),
+        make_option(first.id, "视觉", 1),
+        make_option(second.id, "电控", 0),
+    ]
+    service, _session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            questions=AsyncMock(return_value=[first, second]),
+            options=AsyncMock(return_value=options),
+            responded_count=AsyncMock(return_value=2),
+        ),
+    )
+
+    result = await service.admin_detail(survey.id, context=make_context("admin"))
+
+    assert result.status == status
+    assert result.question_count == 2
+    assert result.responded_count == 2
+    assert [question.prompt for question in result.questions] == ["第一志愿", "第二志愿"]
+    assert [option.label for option in result.questions[0].options] == ["机器人", "视觉"]
+
+
+@pytest.mark.asyncio
+async def test_admin_detail_rejects_students_and_admin_student_view() -> None:
+    now = datetime.now(UTC)
+    service, _session = make_service(now)
+
+    with pytest.raises(ApplicationError) as student_blocked:
+        await service.admin_detail(uuid4(), context=make_context())
+    assert student_blocked.value.status_code == 403
+
+    with pytest.raises(ApplicationError) as view_blocked:
+        await service.admin_detail(uuid4(), context=make_context("admin", student_view=True))
+    assert view_blocked.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_updates_draft_structure_and_returns_fresh_detail() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, status="draft", max_submissions=1)
+    old_question = make_question(survey.id, "旧问题", 0)
+    new_questions: list[IntentionQuestion] = []
+    new_options: list[IntentionOption] = []
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            questions=AsyncMock(side_effect=[[old_question], new_questions]),
+            options=AsyncMock(side_effect=lambda _survey_id: new_options),
+            responded_count=AsyncMock(return_value=0),
+            add_question=Mock(side_effect=new_questions.append),
+            add_option=Mock(side_effect=new_options.append),
+        ),
+    )
+    payload = IntentionSurveyPatchRequest(
+        revision=1,
+        title="更新后的问卷",
+        description_markdown="## 新说明\n<script>alert(1)</script>",
+        questions=[
+            question_payload("第一志愿", "机械", "视觉"),
+            question_payload("第二志愿", "电控", "嵌入式", allow_multiple=True),
+        ],
+        max_submissions=4,
+    )
+
+    result = await service.patch(survey.id, payload, audit_context=make_audit_context("admin"))
+
+    assert result.title == "更新后的问卷"
+    assert result.revision == 2
+    assert result.max_submissions == 4
+    assert [question.prompt for question in result.questions] == ["第一志愿", "第二志愿"]
+    assert result.questions[1].allow_multiple is True
+    assert "<script" not in survey.description_html.lower()
+    session.delete.assert_awaited_once_with(old_question)
+    assert session.flush.await_count == 2
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "revision", "expected_code"),
+    [
+        ("open", 1, "INTENTION_ALREADY_OPEN"),
+        ("closed", 1, "INTENTION_ALREADY_OPEN"),
+        ("archived", 1, "INTENTION_ALREADY_OPEN"),
+        ("draft", 2, "REVISION_CONFLICT"),
+    ],
+)
+async def test_admin_update_rejects_non_drafts_and_stale_revisions(
+    status: str, revision: int, expected_code: str
+) -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, status=status)
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(get_survey=AsyncMock(return_value=survey)),
+    )
+    payload = IntentionSurveyPatchRequest(
+        revision=revision,
+        title="更新后的问卷",
+        questions=[question_payload("第一志愿", "视觉")],
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.patch(survey.id, payload, audit_context=make_audit_context("admin"))
+
+    assert blocked.value.code == expected_code
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

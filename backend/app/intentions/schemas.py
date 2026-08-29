@@ -211,6 +211,10 @@ class AdminIntentionSurvey(BaseModel):
     revision: int
 
 
+class AdminIntentionSurveyDetail(AdminIntentionSurvey):
+    questions: list[IntentionQuestionResponse]
+
+
 class AdminIntentionSurveyPage(BaseModel):
     items: list[AdminIntentionSurvey]
     total: int

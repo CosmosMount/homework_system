@@ -727,6 +727,10 @@ export type AdminIntentionSurvey = {
   revision: number;
 };
 
+export type AdminIntentionSurveyDetail = AdminIntentionSurvey & {
+  questions: IntentionQuestion[];
+};
+
 export type AdminIntentionSurveyPage = {
   items: AdminIntentionSurvey[];
   total: number;

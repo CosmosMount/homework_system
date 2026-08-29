@@ -89,6 +89,14 @@ def test_questionnaire_openapi_exposes_questions_limits_stats_and_admin_roster()
     schema = create_app(Settings(app_env="test")).openapi()
     paths = schema["paths"]
 
+    detail_path = paths["/api/v1/admin/intentions/{survey_id}"]
+    assert detail_path["get"]["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/AdminIntentionSurveyDetail"
+    }
+    assert detail_path["patch"]["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/AdminIntentionSurveyDetail"
+    }
+
     assert "/api/v1/admin/intentions/{survey_id}/responses" in paths
     roster_operation = paths["/api/v1/admin/intentions/{survey_id}/responses"]["get"]
     assert roster_operation["responses"]["200"]["content"]["application/json"]["schema"] == {
