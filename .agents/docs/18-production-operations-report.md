@@ -302,3 +302,30 @@
 - `live`、`ready`、`worker`、`nginx-health` 和登录页均为 200；`/profile`、`/sessions`、`/help/public/{id}` 匿名访问为 307，Dashboard API 匿名访问为 401；Frontend/Nginx 近十分钟无严重错误关键字。
 - Alembic 保持 `20260828_0014 (head)`；本轮无迁移、数据库写入、飞书同步、邮件、账号删除或上传。应用回滚只需把统一标签恢复为 `help-public-20260829` 并按相同方式替换 Frontend、重启 Nginx。
 - 用户完成撤销本次临时 Docker socket `user:pnx:rw-` ACL；`getfacl -cp /var/run/docker.sock` 复核仅剩基础 owner/group/mask/other 条目，socket 恢复为 `root:docker`、`0660`。
+
+## 2026-08-29 统一发布点与 Docker 精确清理
+
+### 发布点与备份
+
+- 本轮将问卷管理详情/草稿编辑、反馈答疑/已解决问题公开、学生分类提醒及权威文档拆为五个本地提交：`5b642a2`、`84718d4`、`059d87a`、`c1e7259`、`634e01a`。未 push，也未创建外部 Release。
+- 发布前 PostgreSQL 17 自定义格式备份为 `/tmp/pnx-training-before-release-634e01a-20260829T042700Z.dump`，大小 4,153,800 字节、权限 0600、SHA-256 `bb4ad5f713aa1d605e6cffac23903471d48a49dd66f1085bfb6660425cd78caa`；在 PostgreSQL 17 容器内执行 `pg_restore --list` 成功。
+- `.env` 固定为 `APP_IMAGE_TAG=release-634e01a-20260829`。Backend/Worker 镜像为 `pnx-training-backend:release-634e01a-20260829`（`sha256:c7ccb9bd1249354d0ad5b059560bd90f34a69f6e22bd45058e6e65f132b8cea9`），Frontend 为 `pnx-training-frontend:release-634e01a-20260829`（`sha256:76266bc260527c7131af364c97ed2f801769b8a3ef5e111cb0dff642bf033c46`）。
+
+### 质量门与部署过程
+
+- Backend 通过 Ruff、169 个 Python 文件格式检查、120 个源文件严格 Mypy 和 246 项 Pytest；Frontend 通过 ESLint、严格 TypeScript、22 个文件/90 项 Vitest、主机和容器 Next.js 生产构建。
+- Alembic 源码单一 head 与运行库均为 `20260828_0014`，`alembic check` 无模型漂移；候选 Backend 以 `appuser` 导入成功，OpenAPI 共 113 个路径。本轮没有新迁移。
+- 按 Backend/Worker、Frontend/Nginx 顺序替换应用；PostgreSQL 与 MinIO 数据卷未重建。最终六服务 healthy，应用容器均为 `appuser`，重启次数为 0。
+- `/login`、`/health/live`、`/health/ready`、`/health/worker`、`/nginx-health` 为 200；`/help`、`/admin/help`、`/admin/intentions`、`/profile`、`/sessions` 匿名访问为 307；公开答疑、管理答疑与 Dashboard API 匿名访问为 401，近期日志无严重错误匹配。
+- 发布前后用户/问卷/问题/选项/回答/选择关系/工单/已解决公开问题/知识文档/媒体均为 `6/2/3/11/2/2/1/1/212/986`。本轮未触发邮件、飞书同步、账号删除、上传或其他业务写入。
+
+### 清理范围与恢复边界
+
+- 删除已退出的 `pnx-training-migrate-1`、10 个旧 PNX 应用标签和 9 个旧镜像 ID；清理后无 dangling 镜像，镜像占用由 7.76 GB 降至 7.05 GB。
+- 当前仅保留 `release-634e01a-20260829` 和回滚候选 `notification-badges-20260829` 两组 PNX 应用镜像。回滚仅切换固定标签并按相同顺序替换应用，不降级 `0014` 数据库。
+- 保留 `pnx-training_postgres_data`、`pnx-training_minio_data`、三个 PNX 网络、发布前备份、其他 `management-system` 项目、4 个来源不明匿名卷及全局 BuildKit 缓存；未执行全局 `docker system prune` 或全局卷/缓存清理。
+- 备份位于 `/tmp`，只能作为本机短期恢复材料；需要跨主机重启或长期保留时，应转移到受控加密持久介质。
+
+### 权限收尾
+
+- Docker 操作临时授予 `/var/run/docker.sock` 命名 ACL `user:pnx:rw-`；非交互撤销因主机要求 sudo 密码未执行，随后由用户在主机终端完成交互式撤销。最终 `getfacl -cp` 只剩基础 owner/group/mask/other 条目，`stat` 为 `root:docker`、`0660`，部署权限已完全收敛。

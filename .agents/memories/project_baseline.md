@@ -125,3 +125,12 @@
 - Backend/Worker 容器仍为 `pnx-training-backend:help-public-20260829`（`sha256:942b9ee5e98d…`），同一镜像已增加 `notification-badges-20260829` 别名；`.env` 使用该统一固定标签。
 - 六服务 healthy，四健康端点与登录页 200，三个目标页面匿名守卫 307，Dashboard API 匿名访问 401；Alembic 保持 `20260828_0014 (head)`，本轮无迁移或业务数据写入。
 - 本次部署使用的 Docker socket `user:pnx:rw-` 临时 ACL 已由用户撤销；复核仅剩基础 ACL，socket 为 `root:docker`、`0660`。
+
+## 2026-08-29 统一发布与 Docker 清理后基线
+
+- 当前固定发布标签为 `release-634e01a-20260829`；Backend/Worker 镜像 ID 为 `sha256:c7ccb9bd1249354d0ad5b059560bd90f34a69f6e22bd45058e6e65f132b8cea9`，Frontend 镜像 ID 为 `sha256:76266bc260527c7131af364c97ed2f801769b8a3ef5e111cb0dff642bf033c46`，应用容器均以 `appuser` 运行。
+- 六服务 healthy 且重启次数为 0；登录页和全部健康端点为 200，受保护页面/API 的匿名 307/401 守卫保持有效。Alembic 与运行库为单一 `20260828_0014 (head)`，无模型漂移或新迁移。
+- 发布前后业务计数保持 `6/2/3/11/2/2/1/1/212/986`，依次对应用户、问卷、问题、选项、回答、选择关系、工单、已解决公开问题、知识文档和媒体；未触发飞书同步、邮件、账号删除或上传。
+- 发布前备份 `/tmp/pnx-training-before-release-634e01a-20260829T042700Z.dump` 已通过 PostgreSQL 17 `pg_restore --list` 校验，大小 4,153,800 字节、0600、SHA-256 `bb4ad5f713aa1d605e6cffac23903471d48a49dd66f1085bfb6660425cd78caa`；长期保留仍需迁出 `/tmp`。
+- Docker 仅保留当前发布与 `notification-badges-20260829` 回滚镜像，以及运行卷、三个 PNX 网络、其他项目、4 个来源不明匿名卷和全局构建缓存；已删除 1 个旧迁移容器、10 个旧应用标签和 9 个旧镜像 ID，无 dangling 镜像，未全局 prune。
+- `/var/run/docker.sock` 的临时命名 ACL `user:pnx:rw-` 已由用户撤销；最终只剩基础 owner/group/mask/other 条目，所有者/权限为 `root:docker`、`0660`，本轮 Docker 权限已完全收敛。

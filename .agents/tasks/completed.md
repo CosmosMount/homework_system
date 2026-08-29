@@ -400,3 +400,13 @@
 - 六服务 healthy，四健康端点 200；公开页面匿名 307、公开 API 匿名 401，运行 OpenAPI 八操作；Alembic 保持 `20260828_0014` 且无模型漂移，本轮无迁移。
 - 运行库已有 1 条已解决问题答疑，未被本轮修改并按派生规则自动进入公开范围；未触发飞书同步、邮件、账号删除或上传。
 - 用户授权后已撤销 Docker socket 临时 `user:pnx:rw-` ACL；`getfacl -cp /var/run/docker.sock` 复核只剩基础 owner/group/mask/other 条目，部署权限收尾完成且未影响已部署服务。
+
+# 2026-08-29：分批提交、Docker 清理与统一发布
+
+- 按问卷管理详情/草稿编辑、学生分类提醒、反馈答疑/已解决问题公开、权威契约和部署记录形成五个本地逻辑提交：`5b642a2`、`84718d4`、`059d87a`、`c1e7259`、`634e01a`。
+- 完整质量门通过：Backend Ruff、169 个 Python 文件格式检查、120 个源文件严格 Mypy、246 项 Pytest；Frontend ESLint、严格 TypeScript、22 个文件/90 项 Vitest、主机与容器 Next.js 生产构建；Alembic 为单一 `20260828_0014 (head)` 且无模型漂移。
+- 发布前 PostgreSQL 17 自定义格式备份 `/tmp/pnx-training-before-release-634e01a-20260829T042700Z.dump` 已校验，大小 4,153,800 字节、0600、SHA-256 `bb4ad5f713aa1d605e6cffac23903471d48a49dd66f1085bfb6660425cd78caa`。
+- 统一固定标签 `release-634e01a-20260829` 已部署：Backend/Worker 镜像 ID 为 `sha256:c7ccb9bd1249354d0ad5b059560bd90f34a69f6e22bd45058e6e65f132b8cea9`，Frontend 为 `sha256:76266bc260527c7131af364c97ed2f801769b8a3ef5e111cb0dff642bf033c46`；六服务 healthy，应用容器为 `appuser`，重启次数 0。
+- 登录页与全部健康端点为 200，受保护页面/API 匿名守卫为 307/401，发布前后用户、问卷、问题、选项、回答、选择关系、工单、已解决公开问题、知识文档和媒体计数保持 `6/2/3/11/2/2/1/1/212/986`；未触发业务写入、邮件或飞书同步。
+- 精确删除 1 个旧迁移容器、10 个旧应用标签和 9 个旧镜像 ID；仅保留当前/回滚应用镜像，并保留运行卷、三个 PNX 网络、备份、其他项目、4 个来源不明匿名卷和全局缓存；无 dangling 镜像，未执行全局 prune。
+- 用户已撤销 Docker socket 临时 `user:pnx:rw-` ACL；最终只剩基础 ACL，socket 为 `root:docker`、`0660`。本轮无新迁移，未 push 或创建外部 Release；唯一正式计划为 `.agents/plans/plan_docker_cleanup_release.md`。

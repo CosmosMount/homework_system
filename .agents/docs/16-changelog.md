@@ -545,3 +545,29 @@
 - Backend/Worker 部署为 `sha256:06eb68d3…`，Frontend 部署为 `sha256:a5d9264a…`，固定标签均为 `questionnaire-edit-20260828`；六服务 healthy，四健康端点 200。
 - 部署前备份 `/tmp/pnx-training-before-questionnaire-edit-20260828T145330Z.dump` 为 PostgreSQL 17 自定义格式，大小 4,145,718 字节、权限 0600、SHA-256 `f089b9425488a48f4fa2d3b34744ab9423d86a00255b17c26c23caef373d08bf`。
 - 问卷数据关系和知识库最近成功快照保持不变，未触发飞书同步。首次 Compose 未显式加载 `.env` 生成的未使用 `dev` 标签已删除；首次固定镜像的源码权限问题已恢复为 0644、重建并完成最终健康验收。
+
+## 2026-08-29：分批提交、统一发布与 Docker 精确清理
+
+### Commits
+
+- `5b642a2 feat(questionnaires): add admin detail and draft editing`
+- `84718d4 feat(notifications): categorize student unread badges`
+- `059d87a feat(help): add private requests and resolved answers`
+- `c1e7259 docs: align questionnaire help and notification contracts`
+- `634e01a docs(ops): record questionnaire help and badge deployments`
+
+### Release and validation
+
+- Backend 通过 Ruff、169 个 Python 文件格式检查、120 个源文件严格 Mypy、246 项 Pytest；Frontend 通过 ESLint、严格 TypeScript、22 个文件/90 项 Vitest以及主机和容器内 Next.js 生产构建。
+- Alembic 源码只有 `20260828_0014` 一个 head，运行库为 `20260828_0014 (head)`，`alembic check` 无模型漂移；候选 Backend 以 `appuser` 导入成功，OpenAPI 共 113 个路径。
+- 发布前备份 `/tmp/pnx-training-before-release-634e01a-20260829T042700Z.dump` 为 PostgreSQL 17 自定义格式，大小 4,153,800 字节、权限 0600、SHA-256 `bb4ad5f713aa1d605e6cffac23903471d48a49dd66f1085bfb6660425cd78caa`，容器内 `pg_restore --list` 校验通过。
+- `.env` 固定 `APP_IMAGE_TAG=release-634e01a-20260829`；Backend/Worker 使用 `sha256:c7ccb9bd1249354d0ad5b059560bd90f34a69f6e22bd45058e6e65f132b8cea9`，Frontend 使用 `sha256:76266bc260527c7131af364c97ed2f801769b8a3ef5e111cb0dff642bf033c46`，应用容器均为 `appuser`。
+- 按 Backend/Worker、Frontend/Nginx 顺序替换后六服务 healthy、重启次数为 0；登录页、四个健康端点和 Nginx 健康端点为 200，受保护页面匿名访问为 307，公开答疑、管理答疑和 Dashboard API 匿名访问为 401，近期日志无严重错误匹配。
+- 发布前后用户/问卷/问题/选项/回答/选择关系/工单/已解决公开问题/知识文档/媒体计数均为 `6/2/3/11/2/2/1/1/212/986`；未触发邮件、飞书同步、账号删除或上传。
+
+### Cleanup and limits
+
+- 删除 1 个旧 `pnx-training-migrate-1` 容器、10 个旧 PNX 应用标签和 9 个旧镜像 ID；无 dangling 镜像，镜像占用由 7.76 GB 降至 7.05 GB。
+- 仅保留当前 `release-634e01a-20260829` 与回滚 `notification-badges-20260829` 两组 PNX 应用镜像；保留 PostgreSQL/MinIO 运行卷、三个 PNX 网络、发布前备份、其他 `management-system` 项目、4 个来源不明匿名卷和全局 BuildKit 缓存，未执行全局 prune。
+- 本轮无新迁移或业务写入；提交仅在本地，未 push、未创建外部 Release。`/tmp` 备份如需跨主机重启长期保留，仍须转移到受控持久介质。
+- Docker 操作期间临时添加的 socket 命名 ACL `user:pnx:rw-` 已由用户通过交互式 sudo 撤销；最终复核只剩基础 owner/group/mask/other 条目，socket 为 `root:docker`、`0660`，权限收尾完成。
