@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 import app.announcements.models  # noqa: F401
 import app.assignments.models  # noqa: F401
 import app.competitions.models  # noqa: F401
+import app.help_requests.models  # noqa: F401
 import app.intentions.models  # noqa: F401
 import app.knowledge.models  # noqa: F401
 import app.submissions.models  # noqa: F401

@@ -13,7 +13,7 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260828_0013"]
+    assert script.get_heads() == ["20260828_0014"]
 
 
 def test_account_activity_migration_has_reversible_static_contract() -> None:
@@ -51,6 +51,22 @@ def test_questionnaire_migration_preserves_existing_surveys_and_is_reversible() 
     assert "ROW_NUMBER() OVER" in source
     assert 'op.drop_table("intention_questions")' in source
     assert 'op.drop_column("intention_surveys", "max_submissions")' in source
+
+
+def test_help_request_migration_is_reversible_and_follows_questionnaires() -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+    migration_path = backend_root / "migrations" / "versions" / "20260828_0014_help_requests.py"
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260828_0014"' in source
+    assert 'down_revision: str | None = "20260828_0013"' in source
+    assert '"help_requests"' in source
+    assert '"request_type_allowed"' in source
+    assert '"resolution_state_consistent"' in source
+    assert '"ix_help_requests_student_list"' in source
+    assert '"ix_help_requests_admin_list"' in source
+    assert 'ondelete="RESTRICT"' in source
+    assert 'op.drop_table("help_requests")' in source
 
 
 def test_alembic_config_accepts_percent_encoded_database_password() -> None:

@@ -11,6 +11,7 @@ from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.health.router import router as health_router
+from app.help_requests.router import router as help_requests_router
 from app.intentions.router import router as intentions_router
 from app.knowledge.router import router as knowledge_router
 from app.notifications.center_router import router as notification_center_router
@@ -43,6 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(announcements_router, prefix="/api/v1")
     application.include_router(assignments_router, prefix="/api/v1")
     application.include_router(competitions_router, prefix="/api/v1")
+    application.include_router(help_requests_router, prefix="/api/v1")
     application.include_router(intentions_router, prefix="/api/v1")
     application.include_router(knowledge_router, prefix="/api/v1")
     application.include_router(submissions_router, prefix="/api/v1")

@@ -115,6 +115,72 @@ def test_questionnaire_openapi_exposes_questions_limits_stats_and_admin_roster()
     assert "questions" in stats["required"]
 
 
+def test_help_request_openapi_exposes_private_public_and_admin_contracts() -> None:
+    schema = create_app(Settings(app_env="test")).openapi()
+    paths = schema["paths"]
+    expected_paths = {
+        "/api/v1/help-requests",
+        "/api/v1/help-requests/public",
+        "/api/v1/help-requests/public/{request_id}",
+        "/api/v1/help-requests/{request_id}",
+        "/api/v1/admin/help-requests",
+        "/api/v1/admin/help-requests/{request_id}",
+        "/api/v1/admin/help-requests/{request_id}/resolution",
+    }
+
+    assert expected_paths <= set(paths)
+    operation_count = sum(
+        method in {"get", "post", "put"}
+        for path, operations in paths.items()
+        if "help-requests" in path
+        for method in operations
+    )
+    assert operation_count == 8
+
+    assert paths["/api/v1/help-requests"]["post"]["responses"]["201"]["content"][
+        "application/json"
+    ]["schema"] == {"$ref": "#/components/schemas/HelpRequestDetail"}
+
+    student_parameters = {
+        parameter["name"] for parameter in paths["/api/v1/help-requests"]["get"]["parameters"]
+    }
+    public_parameters = {
+        parameter["name"]
+        for parameter in paths["/api/v1/help-requests/public"]["get"]["parameters"]
+    }
+    admin_parameters = {
+        parameter["name"] for parameter in paths["/api/v1/admin/help-requests"]["get"]["parameters"]
+    }
+    assert {"type", "status", "page", "page_size"} <= student_parameters
+    assert public_parameters == {"page", "page_size"}
+    assert {"type", "status", "query", "page", "page_size"} <= admin_parameters
+
+    assert paths["/api/v1/help-requests/public/{request_id}"]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"] == {"$ref": "#/components/schemas/PublicHelpRequestDetail"}
+    public_detail = schema["components"]["schemas"]["PublicHelpRequestDetail"]
+    assert {
+        "created_by",
+        "resolved_by",
+        "notification_ids",
+        "content_markdown",
+        "resolution_markdown",
+    }.isdisjoint(public_detail["properties"])
+
+    create_request = schema["components"]["schemas"]["HelpRequestCreateRequest"]
+    assert set(create_request["required"]) == {
+        "request_type",
+        "title",
+        "content_markdown",
+    }
+    resolution_request = schema["components"]["schemas"]["HelpRequestResolutionRequest"]
+    assert set(resolution_request["required"]) == {
+        "resolution_markdown",
+        "revision",
+    }
+    assert resolution_request["properties"]["revision"]["minimum"] == 1
+
+
 def test_stage_three_openapi_contains_dashboard_announcements_notifications_and_uploads() -> None:
     schema = create_app(Settings(app_env="test")).openapi()
     paths = schema["paths"]

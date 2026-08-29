@@ -788,6 +788,64 @@ export type IntentionQr = {
   generated_at: string;
 };
 
+export type HelpRequestType = "system_feedback" | "question";
+export type HelpRequestStatus = "open" | "resolved";
+
+export type HelpRequestSummary = {
+  id: string;
+  request_type: HelpRequestType;
+  status: HelpRequestStatus;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  revision: number;
+};
+
+export type HelpRequestDetail = HelpRequestSummary & {
+  content_html: string;
+  resolution_html: string | null;
+  notification_ids: string[];
+};
+
+export type PublicHelpRequestDetail = HelpRequestSummary & {
+  content_html: string;
+  resolution_html: string;
+};
+
+export type HelpRequestPage = {
+  items: HelpRequestSummary[];
+  page: number;
+  page_size: number;
+  total: number;
+};
+
+export type HelpRequestSubmitter = {
+  id: string;
+  full_name: string;
+  student_number: string;
+  email: string;
+};
+
+export type AdminHelpRequestSummary = HelpRequestSummary & {
+  created_by: HelpRequestSubmitter;
+};
+
+export type AdminHelpRequestDetail = AdminHelpRequestSummary & {
+  content_markdown: string;
+  content_html: string;
+  resolution_markdown: string | null;
+  resolution_html: string | null;
+  resolved_by: string | null;
+};
+
+export type AdminHelpRequestPage = {
+  items: AdminHelpRequestSummary[];
+  page: number;
+  page_size: number;
+  total: number;
+};
+
 export type KnowledgeSnapshot = {
   run_id: string;
   synced_at: string;

@@ -7,6 +7,8 @@ import { isAdminView } from "@/lib/api/types";
 import { safeReturnPath } from "@/lib/safe-return-path";
 
 import type {
+  AdminHelpRequestDetail,
+  AdminHelpRequestPage,
   AdminCompetitionDetail,
   AdminRegistrationList,
   AdminSession,
@@ -38,6 +40,9 @@ import type {
   Direction,
   ExcellentSubmissionDetail,
   ExcellentSubmissionSummary,
+  HelpRequestDetail,
+  HelpRequestPage,
+  PublicHelpRequestDetail,
   OutboxJobPage,
   Session,
   Submission,
@@ -393,6 +398,67 @@ export async function getAdminIntentionRoster(surveyId: string): Promise<Intenti
       "/admin/intentions/" + encodeURIComponent(surveyId) + "/responses",
     ),
   );
+}
+
+export async function getHelpRequests(search = ""): Promise<HelpRequestPage> {
+  const suffix = search ? "?" + search : "";
+  return resolveProtectedResult(
+    await serverApi<HelpRequestPage>("/help-requests" + suffix),
+  );
+}
+
+export async function getHelpRequest(
+  requestId: string,
+): Promise<HelpRequestDetail | null> {
+  const result = await serverApi<HelpRequestDetail>(
+    "/help-requests/" + encodeURIComponent(requestId),
+  );
+  if (result instanceof Response && result.status === 404) {
+    return null;
+  }
+  return resolveProtectedResult(result);
+}
+
+export async function getPublicHelpRequests(
+  search = "",
+): Promise<HelpRequestPage> {
+  const suffix = search ? "?" + search : "";
+  return resolveProtectedResult(
+    await serverApi<HelpRequestPage>("/help-requests/public" + suffix),
+  );
+}
+
+export async function getPublicHelpRequest(
+  requestId: string,
+): Promise<PublicHelpRequestDetail | null> {
+  const result = await serverApi<PublicHelpRequestDetail>(
+    "/help-requests/public/" + encodeURIComponent(requestId),
+  );
+  if (result instanceof Response && result.status === 404) {
+    return null;
+  }
+  return resolveProtectedResult(result);
+}
+
+export async function getAdminHelpRequests(
+  search = "",
+): Promise<AdminHelpRequestPage> {
+  const suffix = search ? "?" + search : "";
+  return resolveProtectedResult(
+    await serverApi<AdminHelpRequestPage>("/admin/help-requests" + suffix),
+  );
+}
+
+export async function getAdminHelpRequest(
+  requestId: string,
+): Promise<AdminHelpRequestDetail | null> {
+  const result = await serverApi<AdminHelpRequestDetail>(
+    "/admin/help-requests/" + encodeURIComponent(requestId),
+  );
+  if (result instanceof Response && result.status === 404) {
+    return null;
+  }
+  return resolveProtectedResult(result);
 }
 
 export async function getKnowledge(): Promise<KnowledgeOverview> {
