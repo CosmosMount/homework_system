@@ -1,9 +1,11 @@
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.announcements.models import Announcement
 from app.notifications.models import OutboxJob, StudentNotification
 
 MAIL_JOB_TYPES = (
@@ -14,6 +16,18 @@ MAIL_JOB_TYPES = (
     "announcement_update_email",
     "assignment_extension_email",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class NotificationUnreadCounts:
+    announcements: int
+    assignments: int
+    competitions: int
+    help_requests: int
+
+    @property
+    def total(self) -> int:
+        return self.announcements + self.assignments + self.competitions + self.help_requests
 
 
 class OutboxRepository:
@@ -151,16 +165,85 @@ class StudentNotificationRepository:
         )
         return items, total
 
-    async def unread_count(self, user_id: UUID) -> int:
-        value = await self._session.scalar(
-            select(func.count())
+    async def unread_counts(self, user_id: UUID) -> NotificationUnreadCounts:
+        announcement_target = StudentNotification.target_type == "announcement"
+        help_request_target = StudentNotification.target_type == "help_request"
+        competition_target = StudentNotification.target_url.startswith("/competitions/")
+        assignment_target = and_(
+            StudentNotification.target_type.in_(("assignment", "submission")),
+            ~competition_target,
+        )
+        active_target = or_(
+            ~announcement_target,
+            Announcement.status == "published",
+        )
+        statement = (
+            select(
+                func.count().filter(announcement_target),
+                func.count().filter(assignment_target),
+                func.count().filter(competition_target),
+                func.count().filter(help_request_target),
+            )
             .select_from(StudentNotification)
+            .outerjoin(
+                Announcement,
+                and_(
+                    announcement_target,
+                    Announcement.id == StudentNotification.target_id,
+                ),
+            )
             .where(
                 StudentNotification.user_id == user_id,
                 StudentNotification.read_at.is_(None),
+                active_target,
             )
         )
-        return int(value or 0)
+        row = (await self._session.execute(statement)).one()
+        return NotificationUnreadCounts(
+            announcements=int(row[0] or 0),
+            assignments=int(row[1] or 0),
+            competitions=int(row[2] or 0),
+            help_requests=int(row[3] or 0),
+        )
+
+    async def unread_count(self, user_id: UUID) -> int:
+        return (await self.unread_counts(user_id)).total
+
+    async def unread_ids_for_target(
+        self,
+        *,
+        user_id: UUID,
+        target_type: str,
+        target_id: UUID,
+    ) -> list[UUID]:
+        return list(
+            (
+                await self._session.scalars(
+                    select(StudentNotification.id).where(
+                        StudentNotification.user_id == user_id,
+                        StudentNotification.target_type == target_type,
+                        StudentNotification.target_id == target_id,
+                        StudentNotification.read_at.is_(None),
+                    )
+                )
+            ).all()
+        )
+
+    async def unread_for_target(
+        self,
+        *,
+        target_type: str,
+        target_id: UUID,
+        for_update: bool = False,
+    ) -> list[StudentNotification]:
+        statement = select(StudentNotification).where(
+            StudentNotification.target_type == target_type,
+            StudentNotification.target_id == target_id,
+            StudentNotification.read_at.is_(None),
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return list((await self._session.scalars(statement)).all())
 
     async def unread_before(
         self,

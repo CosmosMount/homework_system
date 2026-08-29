@@ -29,7 +29,7 @@ export default async function KnowledgePage({
     : null;
 
   return (
-    <AppShell fullBleed unreadCount={dashboard.unread_count} user={user}>
+    <AppShell fullBleed unreadCounts={dashboard.unread_counts} user={user}>
       <KnowledgeReader initialDocument={document} overview={overview} />
     </AppShell>
   );

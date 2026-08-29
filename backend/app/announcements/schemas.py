@@ -161,9 +161,17 @@ class DashboardCompetitionItem(BaseModel):
     status: str
 
 
+class DashboardUnreadCounts(BaseModel):
+    announcements: int
+    assignments: int
+    competitions: int
+    help_requests: int
+
+
 class DashboardResponse(BaseModel):
     current_user: DashboardUserResponse
     unread_count: int
+    unread_counts: DashboardUnreadCounts
     recent_announcements: list[AnnouncementSummaryResponse]
     assignments: list[DashboardAssignmentItem]
     competitions: list[DashboardCompetitionItem]

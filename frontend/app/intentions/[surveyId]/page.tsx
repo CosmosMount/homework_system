@@ -27,7 +27,7 @@ export default async function IntentionDetailPage({
   }
 
   return (
-    <AppShell user={user} unreadCount={dashboard.unread_count}>
+    <AppShell user={user} unreadCounts={dashboard.unread_counts}>
       <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
         STUDENT / QUESTIONNAIRES
       </p>

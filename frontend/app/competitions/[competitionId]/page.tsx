@@ -37,7 +37,7 @@ export default async function CompetitionDetailPage({
   }
 
   return (
-    <AppShell unreadCount={dashboard.unread_count} user={user}>
+    <AppShell unreadCounts={dashboard.unread_counts} user={user}>
       <Link className="text-sm text-[var(--color-info)]" href="/competitions">
         ← 返回赛事列表
       </Link>

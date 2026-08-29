@@ -21,6 +21,7 @@ from app.announcements.schemas import (
     DashboardAssignmentItem,
     DashboardCompetitionItem,
     DashboardResponse,
+    DashboardUnreadCounts,
     DashboardUserResponse,
 )
 from app.assignments.repository import AssignmentRepository
@@ -669,6 +670,13 @@ class AnnouncementService:
         announcement.archived_at = now
         announcement.updated_by = audit.actor.user.id
         announcement.revision += 1
+        unread_notifications = await self._notifications.unread_for_target(
+            target_type="announcement",
+            target_id=announcement.id,
+            for_update=True,
+        )
+        for notification in unread_notifications:
+            notification.read_at = now
         self._add_audit(
             actor_user_id=audit.actor.user.id,
             action="announcement.archive",
@@ -906,6 +914,7 @@ class AnnouncementService:
             )
             for competition in await CompetitionRepository(self._session).dashboard_competitions()
         ]
+        unread_counts = await self._notifications.unread_counts(context.user.id)
         return DashboardResponse(
             current_user=DashboardUserResponse(
                 id=context.user.id,
@@ -914,7 +923,13 @@ class AnnouncementService:
                 cohort_id=context.user.cohort_id,
                 direction_id=context.user.direction_id,
             ),
-            unread_count=await self._notifications.unread_count(context.user.id),
+            unread_count=unread_counts.total,
+            unread_counts=DashboardUnreadCounts(
+                announcements=unread_counts.announcements,
+                assignments=unread_counts.assignments,
+                competitions=unread_counts.competitions,
+                help_requests=unread_counts.help_requests,
+            ),
             recent_announcements=await self._summary_responses(
                 items,
                 user_id=context.user.id,

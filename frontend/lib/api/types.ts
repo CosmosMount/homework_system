@@ -178,6 +178,13 @@ export type AnnouncementAdminPage = {
   total: number;
 };
 
+export type NotificationUnreadCounts = {
+  announcements: number;
+  assignments: number;
+  competitions: number;
+  help_requests: number;
+};
+
 export type Dashboard = {
   current_user: {
     id: string;
@@ -187,6 +194,7 @@ export type Dashboard = {
     direction_id: string | null;
   };
   unread_count: number;
+  unread_counts: NotificationUnreadCounts;
   recent_announcements: AnnouncementSummary[];
   assignments: { id: string; title: string; deadline: string }[];
   competitions: { id: string; name: string; status: string }[];

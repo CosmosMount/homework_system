@@ -1,10 +1,11 @@
 import { ProfileEditor } from "@/components/admin/profile-editor";
 import { AppShell } from "@/components/layout/app-shell";
-import { requireUser } from "@/lib/api/server";
+import { getDashboard, requireUser } from "@/lib/api/server";
 import { isAdminView } from "@/lib/api/types";
 
 export default async function ProfilePage() {
   const user = await requireUser();
+  const dashboard = isAdminView(user) ? null : await getDashboard();
   const items = [
     ["真实姓名", user.full_name],
     ["学号", user.student_number],
@@ -14,7 +15,7 @@ export default async function ProfilePage() {
     ["技术方向", user.direction?.name ?? "未设置"],
   ];
   return (
-    <AppShell user={user}>
+    <AppShell unreadCounts={dashboard?.unread_counts} user={user}>
       <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
         ACCOUNT / PROFILE
       </p>

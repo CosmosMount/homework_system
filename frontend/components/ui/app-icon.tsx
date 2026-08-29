@@ -13,6 +13,7 @@ export type AppIconName =
   | "competition"
   | "dashboard"
   | "eye"
+  | "help"
   | "layers"
   | "log-out"
   | "mail"
@@ -122,6 +123,13 @@ function IconShape({ name }: Pick<AppIconProps, "name">): ReactNode {
         <>
           <path d="M3.5 12s3.1-5 8.5-5 8.5 5 8.5 5-3.1 5-8.5 5-8.5-5-8.5-5Z" />
           <circle cx="12" cy="12" r="2.2" />
+        </>
+      );
+    case "help":
+      return (
+        <>
+          <path d="M5 4.5h14A2.5 2.5 0 0 1 21.5 7v8A2.5 2.5 0 0 1 19 17.5h-7l-4.5 3v-3H5A2.5 2.5 0 0 1 2.5 15V7A2.5 2.5 0 0 1 5 4.5Z" />
+          <path d="M9.2 9.2a2.9 2.9 0 0 1 5.5 1.3c0 2-2.7 2-2.7 3.5M12 16.2h.01" />
         </>
       );
     case "layers":

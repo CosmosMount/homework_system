@@ -35,7 +35,7 @@ export default async function CompetitionTeamPage({
   }
 
   return (
-    <AppShell unreadCount={dashboard.unread_count} user={user}>
+    <AppShell unreadCounts={dashboard.unread_counts} user={user}>
       <Link
         className="text-sm text-[var(--color-info)]"
         href={"/competitions/" + competitionId}

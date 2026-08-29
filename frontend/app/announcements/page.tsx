@@ -52,7 +52,7 @@ export default async function AnnouncementsPage({
   const hasNext = page * announcements.page_size < announcements.total;
 
   return (
-    <AppShell unreadCount={dashboard.unread_count} user={user}>
+    <AppShell unreadCounts={dashboard.unread_counts} user={user}>
       <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
         STUDENT / ANNOUNCEMENTS
       </p>

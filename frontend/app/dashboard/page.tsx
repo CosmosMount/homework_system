@@ -14,7 +14,7 @@ export default async function DashboardPage() {
   }
 
   return (
-    <AppShell unreadCount={dashboard.unread_count} user={user}>
+    <AppShell unreadCounts={dashboard.unread_counts} user={user}>
       <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div>
           <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
@@ -33,12 +33,12 @@ export default async function DashboardPage() {
             >
               查看全部通知
             </Link>
-            {dashboard.unread_count > 0 ? (
+            {dashboard.unread_counts.announcements > 0 ? (
               <Link
                 className="min-h-11 border border-[var(--color-border-strong)] px-5 py-2"
                 href="/announcements?unread=true"
               >
-                {dashboard.unread_count} 条未读
+                {dashboard.unread_counts.announcements} 条未读
               </Link>
             ) : null}
           </div>

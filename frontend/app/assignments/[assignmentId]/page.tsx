@@ -37,7 +37,7 @@ export default async function AssignmentDetailPage({
   }
 
   return (
-    <AppShell unreadCount={dashboard.unread_count} user={user}>
+    <AppShell unreadCounts={dashboard.unread_counts} user={user}>
       <Link className="text-sm text-[var(--color-info)]" href="/assignments">
         ← 返回作业列表
       </Link>

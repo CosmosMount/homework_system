@@ -68,6 +68,12 @@ const dashboard: Dashboard = {
     direction_id: null,
   },
   unread_count: 0,
+  unread_counts: {
+    announcements: 0,
+    assignments: 0,
+    competitions: 0,
+    help_requests: 0,
+  },
   recent_announcements: [],
   assignments: [],
   competitions: [],

@@ -60,7 +60,7 @@ export default async function AssignmentsPage({
   const hasNext = page * assignments.page_size < assignments.total;
 
   return (
-    <AppShell unreadCount={dashboard.unread_count} user={user}>
+    <AppShell unreadCounts={dashboard.unread_counts} user={user}>
       <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
         STUDENT / ASSIGNMENTS
       </p>

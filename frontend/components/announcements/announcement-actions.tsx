@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { ApiError, csrfFetch } from "@/lib/api/client";
@@ -9,55 +8,7 @@ function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "操作失败，请稍后重试。";
 }
 
-export function MarkAnnouncementRead({
-  notificationIds,
-}: Readonly<{ notificationIds: string[] }>) {
-  const router = useRouter();
-  const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
-  async function markRead() {
-    setPending(true);
-    setMessage(null);
-    try {
-      await Promise.all(
-        notificationIds.map((notificationId) =>
-          csrfFetch("/notifications/" + notificationId + "/read", {
-            method: "POST",
-          }),
-        ),
-      );
-      setMessage("相关提醒已标记为已读。");
-      router.refresh();
-    } catch (error) {
-      setMessage(errorMessage(error));
-    } finally {
-      setPending(false);
-    }
-  }
-
-  if (notificationIds.length === 0) {
-    return null;
-  }
-
-  return (
-    <div>
-      <button
-        className="min-h-11 border border-[var(--color-border-strong)] px-4 text-sm disabled:opacity-55"
-        disabled={pending}
-        onClick={markRead}
-        type="button"
-      >
-        {pending ? "正在更新…" : "将相关提醒标为已读"}
-      </button>
-      {message ? (
-        <p aria-live="polite" className="mt-2 text-xs text-[var(--color-text-muted)]">
-          {message}
-        </p>
-      ) : null}
-    </div>
-  );
-}
+export { MarkNotificationsRead as MarkAnnouncementRead } from "@/components/notifications/mark-notifications-read";
 
 export function AttachmentDownloadButton({
   fileId,

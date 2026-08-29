@@ -60,7 +60,15 @@ function announcement(
 describe("announcement UI", () => {
   it("shows the unread badge and student navigation", () => {
     render(
-      <AppShell unreadCount={3} user={student}>
+      <AppShell
+        unreadCounts={{
+          announcements: 2,
+          assignments: 3,
+          competitions: 0,
+          help_requests: 1,
+        }}
+        user={student}
+      >
         <p>内容</p>
       </AppShell>,
     );
@@ -72,7 +80,18 @@ describe("announcement UI", () => {
       "aria-current",
       "page",
     );
-    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "通知，2 条未读" })).toHaveAttribute(
+      "href",
+      "/announcements",
+    );
+    expect(screen.getByRole("link", { name: "作业，3 条未读" })).toHaveAttribute(
+      "href",
+      "/assignments",
+    );
+    expect(screen.getByRole("link", { name: "反馈答疑，1 条未读" })).toHaveAttribute(
+      "href",
+      "/help",
+    );
     expect(screen.queryByRole("link", { name: "用户管理" })).not.toBeInTheDocument();
     expect(screen.getByTestId("app-shell-sidebar")).toHaveAttribute(
       "data-state",

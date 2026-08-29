@@ -10,7 +10,7 @@ import type { AppIconName } from "@/components/ui/app-icon";
 import { APP_SHELL_COLLAPSE_EVENT } from "@/lib/app-shell-events";
 import { ApiError, csrfFetch } from "@/lib/api/client";
 import { isAdminView } from "@/lib/api/types";
-import type { User } from "@/lib/api/types";
+import type { NotificationUnreadCounts, User } from "@/lib/api/types";
 
 type NavigationItem = Readonly<{
   href: string;
@@ -22,14 +22,17 @@ type NavigationItem = Readonly<{
 
 type AppShellNavigationProps = Readonly<{
   user: User;
-  unreadCount: number;
+  unreadCounts: NotificationUnreadCounts;
 }>;
 
 function matchesPath(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
-function itemsForUser(user: User, unreadCount: number): NavigationItem[] {
+function itemsForUser(
+  user: User,
+  unreadCounts: NotificationUnreadCounts,
+): NavigationItem[] {
   const primary: Array<Omit<NavigationItem, "match">> =
     isAdminView(user)
       ? [
@@ -39,6 +42,7 @@ function itemsForUser(user: User, unreadCount: number): NavigationItem[] {
           { href: "/admin/knowledge", label: "知识库同步", icon: "book" },
           { href: "/admin/competitions", label: "校内赛", icon: "competition" },
           { href: "/admin/intentions", label: "问卷管理", icon: "layers" },
+          { href: "/admin/help", label: "反馈答疑", icon: "help" },
           { href: "/admin/users", label: "用户管理", icon: "users" },
           { href: "/admin/categories", label: "方向设置", icon: "categories" },
           { href: "/admin/sessions", label: "登录人员", icon: "monitor" },
@@ -47,11 +51,12 @@ function itemsForUser(user: User, unreadCount: number): NavigationItem[] {
         ]
       : [
           { href: "/dashboard", label: "工作台", icon: "dashboard" },
-          { href: "/announcements", label: "通知", icon: "announcement", badgeCount: unreadCount },
-          { href: "/assignments", label: "作业", icon: "assignment" },
+          { href: "/announcements", label: "通知", icon: "announcement", badgeCount: unreadCounts.announcements },
+          { href: "/assignments", label: "作业", icon: "assignment", badgeCount: unreadCounts.assignments },
           { href: "/knowledge", label: "培训文档", icon: "book" },
-          { href: "/competitions", label: "校内赛", icon: "competition" },
+          { href: "/competitions", label: "校内赛", icon: "competition", badgeCount: unreadCounts.competitions },
           { href: "/intentions", label: "问卷", icon: "layers" },
+          { href: "/help", label: "反馈答疑", icon: "help", badgeCount: unreadCounts.help_requests },
         ];
 
   return primary.map((item) => ({
@@ -264,12 +269,12 @@ function NavigationFooter({
 
 export function AppShellNavigation({
   user,
-  unreadCount,
+  unreadCounts,
 }: AppShellNavigationProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const items = itemsForUser(user, unreadCount);
+  const items = itemsForUser(user, unreadCounts);
   const homeHref = isAdminView(user) ? "/admin/dashboard" : "/dashboard";
 
   useEffect(() => {

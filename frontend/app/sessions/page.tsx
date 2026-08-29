@@ -1,11 +1,16 @@
 import { SessionList } from "@/components/auth/session-list";
 import { AppShell } from "@/components/layout/app-shell";
-import { getSessions, requireUser } from "@/lib/api/server";
+import { getDashboard, getSessions, requireUser } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 
 export default async function SessionsPage() {
-  const [user, sessions] = await Promise.all([requireUser(), getSessions()]);
+  const user = await requireUser();
+  const [sessions, dashboard] = await Promise.all([
+    getSessions(),
+    isAdminView(user) ? Promise.resolve(null) : getDashboard(),
+  ]);
   return (
-    <AppShell user={user}>
+    <AppShell unreadCounts={dashboard?.unread_counts} user={user}>
       <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
         ACCOUNT / SESSIONS
       </p>

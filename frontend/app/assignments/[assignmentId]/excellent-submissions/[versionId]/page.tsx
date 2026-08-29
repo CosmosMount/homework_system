@@ -33,7 +33,7 @@ export default async function ExcellentSubmissionPage({
   }
 
   return (
-    <AppShell unreadCount={dashboard.unread_count} user={user}>
+    <AppShell unreadCounts={dashboard.unread_counts} user={user}>
       <Link
         className="text-sm text-[var(--color-info)]"
         href={"/assignments/" + assignmentId}

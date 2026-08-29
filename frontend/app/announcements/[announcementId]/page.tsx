@@ -32,7 +32,7 @@ export default async function AnnouncementDetailPage({
   }
 
   return (
-    <AppShell unreadCount={dashboard.unread_count} user={user}>
+    <AppShell unreadCounts={dashboard.unread_counts} user={user}>
       <Link className="text-sm text-[var(--color-info)]" href="/announcements">
         ← 返回通知中心
       </Link>

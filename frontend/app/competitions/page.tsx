@@ -43,7 +43,7 @@ export default async function CompetitionsPage({ searchParams }: CompetitionsPag
     : [null, null];
 
   return (
-    <AppShell unreadCount={dashboard.unread_count} user={user}>
+    <AppShell unreadCounts={dashboard.unread_counts} user={user}>
       <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">
         STUDENT / CAMPUS COMPETITION
       </p>

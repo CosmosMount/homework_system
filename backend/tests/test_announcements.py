@@ -16,7 +16,10 @@ from app.announcements.service import AnnouncementAuditContext, AnnouncementServ
 from app.auth.service import AuthenticatedContext
 from app.notifications.mailer import render_mail
 from app.notifications.models import OutboxJob
-from app.notifications.repository import StudentNotificationRepository
+from app.notifications.repository import (
+    NotificationUnreadCounts,
+    StudentNotificationRepository,
+)
 from app.notifications.service import OutboxProcessor
 from app.uploads.object_store import ObjectInspection
 from app.uploads.service import FileValidationError, detect_media_type, normalize_file_name
@@ -163,7 +166,16 @@ async def test_dashboard_includes_published_assignment_for_admin_student_view(
     )
     service._notifications = cast(
         StudentNotificationRepository,
-        SimpleNamespace(unread_count=AsyncMock(return_value=0)),
+        SimpleNamespace(
+            unread_counts=AsyncMock(
+                return_value=NotificationUnreadCounts(
+                    announcements=1,
+                    assignments=2,
+                    competitions=3,
+                    help_requests=4,
+                )
+            )
+        ),
     )
     context = cast(
         AuthenticatedContext,
@@ -175,6 +187,9 @@ async def test_dashboard_includes_published_assignment_for_admin_student_view(
     assert [(item.id, item.title) for item in result.assignments] == [
         (assignment_id, "电控第一次作业"),
     ]
+    assert result.unread_count == 10
+    assert result.unread_counts.announcements == 1
+    assert result.unread_counts.help_requests == 4
     assignment_repository.list_for_student.assert_awaited_once_with(
         user_id=user.id,
         preview_user=user,
@@ -185,6 +200,27 @@ async def test_dashboard_includes_published_assignment_for_admin_student_view(
         now=now,
         limit=5,
     )
+
+
+@pytest.mark.asyncio
+async def test_unread_counts_are_grouped_and_exclude_inactive_announcements() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    query_result = Mock()
+    query_result.one.return_value = (2, 3, 4, 5)
+    session.execute.return_value = query_result
+    repository = StudentNotificationRepository(cast(AsyncSession, session))
+
+    counts = await repository.unread_counts(uuid4())
+
+    assert counts.total == 14
+    assert counts.announcements == 2
+    assert counts.assignments == 3
+    assert counts.competitions == 4
+    assert counts.help_requests == 5
+    statement = str(session.execute.await_args.args[0])
+    assert "LEFT OUTER JOIN announcements" in statement
+    assert "announcements.status" in statement
+    assert "student_notifications.read_at IS NULL" in statement
 
 
 @pytest.mark.parametrize(
@@ -355,6 +391,12 @@ async def test_archive_refreshes_server_updated_fields_after_commit() -> None:
     repository.published_recipient_count = AsyncMock(return_value=1)
     service._announcements = repository
     service._audit = Mock()
+    unread_notifications = [SimpleNamespace(read_at=None), SimpleNamespace(read_at=None)]
+    unread_for_target = AsyncMock(return_value=unread_notifications)
+    service._notifications = cast(
+        StudentNotificationRepository,
+        SimpleNamespace(unread_for_target=unread_for_target),
+    )
 
     result = await service.archive(
         announcement.id,
@@ -372,3 +414,9 @@ async def test_archive_refreshes_server_updated_fields_after_commit() -> None:
     session.refresh.assert_awaited_once_with(announcement)
     assert result.status == "archived"
     assert result.actual_recipient_count == 1
+    unread_for_target.assert_awaited_once_with(
+        target_type="announcement",
+        target_id=announcement.id,
+        for_update=True,
+    )
+    assert all(item.read_at == announcement.archived_at for item in unread_notifications)
