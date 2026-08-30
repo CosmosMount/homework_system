@@ -150,7 +150,9 @@ async def test_excellent_submission_attachment_download_requires_marker_and_audi
             )
         )
     )
+    assignment = SimpleNamespace(status="published")
     assignments = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=assignment),
         get_excellent_marker=AsyncMock(return_value=object()),
         is_audience_user=AsyncMock(return_value=True),
     )
@@ -165,6 +167,12 @@ async def test_excellent_submission_attachment_download_requires_marker_and_audi
     response = await service.download_url(stored_file.id, context=context)
     assert response.url == "https://storage.invalid/presigned"
 
+    assignment.status = "archived"
+    with pytest.raises(ApplicationError) as removed:
+        await service.download_url(stored_file.id, context=context)
+    assert removed.value.status_code == 404
+
+    assignment.status = "published"
     assignments.get_excellent_marker = AsyncMock(return_value=None)
     with pytest.raises(ApplicationError) as hidden:
         await service.download_url(stored_file.id, context=context)

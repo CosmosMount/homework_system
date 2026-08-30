@@ -899,6 +899,9 @@ class UploadService:
             if not context_is_admin(context):
                 if submission.assignment_id is not None:
                     if submission.owner_user_id != context.user.id:
+                        assignment = await self._assignments.get_by_id(submission.assignment_id)
+                        if assignment is None or assignment.status == "archived":
+                            raise self._not_found()
                         marker = await self._assignments.get_excellent_marker(
                             submission.assignment_id,
                             version_id,
