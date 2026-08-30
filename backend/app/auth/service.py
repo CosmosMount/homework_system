@@ -80,6 +80,29 @@ def context_is_admin(context: AuthenticatedContext) -> bool:
     return bool(getattr(context, "is_admin", context.user.role == "admin"))
 
 
+def _constraint_name_from_integrity_error(exc: IntegrityError) -> str:
+    pending: list[BaseException] = []
+    if isinstance(exc.orig, BaseException):
+        pending.append(exc.orig)
+
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        current_id = id(current)
+        if current_id in visited:
+            continue
+        visited.add(current_id)
+
+        constraint_name = getattr(current, "constraint_name", None)
+        if isinstance(constraint_name, str) and constraint_name:
+            return constraint_name
+
+        for nested in (current.__cause__, current.__context__):
+            if isinstance(nested, BaseException):
+                pending.append(nested)
+    return ""
+
+
 class AuthenticationService:
     def __init__(
         self,
@@ -287,18 +310,19 @@ class AuthenticationService:
     async def lock_one_time_tokens_for_user(self, user_id: UUID) -> None:
         await self._auth.lock_one_time_tokens_for_user(user_id)
 
+    def verify_current_password(self, user: User, password: str) -> bool:
+        verification = self._passwords.verify(user.password_hash, password)
+        if not verification.valid:
+            return False
+        if verification.needs_rehash:
+            user.password_hash = self._passwords.hash(password)
+        return True
+
     def enqueue_security_alert(self, *, user: User, event: str) -> None:
         self._enqueue_security_alert(user=user, event=event)
 
     async def register(self, payload: RegisterRequest, *, ip_prefix: str) -> RegisterResponse:
         normalized_email = normalize_email(payload.email)
-        window = timedelta(hours=1)
-        await self._check_rate_limit(
-            event_type="registration",
-            window=window,
-            ip_prefix=ip_prefix,
-            ip_limit=5,
-        )
         self._auth.add_security_event(
             self._security_event(event_type="registration", ip_prefix=ip_prefix)
         )
@@ -352,7 +376,7 @@ class AuthenticationService:
             await self._session.commit()
         except IntegrityError as exc:
             await self._session.rollback()
-            constraint_name = getattr(getattr(exc, "orig", None), "constraint_name", "")
+            constraint_name = _constraint_name_from_integrity_error(exc)
             if constraint_name == "uq_users_email_normalized":
                 reason = "EMAIL_ALREADY_REGISTERED"
                 field = "email"
@@ -371,15 +395,6 @@ class AuthenticationService:
 
     async def resend_verification(self, email: str, *, ip_prefix: str) -> None:
         normalized_email = normalize_email(email)
-        window = timedelta(hours=1)
-        await self._check_rate_limit(
-            event_type="verification_resend",
-            window=window,
-            ip_prefix=ip_prefix,
-            email_normalized=normalized_email,
-            email_limit=3,
-            ip_limit=20,
-        )
         self._auth.add_security_event(
             self._security_event(
                 event_type="verification_resend",
@@ -491,15 +506,6 @@ class AuthenticationService:
             identifier,
             domain=self._settings.campus_email_domain,
         )
-        window = timedelta(minutes=15)
-        email_count, ip_count = await self._check_rate_limit(
-            event_type="login_failed",
-            window=window,
-            ip_prefix=ip_prefix,
-            email_normalized=normalized_email,
-            email_limit=5,
-            ip_limit=30,
-        )
         user = await self._users.get_by_email(normalized_email)
         if user is None:
             self._passwords.consume_dummy_verification(password)
@@ -511,6 +517,15 @@ class AuthenticationService:
             needs_rehash = verification.needs_rehash
 
         if user is None or not verification_valid or user.status != "active":
+            window = timedelta(minutes=10)
+            email_count, ip_count = await self._check_rate_limit(
+                event_type="login_failed",
+                window=window,
+                ip_prefix=ip_prefix,
+                email_normalized=normalized_email,
+                email_limit=5,
+                ip_limit=30,
+            )
             self._auth.add_security_event(
                 self._security_event(
                     event_type="login_failed",
@@ -802,15 +817,6 @@ class AuthenticationService:
 
     async def request_password_reset(self, email: str, *, ip_prefix: str) -> None:
         normalized_email = normalize_email(email)
-        window = timedelta(hours=1)
-        await self._check_rate_limit(
-            event_type="password_reset_request",
-            window=window,
-            ip_prefix=ip_prefix,
-            email_normalized=normalized_email,
-            email_limit=3,
-            ip_limit=20,
-        )
         self._auth.add_security_event(
             self._security_event(
                 event_type="password_reset_request",

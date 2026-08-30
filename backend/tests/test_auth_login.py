@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.models import AuditLog
@@ -12,12 +13,26 @@ from app.audit.repository import AuditRepository
 from app.auth.dependencies import require_admin
 from app.auth.models import Session
 from app.auth.repository import AuthRepository
+from app.auth.schemas import RegisterRequest
 from app.auth.service import AuthenticatedContext, AuthenticationService
 from app.core.config import Settings
-from app.core.errors import ApplicationError
+from app.core.errors import ApplicationError, ErrorDetail
 from app.core.security import PasswordManager, PasswordVerification
 from app.users.models import User
 from app.users.repository import UserRepository
+
+
+class _UniqueViolationError(Exception):
+    def __init__(self, constraint_name: str) -> None:
+        super().__init__("duplicate key")
+        self.constraint_name = constraint_name
+
+
+def nested_unique_violation(constraint_name: str) -> IntegrityError:
+    driver_error = _UniqueViolationError(constraint_name)
+    adapter_error = Exception("asyncpg adapter error")
+    adapter_error.__cause__ = driver_error
+    return IntegrityError("INSERT INTO users", {}, adapter_error)
 
 
 def make_user(*, status: str) -> User:
@@ -150,6 +165,145 @@ def make_session(user: User, *, now: datetime, last_seen_at: datetime) -> Sessio
 
 
 @pytest.mark.asyncio
+async def test_registration_has_no_persistent_application_rate_limit() -> None:
+    service, _, count_security_events, _, commit = build_service(make_user(status="active"))
+    count_security_events.return_value = 30
+
+    with pytest.raises(ApplicationError) as caught:
+        await service.register(
+            RegisterRequest(
+                full_name="校外测试用户",
+                student_number="registration-window-test",
+                email="student@example.com",
+                password="Correct-Horse-Battery-Staple-2026!",
+            ),
+            ip_prefix="198.51.100.0/24",
+        )
+
+    assert caught.value.status_code == 400
+    assert caught.value.details[0].reason == "INVALID_CAMPUS_EMAIL"
+    count_security_events.assert_not_awaited()
+    cast(Mock, service._auth.add_security_event).assert_called_once()
+    commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("constraint_name", "field", "reason"),
+    [
+        ("uq_users_email_normalized", "email", "EMAIL_ALREADY_REGISTERED"),
+        (
+            "uq_users_student_number",
+            "student_number",
+            "STUDENT_NUMBER_ALREADY_REGISTERED",
+        ),
+    ],
+)
+async def test_registration_maps_nested_asyncpg_unique_violation(
+    constraint_name: str,
+    field: str,
+    reason: str,
+) -> None:
+    service, _, _, _, commit = build_service(make_user(status="active"))
+    commit.side_effect = [None, nested_unique_violation(constraint_name)]
+    service._users = cast(UserRepository, SimpleNamespace(add=Mock()))
+    service._auth = cast(
+        AuthRepository,
+        SimpleNamespace(
+            add_security_event=Mock(),
+            invalidate_tokens=AsyncMock(),
+            add_one_time_token=Mock(),
+        ),
+    )
+    service._outbox = cast(Any, SimpleNamespace(add=Mock()))
+
+    with pytest.raises(ApplicationError) as caught:
+        await service.register(
+            RegisterRequest(
+                full_name="注册测试用户",
+                student_number="registration-unique-test",
+                email="registration.test@connect.hkust-gz.edu.cn",
+                password="Correct-Horse-Battery-Staple-2026!",
+            ),
+            ip_prefix="198.51.100.0/24",
+        )
+
+    assert caught.value.status_code == 400
+    assert caught.value.code == "VALIDATION_ERROR"
+    assert caught.value.details == [ErrorDetail(field=field, reason=reason)]
+    cast(AsyncMock, service._session.rollback).assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_registration_does_not_misclassify_unknown_integrity_constraint() -> None:
+    service, _, _, _, commit = build_service(make_user(status="active"))
+    integrity_error = nested_unique_violation("uq_unrelated_constraint")
+    commit.side_effect = [None, integrity_error]
+    service._users = cast(UserRepository, SimpleNamespace(add=Mock()))
+    service._auth = cast(
+        AuthRepository,
+        SimpleNamespace(
+            add_security_event=Mock(),
+            invalidate_tokens=AsyncMock(),
+            add_one_time_token=Mock(),
+        ),
+    )
+    service._outbox = cast(Any, SimpleNamespace(add=Mock()))
+
+    with pytest.raises(IntegrityError) as caught:
+        await service.register(
+            RegisterRequest(
+                full_name="注册测试用户",
+                student_number="registration-unknown-constraint",
+                email="unknown.constraint@connect.hkust-gz.edu.cn",
+                password="Correct-Horse-Battery-Staple-2026!",
+            ),
+            ip_prefix="198.51.100.0/24",
+        )
+
+    assert caught.value is integrity_error
+    cast(AsyncMock, service._session.rollback).assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_verification_resend_has_no_persistent_application_rate_limit() -> None:
+    service, get_by_email, count_security_events, _, commit = build_service(
+        make_user(status="active")
+    )
+    get_by_email.return_value = None
+    count_security_events.return_value = 30
+
+    await service.resend_verification(
+        "student@connect.hkust-gz.edu.cn",
+        ip_prefix="198.51.100.0/24",
+    )
+
+    count_security_events.assert_not_awaited()
+    cast(Mock, service._auth.add_security_event).assert_called_once()
+    get_by_email.assert_awaited_once_with("student@connect.hkust-gz.edu.cn")
+    assert commit.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_password_reset_request_has_no_persistent_application_rate_limit() -> None:
+    service, get_by_email, count_security_events, _, commit = build_service(
+        make_user(status="active")
+    )
+    get_by_email.return_value = None
+    count_security_events.return_value = 30
+
+    await service.request_password_reset(
+        "student@connect.hkust-gz.edu.cn",
+        ip_prefix="198.51.100.0/24",
+    )
+
+    count_security_events.assert_not_awaited()
+    cast(Mock, service._auth.add_security_event).assert_called_once()
+    get_by_email.assert_awaited_once_with("student@connect.hkust-gz.edu.cn")
+    assert commit.await_count == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "identifier",
     ["student", " Student@CONNECT.HKUST-GZ.EDU.CN "],
@@ -170,10 +324,7 @@ async def test_active_connect_user_can_login_with_username_or_email(
     assert result.user.id == user.id
     assert result.user.role == "student"
     get_by_email.assert_awaited_once_with("student@connect.hkust-gz.edu.cn")
-    assert (
-        count_security_events.await_args_list[0].kwargs["email_normalized"]
-        == "student@connect.hkust-gz.edu.cn"
-    )
+    count_security_events.assert_not_awaited()
     add_session.assert_called_once()
     cast(AsyncMock, service._users.has_other_accounts).assert_awaited_once_with(user.id)
     cast(AsyncMock, service._auth.lock_sessions_for_user).assert_awaited_once_with(user.id)
@@ -183,6 +334,122 @@ async def test_active_connect_user_can_login_with_username_or_email(
         at=datetime(2026, 8, 25, 8, 0, tzinfo=UTC),
     )
     cast(Mock, service._audit.add).assert_not_called()
+    commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_correct_real_argon2id_password_is_not_blocked_by_prior_failures() -> None:
+    password = "Correct-Horse-Battery-Staple-2026!"
+    password_manager = PasswordManager()
+    password_hash = password_manager.hash(password)
+    user = make_user(status="active")
+    user.password_hash = password_hash
+    service, get_by_email, count_security_events, add_session, commit = build_service(user)
+    service._passwords = password_manager
+    count_security_events.return_value = 30
+
+    result = await service.login(
+        identifier="student",
+        password=password,
+        ip_prefix="192.0.2.0/24",
+        user_agent_summary="Test / Test",
+    )
+
+    assert result.user.id == user.id
+    assert user.password_hash == password_hash
+    get_by_email.assert_awaited_once_with("student@connect.hkust-gz.edu.cn")
+    count_security_events.assert_not_awaited()
+    add_session.assert_called_once()
+    commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_invalid_password_is_verified_before_existing_failure_limit_is_applied() -> None:
+    user = make_user(status="active")
+    service, get_by_email, count_security_events, add_session, commit = build_service(user)
+    password_verify = cast(Mock, service._passwords.verify)
+    password_verify.return_value = PasswordVerification(valid=False)
+    count_security_events.side_effect = [5, 0]
+
+    with pytest.raises(ApplicationError) as caught:
+        await service.login(
+            identifier=" Student@CONNECT.HKUST-GZ.EDU.CN ",
+            password="wrong-password",
+            ip_prefix="198.51.100.0/24",
+            user_agent_summary="Test / Test",
+        )
+
+    assert caught.value.status_code == 429
+    assert caught.value.code == "RATE_LIMITED"
+    assert caught.value.headers == {"Retry-After": "600"}
+    get_by_email.assert_awaited_once_with("student@connect.hkust-gz.edu.cn")
+    password_verify.assert_called_once_with(user.password_hash, "wrong-password")
+    assert (
+        count_security_events.await_args_list[0].kwargs["email_normalized"]
+        == "student@connect.hkust-gz.edu.cn"
+    )
+    add_session.assert_not_called()
+    cast(Mock, service._auth.add_security_event).assert_not_called()
+    commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unknown_account_uses_dummy_password_check_before_ip_limit() -> None:
+    service, get_by_email, count_security_events, add_session, commit = build_service(
+        make_user(status="active")
+    )
+    get_by_email.return_value = None
+    dummy_verification = cast(Mock, service._passwords.consume_dummy_verification)
+    count_security_events.side_effect = [0, 30]
+
+    with pytest.raises(ApplicationError) as caught:
+        await service.login(
+            identifier="unknown",
+            password="wrong-password",
+            ip_prefix="198.51.100.0/24",
+            user_agent_summary="Test / Test",
+        )
+
+    assert caught.value.status_code == 429
+    assert caught.value.code == "RATE_LIMITED"
+    assert caught.value.headers == {"Retry-After": "600"}
+    get_by_email.assert_awaited_once_with("unknown@connect.hkust-gz.edu.cn")
+    dummy_verification.assert_called_once_with("wrong-password")
+    assert (
+        count_security_events.await_args_list[0].kwargs["email_normalized"]
+        == "unknown@connect.hkust-gz.edu.cn"
+    )
+    add_session.assert_not_called()
+    cast(Mock, service._auth.add_security_event).assert_not_called()
+    commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "identifier",
+    ["student", " Student@CONNECT.HKUST-GZ.EDU.CN "],
+)
+async def test_failed_connect_identifiers_share_normalized_email_limit(
+    identifier: str,
+) -> None:
+    service, _, count_security_events, add_session, commit = build_service(
+        make_user(status="active")
+    )
+    cast(Mock, service._passwords.verify).return_value = PasswordVerification(valid=False)
+
+    with pytest.raises(ApplicationError):
+        await service.login(
+            identifier=identifier,
+            password="wrong-password",
+            ip_prefix="198.51.100.0/24",
+            user_agent_summary="Test / Test",
+        )
+
+    assert (
+        count_security_events.await_args_list[0].kwargs["email_normalized"]
+        == "student@connect.hkust-gz.edu.cn"
+    )
+    add_session.assert_not_called()
     commit.assert_awaited_once()
 
 

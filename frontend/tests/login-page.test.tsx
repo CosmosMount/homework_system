@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoginPage from "@/app/login/page";
 import RegisterPage from "@/app/register/page";
 import { ResetPasswordForm } from "@/components/auth/auth-forms";
+import { ApiError } from "@/lib/api/client";
 import { safeReturnPath } from "@/lib/safe-return-path";
 
 const { apiFetchMock, clearCsrfTokenMock, refreshMock, replaceMock } =
@@ -167,6 +168,43 @@ describe("login page", () => {
         '"email":"new.student@connect.hkust-gz.edu.cn"',
       ),
     });
+  });
+
+  it("shows a duplicate registration email as a field error", async () => {
+    apiFetchMock.mockRejectedValue(
+      new ApiError(new Response(null, { status: 400 }), {
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "请求参数不符合要求。",
+          request_id: "registration-request-id",
+          details: [
+            { field: "email", reason: "EMAIL_ALREADY_REGISTERED" },
+          ],
+        },
+      }),
+    );
+    render(<RegisterPage />);
+
+    fireEvent.change(screen.getByLabelText("真实姓名"), {
+      target: { value: "测试学生" },
+    });
+    fireEvent.change(screen.getByLabelText("学号"), {
+      target: { value: "20260001" },
+    });
+    fireEvent.change(screen.getByLabelText("校园邮箱"), {
+      target: { value: "existing@connect.hkust-gz.edu.cn" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "safe-test-password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建账号" }));
+
+    expect(await screen.findByText("该邮箱已注册。")).toBeInTheDocument();
+    expect(screen.getByLabelText("校园邮箱")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(screen.queryByText("服务暂时无法处理请求")).not.toBeInTheDocument();
   });
 
   it("uses an eight-character minimum for registration and password reset", () => {
