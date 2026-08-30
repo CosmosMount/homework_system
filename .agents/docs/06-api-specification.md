@@ -71,7 +71,7 @@
 }
 ```
 
-错误：`INVALID_CAMPUS_EMAIL`、`EMAIL_ALREADY_REGISTERED`、`STUDENT_NUMBER_ALREADY_REGISTERED`、`WEAK_PASSWORD`、`RATE_LIMITED`。
+错误：`INVALID_CAMPUS_EMAIL`、`EMAIL_ALREADY_REGISTERED`、`STUDENT_NUMBER_ALREADY_REGISTERED`、`WEAK_PASSWORD`。邮箱或学号重复统一返回 `400 VALIDATION_ERROR`，并在 `details` 中分别使用 `email` 或 `student_number` 字段；应用预检和数据库唯一约束最终拒绝必须保持相同对外契约，不得退化为 500。
 
 ### 邮箱验证
 
@@ -80,7 +80,7 @@
 | `POST /auth/email-verifications/resend` | `{email}` | 统一返回 202 | AUTH-002、AUTH-009 |
 | `POST /auth/email-verifications/confirm` | `{token}` | `{status: active}`；空系统首个验证账号成为管理员，其余为学生并原子补入当时仍开放且匹配的作业受众快照 | AUTH-002～AUTH-003、AUTH-008 |
 
-令牌无效返回 `400 INVALID_TOKEN`，过期或已使用返回 410。重发接口不暴露邮箱是否注册。
+令牌无效返回 `400 INVALID_TOKEN`，过期或已使用返回 410。重发接口不暴露邮箱是否注册；注册和重发验证均不使用应用层持久失败窗口，但仍可能受 Nginx 瞬时入口限流。
 
 ### Session
 
@@ -88,6 +88,7 @@
 | --- | --- | --- |
 | `POST /auth/login` | `{identifier,password}` → `{user}` 并设置 Session Cookie；暂时兼容旧 `{email,password}` 请求 | AUTH-004、AUTH-006、AUTH-009 |
 | `POST /auth/logout` | 撤销当前 Session，返回 204 | AUTH-006 |
+| `DELETE /auth/account` | `{current_password,confirmation_email}`；重新认证并永久删除本人账号/个人数据，成功清 Session 与 CSRF Cookie，返回 204 | AUTH-012 |
 | `GET /auth/me` | 当前用户、可空技术方向、真实角色、状态和当前 Session 的 `student_view` 标记；届次字段仅为历史兼容 | AUTH-004、AUTH-007 |
 | `GET /auth/csrf` | `{csrf_token}` 并刷新 CSRF Cookie | NFR-002 |
 | `GET /auth/sessions` | 当前用户的 Session 列表 | AUTH-006 |
@@ -97,10 +98,12 @@
 | `DELETE /auth/student-view` | 清除当前 Session 的学生视图标记，返回 `user` 且 `student_view: false` | AUTH-011 |
 
 `identifier` 可以是 Connect 邮箱前缀用户名或完整邮箱；用户名先补全为当前 Connect 域名，完整邮箱按原域名规范化，因此旧域名存量账号仍须输入完整邮箱。用户名和对应 Connect 完整邮箱映射到同一账号及同一邮箱限流维度。兼容字段 `email` 只用于旧客户端请求解析，新 OpenAPI 契约和前端统一使用 `identifier`。
+`DELETE /auth/account` 只接受当前有效账号本人；`confirmation_email` 去除首尾空白并规范化后必须与当前账号完全一致，错误密码返回 `401 INVALID_CREDENTIALS`，邮箱不一致返回带 `confirmation_email/ACCOUNT_EMAIL_MISMATCH` 的 `400 VALIDATION_ERROR`，最后一名激活管理员返回 `409 STATE_CONFLICT`。成功前不会清 Cookie；数据库事务失败时账号保持，成功后不返回删除计数、邮箱或对象信息。备份确认不由普通用户填写，但页面必须披露不可撤销和备份保留期边界。
+
 
 `GET /auth/me` 和登录响应中的 `user` 始终返回真实 `role`；管理员学生视图通过 `student_view: true` 表示当前 Session 的有效角色为学生。学生视图请求管理员接口（包括 `/admin/*` 与管理员会话列表）返回 403；学生通知、作业、赛事、个人提交和上传接口按有效角色执行，关闭后恢复管理员权限。
 
-登录对账号不存在、密码错误、`pending_email` 和 `disabled` 统一返回 401 `INVALID_CREDENTIALS`，响应状态、文案和主体不暴露账号是否存在或当前状态。成功登录唯一的已验证 active student 时，服务端在事务锁内把其持久化为 admin、撤销旧 Session、写审计，再返回管理员用户并创建新的 4 小时空闲 Session；多账号用户不触发该修正。系统不存在注册审批状态；用户在注册成功页或统一重发验证接口继续邮箱验证流程。
+登录先查询规范化账号并执行真实或 dummy Argon2id 校验。账号不存在、密码错误、`pending_email` 和 `disabled` 统一返回 401 `INVALID_CREDENTIALS`，10 分钟内达到规范化邮箱 5 次或来源 IP 30 次阈值时统一返回 429 `RATE_LIMITED` 和 `Retry-After: 600`；响应状态、文案和主体不暴露账号是否存在或当前状态。已验证 `active` 账号的正确密码不受既有失败事件持久冷却阻断。成功登录唯一的已验证 active student 时，服务端在事务锁内把其持久化为 admin、撤销旧 Session、写审计，再返回管理员用户并创建新的 4 小时空闲 Session；多账号用户不触发该修正。系统不存在注册审批状态；用户在注册成功页或统一重发验证接口继续邮箱验证流程。
 
 ### 密码重置
 
@@ -108,6 +111,8 @@
 | --- | --- | --- | --- |
 | `POST /auth/password-resets/request` | `{email}` | 统一返回 202 | AUTH-005、AUTH-009 |
 | `POST /auth/password-resets/confirm` | `{token,new_password}`，`new_password` 使用与注册相同的 8～128 字符策略 | 返回 204，撤销其他 Session | AUTH-005 |
+
+密码重置申请不使用应用层持久失败窗口，始终保持统一 202；仍记录不含敏感字段的安全事件，并可能受 Nginx 瞬时入口限流。
 
 ## 工作台与站内通知
 
@@ -132,7 +137,7 @@
 | 方法与路径 | 查询/结果 | 需求 |
 | --- | --- | --- |
 | `GET /announcements` | `query,unread,page,page_size`；只返回当前受众、已发布且未归档项 | NEWS-003～NEWS-005、NEWS-008 |
-| `GET /announcements/{announcement_id}` | 返回清洗后的正文、附件和更新时间 | NEWS-001、NEWS-007～NEWS-008 |
+| `GET /announcements/{announcement_id}` | 只返回当前受众的已发布通知正文、附件和更新时间；归档通知与不可见资源统一 404 | NEWS-001、NEWS-007～NEWS-009 |
 
 ### 管理接口
 
@@ -142,6 +147,7 @@
 | `POST /admin/announcements` | 创建草稿 | NEWS-001～NEWS-003 |
 | `GET /admin/announcements/{id}` | 读取草稿和预计受众数 | NEWS-002 |
 | `PATCH /admin/announcements/{id}` | 按 `revision` 修改内容、受众、计划和附件 | NEWS-001～NEWS-004、NEWS-007 |
+| `DELETE /admin/announcements/{id}` | 未发布通知取消活动定时任务并物理删除；已发布通知归档删除；返回 204 | NEWS-003、NEWS-009、NFR-006 |
 | `POST /admin/announcements/{id}/publish` | 立即发布或确认定时计划 | NEWS-003、NEWS-005～NEWS-006 |
 | `POST /admin/announcements/{id}/archive` | 归档 | NEWS-003 |
 | `POST /admin/announcements/{id}/send-update` | 为当前受众创建一次更新提醒 Outbox | NEWS-007、MAIL-002～MAIL-005 |
@@ -171,14 +177,16 @@
 
 创建时不传 `revision`。产品端受众必须满足：`all_students=true` 时其他集合为空；否则至少选择一个技术方向。`match=intersection` 表示同时满足所选方向。请求中的 `cohort_ids` 仅为历史客户端/资源兼容字段，新建页面始终发送空数组。
 
+删除接口幂等处理已归档通知。物理删除只适用于 `draft/scheduled`，并解除 `announcement_files` 绑定；文件对象不在请求中同步删除，继续由孤立对象 Worker 处理。`published` 删除复用归档状态、把未读公告提醒标为已读并保留提醒/邮件历史，学生随后读取统一 404。
+
 ## 作业接口
 
 ### 学生读取与提交
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /assignments` | `status,query,page,page_size`；普通学生返回正式受众快照（发布时成员及激活时开放作业补录）中的作业与最新提交摘要；管理员当前 Session 开启学生视图时，按该账号技术方向对新规则作业执行只读受众预览，不写入或改变快照，历史届次受众仍按原快照兼容 | HW-002、HW-003、HW-006、AUTH-011 |
-| `GET /assignments/{assignment_id}` | 返回要求、外链、有效截止、附件规则、本人提交摘要和优秀作业摘要；管理员当前 Session 开启学生视图时按临时受众预览读取 | HW-001、HW-004、HW-006、SHOW-002、AUTH-011 |
+| `GET /assignments` | `status,query,page,page_size`；普通学生只返回正式受众快照（发布时成员及激活时开放作业补录）中未归档的作业与最新提交摘要；管理员当前 Session 开启学生视图时，按该账号技术方向对新规则作业执行只读受众预览，不写入或改变快照，历史届次受众仍按原快照兼容 | HW-002、HW-003、HW-006、HW-008、AUTH-011 |
+| `GET /assignments/{assignment_id}` | 返回未归档作业的要求、外链、有效截止、附件规则、本人提交摘要和优秀作业摘要；归档作业 404，管理员当前 Session 开启学生视图时仍按学生规则读取 | HW-001、HW-004、HW-006、HW-008、SHOW-002、AUTH-011 |
 | `POST /assignments/{assignment_id}/submission-versions` | 创建本人正式版本；管理员当前 Session 开启学生视图时允许以自身账号创建个人版本，普通管理员视图仍禁止代交 | SUB-001～SUB-005、FILE-001、AUTH-011 |
 | `GET /assignments/{assignment_id}/submission` | 返回本人提交聚合、版本和评语 | SUB-003、SUB-005～SUB-007 |
 | `GET /assignments/{assignment_id}/excellent-submissions` | 返回该作业已标记的优秀版本摘要；学生视图管理员按临时受众预览规则读取 | SHOW-001～SHOW-005、AUTH-011 |
@@ -204,6 +212,7 @@
 | `POST /admin/assignments` | 创建草稿 | HW-001～HW-003 |
 | `GET /admin/assignments/{id}` | 读取配置、受众预估/快照和统计 | HW-002、HW-005 |
 | `PATCH /admin/assignments/{id}` | 修改允许字段 | HW-007 |
+| `DELETE /admin/assignments/{id}` | 草稿取消活动定时任务并物理删除；已发布/已关闭作业归档删除；返回 204 | HW-003、HW-008、NFR-006 |
 | `POST /admin/assignments/{id}/publish` | 固化受众快照并发布 | HW-002～HW-003 |
 | `POST /admin/assignments/{id}/close` | 提前关闭 | HW-003 |
 | `POST /admin/assignments/{id}/archive` | 归档 | HW-003 |
@@ -214,6 +223,8 @@
 | `DELETE /admin/assignments/{id}/excellent-submissions/{version_id}` | 取消优秀标记 | SHOW-004 |
 
 作业草稿主体包含 `title`、`description_markdown`、`training_url`、`submission_instructions`、`audience`、`allowed_extensions`、`max_total_bytes`、`publish_at`、`deadline` 和 `revision`。`max_total_bytes` 最大为 2147483648。
+
+作业删除对已归档资源幂等。物理删除只适用于尚无学生生命周期的 `draft`；`published/closed` 删除必须转为 `archived`，不得删除固定受众、提交、版本、评语、优秀标记和附件。学生列表、详情、优秀作业读取以及优秀附件重新签名均排除归档作业；提交所有者的历史版本仍按不可变记录保留。
 
 ## 通用提交与评语接口
 
@@ -281,6 +292,7 @@
 | `GET /admin/competitions/{id}/registrations` | 返回个人报名记录、状态、当前队伍和管理员可见的取消资格原因 | COMP-003 |
 | `POST /admin/competitions/{id}/registrations/{user_id}/disqualify` | `{reason}` 取消个人资格并在仍有有效队伍时同步取消整队资格 | COMP-003、TEAM-006 |
 | `GET /admin/teams/{team_id}` | 返回队伍成员、权限字段和各赛题提交/最新版本摘要 | TEAM-004～TEAM-006、SUB-005 |
+| `DELETE /admin/teams/{team_id}` | `{reason}`；无历史团队提交时物理删除，有历史提交时释放当前成员并保留为 `dissolved`，返回 204 | TEAM-009、NFR-006 |
 | `DELETE /admin/teams/{team_id}/members/{user_id}` | `{reason}` 管理员移除 | TEAM-005 |
 | `POST /admin/teams/{team_id}/captain-transfer` | `{new_captain_user_id,reason}` | TEAM-005 |
 | `POST /admin/teams/{team_id}/waive-min-size` | `{reason}` 人数豁免 | TEAM-004 |
@@ -288,6 +300,8 @@
 
 赛事时间必须满足：`registration_start < registration_end <= submission_start < submission_end`；现有字段用于兼容状态机，其中 submission_start 表示组队锁定时间，submission_end 表示赛事结束时间。新赛事不校验赛题截止。
 个人取消资格原因只返回管理员和对应学生本人；联动队伍的 `disqualification_reason` 使用不含个人原因的固定通用说明。管理员补录使 `invalid` 队伍达到最低人数时恢复 `locked`；从 `locked` 队伍移除成员后低于最低人数且没有豁免时转为 `invalid`。所有上述纠错请求必须提供非空原因并写审计。
+
+删除队伍只允许真实管理员且未开启学生视图，要求 CSRF 和去空白后 1～2,000 字符的 `reason`。Service 先锁定队伍，随后锁定当前成员并统计团队提交引用；无引用时删除 `teams` 并级联成员关联，有引用时把当前成员写入离队时间、清空队长和当前取消资格元数据、转为 `dissolved`，历史提交树保持原 `owner_team_id`。成功响应不返回删除模式、成员或提交数量；审计只保存目标 UUID、原状态、模式、安全计数和内部原因。删除后学生与常规管理员读取统一不可见，不存在资源返回 `404 RESOURCE_NOT_FOUND`。
 
 
 ## 学生问卷接口
@@ -369,15 +383,33 @@
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /admin/users` | 按状态、技术方向和角色搜索账号；历史 `cohort_id` 查询参数保留兼容 | AUTH-007～AUTH-008 |
+| `GET /admin/users` | `search,status,role,direction_id,activity,page,page_size`；`page` 为 1～10000、`page_size` 为 1～100；在分页前按姓名、学校邮箱、学号及中文/英文角色和状态搜索全部账号，返回准确 `total`；历史 `cohort_id` 查询参数保留兼容 | AUTH-007～AUTH-008 |
 | `POST /admin/users/{id}/disable` | `{reason}` 并撤销 Session | AUTH-007 |
 | `POST /admin/users/{id}/restore` | `{reason}` | AUTH-007 |
 | `PATCH /admin/users/{id}` | 调整姓名、学号、邮箱和可空技术方向；历史 `cohort_id` 字段保留兼容 | AUTH-007、AUTH-010 |
 | `POST /admin/users/{id}/role` | `{role,reason}`，禁止撤销最后一个管理员 | AUTH-008 |
+| `DELETE /admin/users/{id}` | `{reason,current_password,confirmation_email,backup_confirmed}`；删除任意非当前账号及个人数据，返回 204 | AUTH-012、NFR-006～NFR-009 |
 | `GET/POST /admin/cohorts` | 历史兼容的届次列表/创建接口，不再作为产品入口 | AUTH-007 |
 | `PATCH /admin/cohorts/{id}` | 历史兼容接口，修改名称或启用状态；不由新前端调用 | AUTH-007 |
 | `GET/POST /admin/directions` | 列表/创建可选方向 | AUTH-007 |
 | `PATCH /admin/directions/{id}` | 修改名称或启用状态 | AUTH-007 |
+
+`GET /admin/users` 的 `search` 去除首尾空白后最长 200 字符；空字符串等同未搜索。姓名、邮箱和学号使用大小写不敏感包含匹配，`%`、`_` 与反斜杠按普通文本转义；“管理员 / 学生 / 正常 / 待验证 / 已禁用”及对应英文枚举映射到角色或状态条件。过滤后的 `total` 与 `items` 使用同一条件，前端固定每页 20 条并通过 URL 保留 `search`、`activity` 和 `page`；请求页超过 `total` 推导的末页时，页面规范化跳转到末页，API 本身继续返回明确分页响应。
+
+管理员删除请求示例：
+
+```json
+{
+  "reason": "账号所有者提出永久删除申请",
+  "current_password": "administrator-current-password",
+  "confirmation_email": "target@connect.hkust-gz.edu.cn",
+  "backup_confirmed": true
+}
+```
+
+`reason` 去空白后为 3～500 字符，`current_password` 最长 128 字符；`confirmation_email` 规范化后必须与目标账号一致，`backup_confirmed` 必须为 `true`。真实管理员且未开启学生视图才可调用，管理接口删除当前操作者返回 `409 STATE_CONFLICT` 并引导使用本人注销；错误密码为 `401 INVALID_CREDENTIALS`，邮箱/原因/备份确认为字段级 `400 VALIDATION_ERROR`，最后一名激活管理员为 409。近期、待验证与禁用目标不再因活跃度被拒绝。
+
+成功 `204` 表示 PostgreSQL 中账号与个人数据已经提交删除、共享记录已去除归属、个人对象清理任务已可靠入队，不表示所有 MinIO 副本已经在响应前删除。响应和管理邮件任务列表不返回密码、确认邮箱、个人正文、对象键或 multipart ID；对象 Worker 最终失败通过运维积压/告警处理。共享记录响应中的 `created_by`、`submitted_by`、`granted_by`、`resolved_by` 等操作者 UUID 在账号擦除后允许为 `null`。
 
 ## 邮件与审计管理
 
@@ -409,7 +441,7 @@
 | `GET /admin/knowledge` | 返回 `configured`、学生当前快照和最近运行的脱敏状态 | 真实管理员，KB-004～KB-005、KB-008 |
 | `POST /admin/knowledge/sync` | CSRF 校验后创建同步运行、审计和 Outbox，返回 `202 {run}` | 真实管理员，KB-004～KB-005 |
 
-目录和文档响应不返回飞书 app secret、tenant token、MinIO 对象键或飞书错误正文。媒体路径只接受内部 UUID，不接受对象键或任意 URL。
+目录和文档响应不返回飞书 app secret、tenant token、MinIO 对象键或飞书错误正文。文档既有结构化块 JSON 可包含 `type=equation` 的独立公式块，以及富文本 segment 的 `equation=true` 行内公式标记；LaTeX 只作为文本内容返回，不接受 HTML。媒体路径只接受内部 UUID，不接受对象键或任意 URL。
 
 稳定错误：未配置为 `503 KNOWLEDGE_SYNC_NOT_CONFIGURED`；已有进行中运行为 `409 KNOWLEDGE_SYNC_IN_PROGRESS`；文档或媒体不属于当前快照统一为 `404 RESOURCE_NOT_FOUND`；MinIO 签名失败为 `503 DEPENDENCY_UNAVAILABLE`。管理员学生视图调用管理接口返回 `403 FORBIDDEN`。
 
@@ -417,7 +449,7 @@
 
 ## 反馈答疑接口
 
-全部反馈答疑接口要求有效 Session；本人接口按有效学生角色授权，公开答疑接口允许任一有效登录角色，管理接口只允许真实管理员且未开启学生视图。对应 HELP-001～HELP-007。
+全部反馈答疑接口要求有效 Session；本人接口按有效学生角色授权，公开答疑接口允许任一有效登录角色，管理接口只允许真实管理员且未开启学生视图。对应 HELP-001～HELP-008。
 
 ### 登录态匿名公开答疑
 
@@ -451,6 +483,7 @@
 | `GET /admin/help-requests` | `type,status,query,page,page_size`；返回全部工单和提交学生安全身份摘要 | HELP-003 |
 | `GET /admin/help-requests/{request_id}` | 返回学生姓名、学号、学校邮箱、完整工单和当前答复 | HELP-003 |
 | `PUT /admin/help-requests/{request_id}/resolution` | `{resolution_markdown,revision}`；首次答复或修订答复，原子写状态、审计和站内通知 | HELP-004～HELP-005 |
+| `DELETE /admin/help-requests/{request_id}` | 锁定后物理删除工单、使相关未读解决提醒失效并写脱敏审计，返回 204 | HELP-008 |
 
 答复请求：
 
@@ -458,4 +491,4 @@
 {"resolution_markdown":"已修复移动端按钮，请刷新后重试。","revision":1}
 ```
 
-本人详情额外包含只属于当前用户、当前工单的未读 `notification_ids`，用于调用既有单条已读接口；不返回通知事件键。管理员成功响应包含 `request_type`、`status`、安全正文/答复、提交学生摘要、`resolved_by`、`resolved_at`、时间和 `revision`，不返回日志、通知内部事件键或其他学生工单。空答复返回 `400 VALIDATION_ERROR`，过期 revision 返回 `409 REVISION_CONFLICT`，不可见资源返回 `404 RESOURCE_NOT_FOUND`；学生和管理员学生视图调用管理接口返回 `403 FORBIDDEN`。
+本人详情额外包含只属于当前用户、当前工单的未读 `notification_ids`，用于调用既有单条已读接口；不返回通知事件键。管理员成功响应包含 `request_type`、`status`、安全正文/答复、提交学生摘要、`resolved_by`、`resolved_at`、时间和 `revision`，不返回日志、通知内部事件键或其他学生工单。删除请求无主体，成功响应无正文；物理删除前把同一 `target_type=help_request,target_id=request_id` 的未读提醒标为已读，历史已读提醒继续保留。空答复返回 `400 VALIDATION_ERROR`，过期 revision 返回 `409 REVISION_CONFLICT`，不可见资源返回 `404 RESOURCE_NOT_FOUND`；学生和管理员学生视图调用管理接口返回 `403 FORBIDDEN`。

@@ -5,6 +5,7 @@
 - 项目是单校、单组织的内部平台，不是多租户 SaaS、公开论坛或通用网盘。
 - 用户角色只有学生和管理员；新账号使用 `@connect.hkust-gz.edu.cn` 注册，邮箱前缀派生为用户名，激活后可用用户名或完整邮箱登录。空系统首个完成验证的账号成为受最后管理员保护的管理员；历史数据库若用户表恰好一行且该账号已验证并处于 `active`，部署迁移或下次登录会把它持久化为管理员。其余账号直接激活为学生，不经过人工审核或强制初始分组。
 - 注册、密码重置和管理员命令行创建账号统一使用 8～128 个 Unicode 字符密码策略；继续使用 Argon2id，并拒绝常见密码及与邮箱、学号高度相似的值。
+- 应用层持久认证失败窗口只用于无效登录：按规范化邮箱 5 次、来源 IP 30 次统计 10 分钟，返回 `Retry-After: 600`；已验证 `active` 账号的正确密码先完成 Argon2id 校验并直接登录。注册、验证邮件重发和密码重置申请只记录安全分析事件，不读取历史事件形成持久等待；Nginx 瞬时入口限流继续保留。
 - 现有官网与飞书培训知识库继续独立维护；本系统允许真实管理员手动触发飞书开放 API，将结构化正文和受控媒体同步为只读快照供登录用户阅读，但不编辑或写回飞书，不修改或依赖现有官网运行时，学生请求不实时访问飞书。
 - 培训作业默认可向全体学生投放，也可按管理员维护的技术方向定向投放；届次设置已从产品入口移除，历史受众字段仅作兼容；个人提交作业，校内赛由团队队长提交。
 - 作业发布时生成初始固定受众；后续普通学生首次激活时加入当时仍开放且匹配的作业，之后修改方向不重算历史归属。
@@ -134,3 +135,113 @@
 - 发布前备份 `/tmp/pnx-training-before-release-634e01a-20260829T042700Z.dump` 已通过 PostgreSQL 17 `pg_restore --list` 校验，大小 4,153,800 字节、0600、SHA-256 `bb4ad5f713aa1d605e6cffac23903471d48a49dd66f1085bfb6660425cd78caa`；长期保留仍需迁出 `/tmp`。
 - Docker 仅保留当前发布与 `notification-badges-20260829` 回滚镜像，以及运行卷、三个 PNX 网络、其他项目、4 个来源不明匿名卷和全局构建缓存；已删除 1 个旧迁移容器、10 个旧应用标签和 9 个旧镜像 ID，无 dangling 镜像，未全局 prune。
 - `/var/run/docker.sock` 的临时命名 ACL `user:pnx:rw-` 已由用户撤销；最终只剩基础 owner/group/mask/other 条目，所有者/权限为 `root:docker`、`0660`，本轮 Docker 权限已完全收敛。
+
+## 2026-08-29 认证失败窗口部署后基线
+
+- 当前 Backend/Worker 为 `pnx-training-backend:auth-window-20260829`（`sha256:716685804552…`），以 `appuser` 运行且 healthy；Frontend 继续使用原镜像 `sha256:76266bc26052…` 并增加同名标签别名，`.env` 固定到 `auth-window-20260829`。
+- 六服务 healthy，登录页和四个健康端点为 200，认证页面/API 匿名守卫保持 307/401；运行库为 `20260828_0014 (head)`，本轮无迁移。
+- 部署前 PostgreSQL 17 备份为 `/tmp/pnx-training-before-auth-window-20260829T081859Z.dump`，大小 4,306,752 字节、0600、SHA-256 `05f7ec8f7de2b6213461ca4133469f96ec624d276798b0ad6719ab53d3c8b46d`。
+- 发布期间真实用户并发完成注册、验证和登录；部署没有调用认证写接口或回滚这些数据。Docker socket 临时 ACL 已撤销并恢复为 `root:docker`、`0660`，当前用户不再具有 Docker API 访问权限。
+
+## 2026-08-29 管理员内容删除部署后基线
+
+- 当前 Backend/Worker 与 Frontend 固定标签均为 `admin-content-removal-20260829`，镜像分别为 `sha256:a9e4e73584e3…` 与 `sha256:1ce818d5d2d6…`；应用容器以 `appuser` 运行，六服务 healthy、重启次数为 0。
+- 管理员可以二次确认删除通知或作业：未发布内容受审计物理删除，已发布内容归档并立即退出学生列表、详情、优秀作业及附件签名路径；提交、评语、受众、提醒、文件元数据与审计历史保留。
+- 登录页和 `live/ready/worker/nginx-health` 均为 200，管理/学生通知和作业页面匿名为 307，两个 DELETE API 匿名为 401；运行 Backend OpenAPI 含两个 DELETE/204 路径。
+- Alembic 保持 `20260828_0014 (head)`，PostgreSQL、MinIO 未重建且无迁移。部署前备份 `/tmp/pnx-training-before-admin-content-removal-20260829T091428Z.dump` 为 4,320,274 字节、0600，SHA-256 `194a1cdd7c2330fc7dd7e0ef70cf7d68240c95761f2c7ad352b5579df4446629`，只适合作为本机短期恢复材料。
+
+## 2026-08-29 注册唯一约束热修后基线
+
+- 当前 Backend/Worker 固定标签为 `registration-constraint-20260829`，镜像 ID `sha256:0972df29b3758acc4ef6750e248f59c8b905ec3bba44b4b4a6e0a4783e4d3e8b`；Frontend 继续运行 `sha256:1ce818d5d2d6…`，只增加同名标签别名，Frontend/Nginx 未替换。
+- Backend/Worker 以 `appuser` 运行、重启次数为 0；六服务 healthy，登录页和 `live/ready/worker/nginx-health` 均为 200。运行认证文件为 0644，哈希 `d25505a99c2b712e7078be61deae1522c40a62e9fec13a5184aafcd4c8580825`。
+- 重复邮箱/学号的 asyncpg 嵌套唯一约束已在 Service 层映射为字段级 400；管理员通知/作业 DELETE 路径继续存在。Alembic 保持 `20260828_0014 (head)`，无迁移。
+- 部署前 PostgreSQL 17 备份 `/tmp/pnx-training-before-registration-constraint-20260829T103222Z.dump` 为 4,328,438 字节、0600、SHA-256 `b45dbbcc44c89576305511877687a2eae14c6b5f3f09fc76aaa2255dede5fc4a`，已通过同版本 314 项校验，只适合作为本机短期恢复材料。
+- 部署命令未调用认证写接口；部署窗口的用户/安全事件/令牌变化来自持续外部注册流量，未删除或回滚真实业务数据。
+- Docker socket 的临时 `user:pnx:rw-` ACL 尚待用户以交互式 sudo 撤销；应用服务已完成部署和验收，不依赖该 ACL 继续运行。
+
+## 2026-08-29 账号永久删除源码候选基线
+
+- 已完成管理员永久删除非本人账号与用户自助注销源码，两条路径均要求有效 Session、CSRF、当前密码和目标邮箱确认并保护最后一个激活管理员；管理员另需内部原因与备份确认。个人数据物理删除，共享平台/团队记录保留并去除归属。
+- 新源码 Alembic 单一 head 为 `20260829_0015`，包含个人 `CASCADE`、共享 `SET NULL`、队长预处理和正式版本触发器的事务级受限例外；运行环境仍保持此前已部署的 `20260828_0014`，本轮未应用、检查或降级 `0015`。
+- 账号对象由可靠 Outbox 在 Worker 中先终止 multipart 再幂等删除；Worker 暂停不回滚数据库删除，对象不再授权并在恢复后继续清理。执行过删除后只能从删除前 PostgreSQL + MinIO 同点备份隔离恢复，不能由应用撤销。
+- 本轮只执行不接触基础设施的纯 Mock/静态质量门：后端定向 45 项、Ruff、格式、120 源文件严格 Mypy，前端最终 23 文件/102 项 Vitest、ESLint、严格 TypeScript 和生产构建通过。未连接或修改当前 PostgreSQL/MinIO，未调用 5000 写接口、真实删除或备份脚本；生产启用前仍必须新建并验证同点加密完整备份。
+
+## 2026-08-29 飞书 LaTeX 公式部署后基线
+
+- 飞书知识库规范化器已保留富文本行内 `equation` 语义，并支持 `block_type=16` 独立公式块；阅读器使用本地 `katex@0.16.22` 分别排版行内与独立公式，坏公式安全回退为源文。
+- KaTeX 禁用 trust，限制宏展开和尺寸，HTML 扩展为硬错误；不接受飞书任意 HTML。30 项后端知识库测试、受影响后端静态门、前端完整 23 文件/99 项测试、ESLint、严格 TypeScript 和生产构建通过。
+- 当前固定标签为 `feishu-latex-20260829`；Backend/Worker 镜像 ID 为 `sha256:5e7b335da4fc…`，Frontend 为 `sha256:6076084d5de5…`，六服务 healthy、重启次数 0，登录页与四健康端点 200，知识库页面/API 匿名守卫为 307/401。
+- Alembic 保持 `20260828_0014 (head)` 且未启动 migrate；部署前后核心业务计数不变，最近成功知识库仍为 212 篇文档、986 个媒体，最新同步 Outbox 仍为 `sent/1`，本轮未触发飞书、邮件、上传或账号删除写入。
+- 部署前 PostgreSQL 17 备份 `/tmp/pnx-training-before-feishu-latex-20260829T112100Z.dump` 为 4,330,074 字节、0600，SHA-256 `b53cea2fd8927f4ce4f8aaca1b8a8bc759a1c508ac2db18208887f7a0c8b31a0`。现有快照不会原地获得公式语义，仍需真实管理员手动同步一次。
+- 临时 Frontend 测试镜像与隔离构建目录已清理；Docker socket 的 `user:pnx:rw-` 临时 ACL 因宿主机要求交互式 sudo 尚待部署方撤销，应用运行不依赖该 ACL。
+
+## 2026-08-29 反馈答疑删除源码候选基线
+
+- 真实管理员可通过 CSRF 保护的 DELETE/204 物理删除任意系统反馈或问题答疑；事务锁定工单、把相关未读解决提醒标为已读、写脱敏审计后删除，学生本人、管理员与登录态公开读取随即不可见。
+- 管理员详情提供区分类型的危险按钮与二次确认；学生、管理员学生视图和匿名请求分别受服务端授权与认证守卫限制。无软删除字段、状态、迁移、依赖或 Worker 变更。
+- 后端定向 27 项和完整 280 项 Pytest、Ruff/格式，前端完整 23 文件/102 项 Vitest、ESLint、严格 TypeScript 与生产构建通过；当时完整后端 Mypy 的 6 项失败位于并行账号删除测试，不在本候选改动中，现已在账号删除部署收尾修正并通过 153 个源文件严格 Mypy。
+- 候选尚未部署，未连接或修改当前 PostgreSQL/MinIO，未调用运行环境 DELETE；当前运行态仍是既有 `feishu-latex-20260829` 应用与 `20260828_0014` 数据库基线。
+
+## 2026-08-29 账号永久删除部署后基线
+
+- 当前固定标签为 `account-deletion-20260829`；Backend/Worker 镜像 ID 为 `sha256:081be7ba08de49781ab40d3e3053c45910ca34078901935c28638135f8846c81`，Frontend 为 `sha256:d4b5172a1a780f2f4db63db2f65a80e881669c4ec7c3b0dc09632b3d620bd2f4`，应用均以 `appuser` 运行。
+- 运行数据库为 `20260829_0015 (head)`；34 个指向 `users` 的外键为 12 个 CASCADE、21 个 SET NULL 和 1 个由 Service 预处理的队长 RESTRICT。版本触发器只在账号擦除事务且父提交不存在时允许级联，普通 DELETE 保持 `55000`。
+- 六服务 healthy、重启次数 0；登录和四健康端点 200，`/profile`、`/admin/users` 匿名 307，管理员/本人删除 API 匿名 401。OpenAPI 共 114 个路径，包含两条账号 DELETE/204 且不含仍在开发的反馈答疑 DELETE。
+- 部署前后用户/问卷/问题/选项/回答/选择关系/工单/已解决问题/通知/作业/提交/版本保持 `155/3/5/21/84/166/1/1/4/1/1/2`；最近成功知识库为 `succeeded/213/1006`，账号对象清理 Outbox 为 0，部署没有调用真实账号删除或飞书同步。
+- 加密完整备份 `pnx-backup-20260829T122839Z-weekly` 位于 `/tmp/pnx-account-deployment-backups/`，归档 SHA-256 为 `a68bdd8a847a419a2d092730362a6277453bcb6cf67614c76a784d817bd85bdb`；PostgreSQL 17 目录 314 项、2,885 个对象、从空环境恢复和 `0014 ↔ 0015` 往返通过。
+- 对账确认 1,010 个数据库引用对象无缺失、大小或哈希不符；1,875 个历史知识库孤立对象保留并报告，不自动删除。隔离容器、网络和卷已清理。
+- 最终纯 Fake 回归显式覆盖 `knowledge/` 完整备份恢复与 `knowledge_assets` 已跟踪对账；相关 66 项 Pytest、全量 Ruff/格式和 153 个源文件严格 Mypy 通过。
+- 加密归档、校验材料和临时 GPG 密钥环仍同在本机 `/tmp`，尚未形成异机持久副本，必须迁移到受控独立介质并分离保存归档与解密材料；Docker socket 临时 `user:pnx:rw-` ACL 仍待撤销并复核为基础 `root:docker`、`0660` 权限。
+
+## 2026-08-29 反馈答疑删除部署后基线
+
+- 当前固定标签为 `help-delete-20260829`；Backend/Worker 镜像 ID 为 `sha256:1a2f7c6e3d7145653dcccb076c098fe544e854bcf29b6cede5ee9b5218fdc799`，Frontend 为 `sha256:2f7ef180f2c2da20eb39e6c723c45de5b8871e62b5e000bf5b53d60decd3b110`，应用均为 `appuser`。
+- 真实管理员可通过 CSRF 保护的 DELETE/204 物理删除任意系统反馈或问题答疑；事务锁定工单、把相关未读解决提醒标为已读、写脱敏审计后删除，学生本人、管理员与登录态公开读取随即不可见。
+- 六服务 healthy、重启次数 0；登录和四健康端点 200，答疑页面匿名 307、DELETE 匿名 401。OpenAPI 共 114 个路径，保留两条账号 DELETE 并新增答疑 DELETE/204 无正文。
+- Alembic 保持 `20260829_0015 (head)`；本轮无迁移。部署前后聚合保持 `155/3/5/21/85/169/1/1/2/1/1/2/897/1010/0`，最新知识库为 `succeeded/213/1006`，账号对象清理 Outbox 为 0。
+- 部署前 PostgreSQL 17 快照 `/tmp/pnx-training-before-help-delete-20260829T141903Z.dump` 为 5,571,302 字节、0600、SHA-256 `40cfce14391d4e135a3d30a6c786be81df494a69affe9a56dbceb445df49bbd0`，314 项目录校验通过；它只适合作为本机短期恢复材料。
+- 本轮未调用带认证的答疑或账号 DELETE，未触发飞书同步、上传或其他业务写入。首次 Compose 漏载根环境文件的容器未通过健康门，显式 `--env-file .env` 重建后恢复，数据库与 MinIO 未重建且数据聚合不变。
+- 后端完整 280 项、Ruff/格式/153 源文件严格 Mypy，前端完整 23 文件/102 项、ESLint、严格 TypeScript 和主机/容器生产构建通过。
+
+## 2026-08-29 管理员用户全量搜索源码候选基线
+
+- 管理员 `/admin/users` 已从“固定加载前 100 条再本地过滤”改为后端全库搜索与固定每页 20 条分页；空搜索可逐页查看全部账号，页面展示当前页、总页数和准确匹配总数。页码限制为 1～10000，越界 URL 回到实际末页。
+- `search`、`activity` 与 `page` 写入 URL 并在适用操作间保留；搜索覆盖姓名、邮箱、学号、中文/英文角色及状态，SQL LIKE 的 `%`、`_` 和反斜杠按普通文本转义。用户写入成功后按同一查询刷新，删除造成末页收缩时回退，避免筛选残留和 OFFSET 跳项。
+- `GET /admin/users` 继续要求真实管理员权限，响应字段、角色/状态修改、禁用/恢复及已上线的两条账号 DELETE、高风险确认和最后管理员保护均未改变；本任务不新增数据库字段、索引或 Alembic 迁移。
+- Backend 定向 33 项和本任务相关 Ruff/格式/严格 Mypy 通过；共享工作树完整复核另有 289 项通过、2 项范围外竞争赛测试失败。Frontend 定向 10 项与完整 23 文件/103 项、ESLint、严格 TypeScript 和生产构建通过。
+- 验证只使用 Mock、静态 OpenAPI 和本地构建，未连接、读取或修改当前 PostgreSQL/MinIO，未调用运行环境 API。该候选尚未部署，当前运行态继续保持既有 `help-delete-20260829` 应用与 `20260829_0015 (head)` 数据库基线。
+
+## 2026-08-29 管理员删除队伍源码候选基线
+
+- 真实管理员可在队伍详情填写内部原因并二次确认删除。后端以队伍行锁、当前成员行锁、CSRF 与真实管理员依赖为边界：无团队提交时物理删除，有历史团队提交时释放全部当前成员并保留 `dissolved` 壳及不可变提交、评语和附件。
+- 两种删除模式都从学生入口、常规管理员队伍列表和直接详情隐藏，并释放一赛一队占用；审计只记录目标 UUID、原状态、`physical/dissolved_retained` 模式、安全计数和内部原因，不包含成员身份、邀请码、正文、附件名或对象键。
+- 本功能复用既有表、状态、外键和审计，无 Alembic 迁移或新依赖。后端定向 16 项与完整 291 项、Ruff、170 文件格式及 120 源文件严格 Mypy 通过；前端定向 9 项与完整 23 文件/104 项、ESLint、严格 TypeScript 和 Next.js 生产构建通过。
+- 验证未连接当前 PostgreSQL/MinIO、未调用真实 DELETE、未访问 Docker socket，也未运行备份、镜像构建或部署命令。候选尚未部署，运行态继续保持 `help-delete-20260829` 与 `20260829_0015 (head)`。
+
+## 2026-08-30 管理员用户全量搜索部署后基线
+
+- 当前固定标签为 `admin-user-search-20260829`；Backend/Worker 镜像 ID 为 `sha256:8ce5a025653e05eeb2a42119cf0c20b4c258b76a82a39c8abeb24be607388880`，Frontend 为 `sha256:005345c40946bc33826565aebc8b441bc5f0600778384618042e6d885bec7be8`，应用均以 `appuser` 运行。
+- 管理员用户页使用服务端全量搜索与固定每页 20 条分页，支持姓名、邮箱、学号、中文/英文角色和状态；URL 保留 `search/activity/page`，页码限制 1～10000，写后刷新和末页收缩回退已上线。
+- 六服务 healthy、重启次数 0；登录与四个健康端点 200，`/admin/users` 匿名 307、用户列表 API 匿名 401。静态 OpenAPI 共 114 个路径，账号删除、管理员删除和答疑删除能力均保留。
+- 部署前 OpenPGP 每日备份 `pnx-backup-20260829T155430Z-daily` 为 5,679,123 字节、0600，SHA-256 `525a53cef7bb08676b31598e9978a67a45df1301ca558587591e8e57438c2e4b`；完整 PostgreSQL dump 5,574,189 字节，通过内部校验和 PostgreSQL 17 目录检查。MinIO 相对周基线无对象变化。
+- 本轮未运行 migrate，PostgreSQL/MinIO 容器与卷未重建；数据库按部署前记录保持 `20260829_0015` 基线。验收未使用管理员登录态、未读取用户列表、未调用任何业务写接口，四个应用容器日志错误关键词聚合为 0。
+- 回滚镜像 `help-delete-20260829` 继续保留；应用回滚不需要数据库降级。完整周备份、每日增量归档与临时 GPG 密钥环均在本机 `/tmp`，必须迁移到受控独立介质并分离保存。
+
+## 2026-08-30 管理员删除队伍部署后基线
+
+- 当前固定标签为 `team-delete-20260830`；Backend/Worker 镜像 ID 为 `sha256:2d58004f482cefa3e01a3bd24877074fb72f496b8e9f3f067b484fcaf21efe97`，Frontend 为 `sha256:78fd991ced0d9fd308eba17c74cea4bd939fae78332d290aa1201610ee016015`，应用均以 `appuser` 运行。
+- 本候选以 `help-delete-20260829` 运行基线只叠加队伍删除，明确未带入共享工作树中的管理员用户搜索/分页源码。真实管理员现在可按无提交物理删除、有提交保留 `dissolved` 壳的语义删除队伍。
+- 六服务 healthy、重启 0；五个健康入口 200，匿名队伍 DELETE 401。管理员队伍 HTML 流响应为 200 骨架但携带 `/login` 的 307 redirect digest，受保护 API 为 401 且不返回业务数据。
+- Alembic 为 `20260829_0015 (head)`；本轮无新迁移。PostgreSQL/MinIO 容器和卷未重建，部署前后 `157/1/2/2/0/2/0/897/1010/0` 聚合依次对应用户、赛事、队伍、当前成员、团队提交、版本、答疑、知识文档、知识媒体和账号清理 Outbox。
+- 部署前 PostgreSQL 快照为 `/tmp/pnx-training-before-team-delete-20260829T161603Z.dump`，大小 5,574,204 字节、0600、SHA-256 `1ebc990cbec3023a54a4fe6672a37d446af2608efb09dc5f4135786866b1a301`，PostgreSQL 17 目录校验通过。
+- 本轮未调用带认证的真实 DELETE 或其他业务写接口；隔离候选已清理。回滚使用 `help-delete-20260829` 且无需数据库降级。
+- Docker socket 临时 `user:pnx:rw-` ACL 仍存在；非交互 sudo 要求密码，需部署方交互撤销并复核为基础 `root:docker 0660`。
+
+## 2026-08-30 队伍删除与用户搜索合并部署后基线
+
+- 当前固定标签为 `team-user-search-20260830`；Backend/Worker 镜像 ID 为 `sha256:0a3a88a7aeabed366b708695c867f0ee3bb6077bce05e441a8ed6fbc5041d2e3`，Frontend 为 `sha256:10552d3e6b750557e05d27527e06cac992091d7f80850f19c7a270a220d632f3`，应用均为 `appuser`。
+- `team-delete-20260830` 曾从旧基线排除用户搜索，导致运行 Backend users 文件回退、Frontend API chunk 只传 `page_size=100`；这是用户仍只显示 100 个的根因。当前合并镜像已纠正，不是数据库计数问题。
+- 运行 Frontend 编译 chunk 明确包含 `pageSize:20`、`page/search`、搜索/分页界面与队伍删除；Backend 静态 OpenAPI 为 114 个路径，`page.maximum=10000`，队伍、账号和答疑删除路径均保留。
+- 六服务 healthy、重启 0；登录与四健康端点 200，管理员用户页匿名 307、用户 API 匿名 401。Backend、Worker、Frontend、Nginx 错误关键词聚合均为 0。
+- 纠正发布未运行 migrate，PostgreSQL/MinIO 容器和数据卷未重建；数据库保持既有 `20260829_0015` 基线。最近队伍发布前数据库备份的 0600、SHA-256 与 PostgreSQL 17 目录已重新校验。
+- 验收未使用管理员 Session/Cookie、未读取用户列表、未调用删除、同步、上传、认证或其他业务写接口。Docker socket 临时 ACL 与本机 `/tmp` 备份持久化风险仍待部署方收尾。
