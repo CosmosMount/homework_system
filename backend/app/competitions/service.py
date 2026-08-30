@@ -1557,13 +1557,16 @@ class CompetitionService:
             raise self._not_found()
         detail = await self._detail_response(competition, user_id=context.user.id)
         teams = await self._competitions.list_teams(competition_id)
+        visible_teams = [record for record in teams if record.team.status != "dissolved"]
         return AdminCompetitionDetailResponse(
             **detail.model_dump(),
             registration_count=await self._competitions.registration_count(competition_id),
-            team_count=len(teams),
-            valid_team_count=sum(record.team.status in {"locked", "archived"} for record in teams),
+            team_count=len(visible_teams),
+            valid_team_count=sum(
+                record.team.status in {"locked", "archived"} for record in visible_teams
+            ),
             invalid_team_count=sum(
-                record.team.status in {"invalid", "disqualified"} for record in teams
+                record.team.status in {"invalid", "disqualified"} for record in visible_teams
             ),
         )
 
@@ -1576,7 +1579,11 @@ class CompetitionService:
         self._require_admin(context)
         if await self._competitions.get_competition(competition_id) is None:
             raise self._not_found()
-        records = await self._competitions.list_teams(competition_id)
+        records = [
+            record
+            for record in await self._competitions.list_teams(competition_id)
+            if record.team.status != "dissolved"
+        ]
         return AdminTeamListResponse(
             items=[
                 AdminTeamListItem(
@@ -1701,7 +1708,7 @@ class CompetitionService:
     ) -> AdminTeamDetailResponse:
         self._require_admin(context)
         team = await self._competitions.get_team(team_id)
-        if team is None:
+        if team is None or team.status == "dissolved":
             raise self._not_found()
         detail = await self._team_response(team, actor_user_id=context.user.id)
         submissions: list[AdminTeamSubmissionItem] = []
@@ -1722,6 +1729,60 @@ class CompetitionService:
             **detail.model_dump(),
             submissions=submissions,
         )
+
+    async def delete_admin_team(
+        self,
+        team_id: UUID,
+        payload: AdminReasonRequest,
+        *,
+        audit_context: CompetitionAuditContext,
+    ) -> None:
+        self._require_admin(audit_context.actor)
+        team = await self._competitions.get_team(team_id, for_update=True)
+        if team is None:
+            await self._session.rollback()
+            raise self._not_found()
+
+        historical_submission_count = await self._competitions.team_submission_count(team.id)
+        if team.status == "dissolved" and historical_submission_count > 0:
+            await self._session.rollback()
+            return
+
+        now = self._clock()
+        previous_status = team.status
+        current_members = await self._competitions.current_members_for_update(team.id)
+        released_member_count = len(current_members)
+        deletion_mode = "physical"
+        if historical_submission_count == 0:
+            await self._competitions.delete_team(team)
+        else:
+            deletion_mode = "dissolved_retained"
+            for member in current_members:
+                member.left_at = now
+            team.status = "dissolved"
+            team.captain_user_id = None
+            team.dissolved_at = now
+            team.disqualified_at = None
+            team.disqualified_by = None
+            team.disqualification_reason = None
+            team.updated_at = now
+            team.revision += 1
+
+        self._add_audit(
+            audit_context,
+            action="admin.team.delete",
+            target_type="team",
+            target_id=team.id,
+            change_summary={
+                "previous_status": previous_status,
+                "mode": deletion_mode,
+                "released_member_count": released_member_count,
+                "historical_submission_count": historical_submission_count,
+                "reason": payload.reason,
+            },
+            now=now,
+        )
+        await self._session.commit()
 
     async def admin_add_member(
         self,

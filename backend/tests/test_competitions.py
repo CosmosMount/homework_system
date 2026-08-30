@@ -500,3 +500,193 @@ async def test_admin_member_removal_invalidates_undersized_locked_team() -> None
     assert team.revision == 2
     assert response.status == "invalid"
     session.commit.assert_awaited_once()
+
+
+def test_admin_reason_rejects_whitespace_and_normalizes_value() -> None:
+    with pytest.raises(ValidationError):
+        AdminReasonRequest(reason="   ")
+
+    assert AdminReasonRequest(reason="  删除误建队伍  ").reason == "删除误建队伍"
+    maximum_reason = "原" * 2_000
+    assert AdminReasonRequest(reason=f"  {maximum_reason}  ").reason == maximum_reason
+    with pytest.raises(ValidationError):
+        AdminReasonRequest(reason="原" * 2_001)
+
+
+@pytest.mark.asyncio
+async def test_admin_physically_deletes_team_without_historical_submissions() -> None:
+    now = datetime.now(UTC)
+    admin_id = uuid4()
+    competition = make_competition(now)
+    team = make_team(competition)
+    captain_id = team.captain_user_id
+    assert captain_id is not None
+    member = TeamMember(
+        id=uuid4(),
+        team_id=team.id,
+        competition_id=competition.id,
+        user_id=captain_id,
+        joined_at=now - timedelta(hours=1),
+        left_at=None,
+        added_by_admin=False,
+        admin_reason=None,
+    )
+    session = AsyncMock(spec=AsyncSession)
+    service = CompetitionService(
+        cast(AsyncSession, session),
+        Settings(app_env="test"),
+        clock=lambda: now,
+    )
+    delete_team = AsyncMock()
+    audit_add = Mock()
+    service._competitions = cast(
+        CompetitionRepository,
+        SimpleNamespace(
+            get_team=AsyncMock(return_value=team),
+            team_submission_count=AsyncMock(return_value=0),
+            current_members_for_update=AsyncMock(return_value=[member]),
+            delete_team=delete_team,
+        ),
+    )
+    service._audit = cast(AuditRepository, SimpleNamespace(add=audit_add))
+    admin = cast(
+        AuthenticatedContext,
+        SimpleNamespace(user=SimpleNamespace(id=admin_id, role="admin"), session=object()),
+    )
+
+    await service.delete_admin_team(
+        team.id,
+        AdminReasonRequest(reason="清理重复创建的队伍"),
+        audit_context=CompetitionAuditContext(
+            actor=admin,
+            request_id="delete-team-physical",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    delete_team.assert_awaited_once_with(team)
+    session.commit.assert_awaited_once()
+    audit = audit_add.call_args.args[0]
+    assert audit.action == "admin.team.delete"
+    assert audit.change_summary == {
+        "previous_status": "forming",
+        "mode": "physical",
+        "released_member_count": 1,
+        "historical_submission_count": 0,
+        "reason": "清理重复创建的队伍",
+    }
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_retains_team_with_historical_submissions() -> None:
+    now = datetime.now(UTC)
+    admin_id = uuid4()
+    competition = make_competition(now, status="submission_closed")
+    team = make_team(competition, status="disqualified")
+    captain_id = team.captain_user_id
+    assert captain_id is not None
+    team.locked_at = now - timedelta(days=1)
+    team.disqualified_at = now - timedelta(hours=2)
+    team.disqualified_by = admin_id
+    team.disqualification_reason = "历史取消资格原因"
+    members = [
+        TeamMember(
+            id=uuid4(),
+            team_id=team.id,
+            competition_id=competition.id,
+            user_id=user_id,
+            joined_at=now - timedelta(days=1),
+            left_at=None,
+            added_by_admin=False,
+            admin_reason=None,
+        )
+        for user_id in (captain_id, uuid4())
+    ]
+    session = AsyncMock(spec=AsyncSession)
+    service = CompetitionService(
+        cast(AsyncSession, session),
+        Settings(app_env="test"),
+        clock=lambda: now,
+    )
+    delete_team = AsyncMock()
+    audit_add = Mock()
+    service._competitions = cast(
+        CompetitionRepository,
+        SimpleNamespace(
+            get_team=AsyncMock(return_value=team),
+            team_submission_count=AsyncMock(return_value=2),
+            current_members_for_update=AsyncMock(return_value=members),
+            delete_team=delete_team,
+        ),
+    )
+    service._audit = cast(AuditRepository, SimpleNamespace(add=audit_add))
+    admin = cast(
+        AuthenticatedContext,
+        SimpleNamespace(user=SimpleNamespace(id=admin_id, role="admin"), session=object()),
+    )
+
+    await service.delete_admin_team(
+        team.id,
+        AdminReasonRequest(reason="删除错误队伍并保留历史提交"),
+        audit_context=CompetitionAuditContext(
+            actor=admin,
+            request_id="delete-team-retained",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    delete_team.assert_not_awaited()
+    assert all(member.left_at == now for member in members)
+    assert team.status == "dissolved"
+    assert team.captain_user_id is None
+    assert team.dissolved_at == now
+    assert team.disqualified_at is None
+    assert team.disqualified_by is None
+    assert team.disqualification_reason is None
+    assert team.revision == 2
+    session.commit.assert_awaited_once()
+    audit = audit_add.call_args.args[0]
+    assert audit.change_summary["mode"] == "dissolved_retained"
+    assert audit.change_summary["historical_submission_count"] == 2
+    assert audit.change_summary["released_member_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_team_reads_hide_dissolved_records() -> None:
+    now = datetime.now(UTC)
+    admin_id = uuid4()
+    competition = make_competition(now)
+    active_team = make_team(competition)
+    dissolved_team = make_team(competition, status="dissolved")
+    dissolved_team.captain_user_id = None
+    dissolved_team.dissolved_at = now
+    records = [
+        TeamListRecord(team=active_team, member_count=1, submission_count=0),
+        TeamListRecord(team=dissolved_team, member_count=0, submission_count=1),
+    ]
+    session = AsyncMock(spec=AsyncSession)
+    service = CompetitionService(
+        cast(AsyncSession, session),
+        Settings(app_env="test"),
+        clock=lambda: now,
+    )
+    service._competitions = cast(
+        CompetitionRepository,
+        SimpleNamespace(
+            get_competition=AsyncMock(return_value=competition),
+            list_teams=AsyncMock(return_value=records),
+            get_team=AsyncMock(return_value=dissolved_team),
+        ),
+    )
+    admin = cast(
+        AuthenticatedContext,
+        SimpleNamespace(user=SimpleNamespace(id=admin_id, role="admin"), session=object()),
+    )
+
+    listed = await service.admin_teams(competition.id, context=admin)
+
+    assert listed.total == 1
+    assert [item.id for item in listed.items] == [active_team.id]
+    with pytest.raises(ApplicationError) as hidden:
+        await service.admin_team(dissolved_team.id, context=admin)
+    assert hidden.value.status_code == 404

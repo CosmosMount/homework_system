@@ -16,10 +16,11 @@ import type {
   User,
 } from "@/lib/api/types";
 
-const { csrfFetchMock, pushMock, refreshMock } = vi.hoisted(() => ({
+const { csrfFetchMock, pushMock, refreshMock, replaceMock } = vi.hoisted(() => ({
   csrfFetchMock: vi.fn(),
   pushMock: vi.fn(),
   refreshMock: vi.fn(),
+  replaceMock: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -27,7 +28,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({
     push: pushMock,
     refresh: refreshMock,
-    replace: vi.fn(),
+    replace: replaceMock,
   }),
 }));
 
@@ -141,6 +142,7 @@ describe("competition UI", () => {
     csrfFetchMock.mockReset();
     pushMock.mockReset();
     refreshMock.mockReset();
+    replaceMock.mockReset();
   });
 
   afterEach(() => {
@@ -266,6 +268,34 @@ describe("competition UI", () => {
 
     expect(screen.getByText("管理员纠错必须填写原因。")).toBeInTheDocument();
     expect(csrfFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("requires a reason and confirmation before deleting a team", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    csrfFetchMock.mockResolvedValue(undefined);
+    render(
+      <AdminTeamCorrectionPanel
+        initialTeam={{ ...team(), submissions: [] } as AdminTeamDetail}
+        users={[candidate]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "删除队伍" }));
+    expect(screen.getByText("管理员纠错必须填写原因。")).toBeInTheDocument();
+    expect(csrfFetchMock).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("必填原因"), {
+      target: { value: "  删除重复创建的队伍  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "删除队伍" }));
+
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledTimes(1));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("保留不可变记录"));
+    expect(csrfFetchMock).toHaveBeenCalledWith("/admin/teams/team-1", {
+      method: "DELETE",
+      body: JSON.stringify({ reason: "删除重复创建的队伍" }),
+    });
+    expect(replaceMock).toHaveBeenCalledWith("/admin/competitions");
   });
 
   it("requires a private reason and warns before disqualifying a registered team member", async () => {

@@ -208,6 +208,16 @@ class CaptainTransferRequest(BaseModel):
 class AdminReasonRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=2_000)
 
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("管理员原因不能为空")
+        return normalized
+
 
 class AdminMemberAddRequest(AdminReasonRequest):
     user_id: UUID

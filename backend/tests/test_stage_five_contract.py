@@ -29,12 +29,18 @@ def test_stage_five_openapi_contains_competitions_teams_and_team_submissions() -
         "/api/v1/admin/competitions/{competition_id}/tasks",
         "/api/v1/admin/competition-tasks/{task_id}",
         "/api/v1/admin/competitions/{competition_id}/teams",
+        "/api/v1/admin/teams/{team_id}",
         "/api/v1/admin/teams/{team_id}/members",
         "/api/v1/admin/teams/{team_id}/captain-transfer",
         "/api/v1/admin/teams/{team_id}/waive-min-size",
         "/api/v1/admin/teams/{team_id}/disqualify",
     }
     assert expected_paths <= set(paths)
+
+    delete_operation = paths["/api/v1/admin/teams/{team_id}"]["delete"]
+    assert set(delete_operation["responses"]) == {"204", "422"}
+    assert delete_operation["requestBody"]["required"] is True
+    assert "AdminReasonRequest" in str(delete_operation["requestBody"])
 
     create_parameters = paths[
         "/api/v1/competitions/{competition_id}/tasks/{task_id}/submission-versions"

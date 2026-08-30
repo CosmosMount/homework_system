@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.auth.dependencies import (
     AdminContextDependency,
@@ -541,6 +541,27 @@ async def get_admin_team(
     admin: AdminContextDependency,
 ) -> AdminTeamDetailResponse:
     return await service.admin_team(team_id, context=admin)
+
+
+@router.delete(
+    "/admin/teams/{team_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def delete_admin_team(
+    team_id: UUID,
+    payload: AdminReasonRequest,
+    request: Request,
+    service: CompetitionServiceDependency,
+    admin: AdminContextDependency,
+    _csrf: CsrfDependency,
+) -> Response:
+    await service.delete_admin_team(
+        team_id,
+        payload,
+        audit_context=_audit_context(request, admin),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

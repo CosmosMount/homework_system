@@ -71,6 +71,9 @@ class CompetitionRepository:
     def add_member(self, member: TeamMember) -> None:
         self._session.add(member)
 
+    async def delete_team(self, team: Team) -> None:
+        await self._session.delete(team)
+
     async def get_competition(
         self, competition_id: UUID, *, for_update: bool = False
     ) -> Competition | None:
@@ -354,6 +357,21 @@ class CompetitionRepository:
         ).all()
         return [TeamMemberRecord(member=row[0], user=row[1]) for row in rows]
 
+    async def current_members_for_update(self, team_id: UUID) -> list[TeamMember]:
+        return list(
+            (
+                await self._session.scalars(
+                    select(TeamMember)
+                    .where(
+                        TeamMember.team_id == team_id,
+                        TeamMember.left_at.is_(None),
+                    )
+                    .order_by(TeamMember.joined_at, TeamMember.id)
+                    .with_for_update()
+                )
+            ).all()
+        )
+
     async def current_member_ids(self, team_id: UUID) -> list[UUID]:
         return list(
             (
@@ -374,6 +392,16 @@ class CompetitionRepository:
                 select(func.count())
                 .select_from(TeamMember)
                 .where(TeamMember.team_id == team_id, TeamMember.left_at.is_(None))
+            )
+            or 0
+        )
+
+    async def team_submission_count(self, team_id: UUID) -> int:
+        return int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(Submission)
+                .where(Submission.owner_team_id == team_id)
             )
             or 0
         )

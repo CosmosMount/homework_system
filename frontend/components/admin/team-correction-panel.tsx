@@ -170,6 +170,29 @@ export function AdminTeamCorrectionPanel({
     }
   }
 
+  async function deleteTeam() {
+    if (!begin()) return;
+    if (
+      !window.confirm(
+        `确认删除队伍“${team.name}”？没有历史团队提交时将永久删除；已有历史提交时会保留不可变记录，但学生端不再显示，当前成员将全部退出。`,
+      )
+    ) {
+      setPending(false);
+      return;
+    }
+    try {
+      await csrfFetch<void>("/admin/teams/" + team.id, {
+        method: "DELETE",
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      router.replace("/admin/competitions");
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setPending(false);
+    }
+  }
+
   const mutable = !["dissolved", "archived"].includes(team.status);
 
   return (
@@ -240,7 +263,7 @@ export function AdminTeamCorrectionPanel({
             必填原因
             <textarea
               className={inputClassName + " min-h-28 py-3"}
-              disabled={!mutable || pending}
+              disabled={pending}
               maxLength={2000}
               onChange={(event) => setReason(event.target.value)}
               value={reason}
@@ -316,6 +339,23 @@ export function AdminTeamCorrectionPanel({
               取消队伍资格
             </button>
           ) : null}
+        </section>
+
+        <section className="mt-4 space-y-3 border border-[var(--color-danger)] bg-[var(--color-surface)] p-5">
+          <h2 className="text-lg font-semibold text-[var(--color-danger)]">
+            删除队伍
+          </h2>
+          <p className="text-sm leading-6 text-[var(--color-text-secondary)]">
+            无历史团队提交时永久删除；已有历史提交时保留不可变版本、评语和附件，但队伍会退出学生端显示并释放全部当前成员。
+          </p>
+          <button
+            className="min-h-11 w-full bg-[var(--color-danger)] px-5 font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={pending}
+            onClick={deleteTeam}
+            type="button"
+          >
+            {pending ? "处理中…" : "删除队伍"}
+          </button>
         </section>
       </aside>
     </div>

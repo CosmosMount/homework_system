@@ -33,7 +33,7 @@ export default async function AdminTeamPage({
         backLabel="返回校内赛"
         eyebrow="ADMIN / CAMPUS COMPETITION / TEAM"
         title="队伍详情"
-        description="补录、移除、队长变更、人数豁免和取消资格都必须填写原因并进入审计。"
+        description="补录、移除、队长变更、人数豁免、取消资格和删除都必须填写原因并进入审计。"
       />
       <AdminTeamCorrectionPanel initialTeam={team} users={users.items} />
     </AppShell>
