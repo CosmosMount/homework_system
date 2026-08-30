@@ -21,6 +21,9 @@ class HelpRequestRepository:
     def add(self, request: HelpRequest) -> None:
         self._session.add(request)
 
+    async def delete(self, request: HelpRequest) -> None:
+        await self._session.delete(request)
+
     async def get_student(self, request_id: UUID, user_id: UUID) -> HelpRequest | None:
         result: HelpRequest | None = await self._session.scalar(
             select(HelpRequest).where(

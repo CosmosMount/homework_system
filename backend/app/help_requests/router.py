@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.auth.dependencies import (
     AdminContextDependency,
@@ -151,6 +151,25 @@ async def get_admin_help_request(
     context: AdminContextDependency,
 ) -> AdminHelpRequestDetail:
     return await service.admin_detail(request_id, context=context)
+
+
+@router.delete(
+    "/admin/help-requests/{request_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def delete_admin_help_request(
+    request_id: UUID,
+    request: Request,
+    service: HelpRequestServiceDependency,
+    context: AdminContextDependency,
+    _csrf: CsrfDependency,
+) -> Response:
+    await service.remove(
+        request_id,
+        audit_context=_audit_context(request, context),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put(

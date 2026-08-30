@@ -152,7 +152,15 @@ class HelpRequestService:
         action: str,
         request: HelpRequest,
         now: datetime,
+        deletion_mode: str | None = None,
     ) -> None:
+        change_summary: dict[str, object] = {
+            "request_type": request.request_type,
+            "status": request.status,
+            "revision": request.revision,
+        }
+        if deletion_mode is not None:
+            change_summary["deletion_mode"] = deletion_mode
         self._audit.add(
             AuditLog(
                 id=uuid7(),
@@ -163,11 +171,7 @@ class HelpRequestService:
                 request_id=context.request_id,
                 ip_prefix=context.ip_prefix,
                 result="success",
-                change_summary={
-                    "request_type": request.request_type,
-                    "status": request.status,
-                    "revision": request.revision,
-                },
+                change_summary=change_summary,
                 created_at=now,
             )
         )
@@ -316,6 +320,40 @@ class HelpRequestService:
         if record is None:
             raise self._not_found()
         return self._admin_detail(record)
+
+    async def remove(
+        self,
+        request_id: UUID,
+        *,
+        audit_context: HelpRequestAuditContext,
+    ) -> None:
+        self._require_admin(audit_context.actor)
+        request = await self._repo.get_by_id(request_id, for_update=True)
+        if request is None:
+            await self._session.rollback()
+            raise self._not_found()
+
+        try:
+            now = self._clock()
+            unread_notifications = await self._notifications.unread_for_target(
+                target_type="help_request",
+                target_id=request.id,
+                for_update=True,
+            )
+            for notification in unread_notifications:
+                notification.read_at = now
+            self._add_audit(
+                audit_context,
+                action="help_request.deleted",
+                request=request,
+                now=now,
+                deletion_mode="physical",
+            )
+            await self._repo.delete(request)
+            await self._session.commit()
+        except Exception:
+            await self._session.rollback()
+            raise
 
     async def resolve(
         self,

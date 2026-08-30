@@ -19,16 +19,17 @@ export function HelpRequestResolutionForm({
   const [resolution, setResolution] = useState(
     initialRequest.resolution_markdown ?? "",
   );
-  const [pending, setPending] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"save" | "delete" | null>(null);
+  const pending = pendingAction !== null;
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const publishesAnonymously = initialRequest.request_type === "question";
 
-
+  const deleteLabel = publishesAnonymously ? "删除问题答疑" : "删除系统反馈";
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending) return;
-    setPending(true);
+    setPendingAction("save");
     setError(null);
     setSuccess(null);
     try {
@@ -65,7 +66,32 @@ export function HelpRequestResolutionForm({
           : "保存答复失败，请稍后重试。",
       );
     } finally {
-      setPending(false);
+      setPendingAction(null);
+    }
+  }
+
+  async function remove() {
+    const prompt = publishesAnonymously
+      ? "确认永久删除这条问题答疑？删除后将从学生本人记录和匿名公开答疑移除，且无法由应用恢复。"
+      : "确认永久删除这条系统反馈？删除后将从学生本人记录移除，且无法由应用恢复。";
+    if (!window.confirm(prompt)) return;
+    setPendingAction("delete");
+    setError(null);
+    setSuccess(null);
+    try {
+      await csrfFetch(
+        "/admin/help-requests/" + encodeURIComponent(initialRequest.id),
+        { method: "DELETE" },
+      );
+      router.replace("/admin/help");
+    } catch (nextError) {
+      setError(
+        nextError instanceof ApiError
+          ? nextError.message
+          : "删除反馈答疑失败，请稍后重试。",
+      );
+    } finally {
+      setPendingAction(null);
     }
   }
 
@@ -109,8 +135,23 @@ export function HelpRequestResolutionForm({
           disabled={pending || resolution.trim().length === 0}
           type="submit"
         >
-          {pending ? "保存中…" : "保存并通知学生"}
+          {pendingAction === "save" ? "保存中…" : "保存并通知学生"}
         </button>
+        <div className="border-t border-[var(--color-border)] pt-4">
+          <p className="mb-3 text-sm text-[var(--color-text-secondary)]">
+            删除后，工单会立即从学生本人记录
+            {publishesAnonymously ? "和匿名公开答疑" : ""}
+            中移除，且无法由应用恢复；脱敏审计记录仍会保留。
+          </p>
+          <button
+            className="min-h-11 border border-[var(--color-danger)] px-5 text-[var(--color-danger)] disabled:opacity-55"
+            disabled={pending}
+            onClick={remove}
+            type="button"
+          >
+            {pendingAction === "delete" ? "删除中…" : deleteLabel}
+          </button>
+        </div>
       </div>
     </form>
   );

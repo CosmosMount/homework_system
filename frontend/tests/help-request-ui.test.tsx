@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HelpRequestResolutionForm } from "@/components/admin/help-request-resolution-form";
 import { HelpRequestCreateForm } from "@/components/help/help-request-create-form";
@@ -12,10 +12,11 @@ import type {
   User,
 } from "@/lib/api/types";
 
-const { csrfFetchMock, pushMock, refreshMock } = vi.hoisted(() => ({
+const { csrfFetchMock, pushMock, refreshMock, replaceMock } = vi.hoisted(() => ({
   csrfFetchMock: vi.fn(),
   pushMock: vi.fn(),
   refreshMock: vi.fn(),
+  replaceMock: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -23,7 +24,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({
     push: pushMock,
     refresh: refreshMock,
-    replace: vi.fn(),
+    replace: replaceMock,
   }),
 }));
 
@@ -96,6 +97,7 @@ describe("feedback and help request UI", () => {
     csrfFetchMock.mockReset();
     pushMock.mockReset();
     refreshMock.mockReset();
+    replaceMock.mockReset();
   });
 
   it("submits a normalized student help request and opens its private detail", async () => {
@@ -297,5 +299,81 @@ describe("feedback and help request UI", () => {
     expect(
       screen.queryByRole("link", { name: "培训文档" }),
     ).not.toBeInTheDocument();
+  });
+});
+describe("administrator help request deletion", () => {
+  beforeEach(() => {
+    csrfFetchMock.mockReset();
+    pushMock.mockReset();
+    refreshMock.mockReset();
+    replaceMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("confirms and deletes a resolved public question", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    csrfFetchMock.mockResolvedValue(undefined);
+    render(
+      <HelpRequestResolutionForm
+        initialRequest={adminDetail({
+          request_type: "question",
+          status: "resolved",
+          resolution_markdown: "已解答",
+          resolution_html: "<p>已解答</p>",
+          resolved_by: admin.id,
+          resolved_at: "2026-08-28T02:00:00Z",
+          revision: 2,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "删除问题答疑" }));
+
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledTimes(1));
+    expect(confirm).toHaveBeenCalledWith(
+      "确认永久删除这条问题答疑？删除后将从学生本人记录和匿名公开答疑移除，且无法由应用恢复。",
+    );
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/admin/help-requests/help-1",
+      { method: "DELETE" },
+    );
+    expect(replaceMock).toHaveBeenCalledWith("/admin/help");
+  });
+
+  it("does not request deletion when confirmation is cancelled", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<HelpRequestResolutionForm initialRequest={adminDetail()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "删除系统反馈" }));
+
+    expect(csrfFetchMock).not.toHaveBeenCalled();
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the detail page and shows the API error when deletion fails", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    csrfFetchMock.mockRejectedValue(
+      new ApiError(
+        new Response(null, { status: 404 }),
+        {
+          error: {
+            code: "RESOURCE_NOT_FOUND",
+            message: "反馈答疑记录不存在或当前不可见。",
+            request_id: "request-delete",
+          },
+        },
+      ),
+    );
+    render(<HelpRequestResolutionForm initialRequest={adminDetail()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "删除系统反馈" }));
+
+    expect(
+      await screen.findByText("反馈答疑记录不存在或当前不可见。"),
+    ).toBeInTheDocument();
+    expect(replaceMock).not.toHaveBeenCalled();
   });
 });

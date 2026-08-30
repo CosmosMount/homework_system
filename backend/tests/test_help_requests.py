@@ -106,6 +106,7 @@ def make_service(now: datetime) -> tuple[HelpRequestService, AsyncMock]:
         SimpleNamespace(
             add_all=Mock(),
             unread_ids_for_target=AsyncMock(return_value=[]),
+            unread_for_target=AsyncMock(return_value=[]),
         ),
     )
     return service, session
@@ -529,3 +530,141 @@ async def test_public_help_request_endpoints_require_authentication() -> None:
     assert {response.json()["error"]["code"] for response in responses} == {
         "AUTHENTICATION_REQUIRED"
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("request_type", "status"),
+    [("system_feedback", "open"), ("question", "resolved")],
+)
+async def test_admin_physically_deletes_help_request_with_redacted_audit(
+    request_type: str,
+    status: str,
+) -> None:
+    now = datetime.now(UTC)
+    request = make_request(now, request_type=request_type, status=status)
+    notification = cast(StudentNotification, SimpleNamespace(read_at=None))
+    service, session = make_service(now)
+    delete_request = AsyncMock()
+    service._repo = cast(
+        HelpRequestRepository,
+        SimpleNamespace(
+            get_by_id=AsyncMock(return_value=request),
+            delete=delete_request,
+        ),
+    )
+    unread_for_target = AsyncMock(return_value=[notification])
+    service._notifications = cast(
+        StudentNotificationRepository,
+        SimpleNamespace(
+            add_all=Mock(),
+            unread_ids_for_target=AsyncMock(return_value=[]),
+            unread_for_target=unread_for_target,
+        ),
+    )
+    audit_add = cast(Mock, service._audit.add)
+
+    await service.remove(
+        request.id,
+        audit_context=make_audit_context("admin"),
+    )
+
+    audit = cast(AuditLog, audit_add.call_args.args[0])
+    assert notification.read_at == now
+    assert audit.action == "help_request.deleted"
+    assert audit.change_summary == {
+        "request_type": request_type,
+        "status": status,
+        "revision": request.revision,
+        "deletion_mode": "physical",
+    }
+    assert {"title", "content", "resolution", "created_by"}.isdisjoint(audit.change_summary)
+    unread_for_target.assert_awaited_once_with(
+        target_type="help_request",
+        target_id=request.id,
+        for_update=True,
+    )
+    delete_request.assert_awaited_once_with(request)
+    session.commit.assert_awaited_once()
+    session.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_help_request_delete_requires_real_admin_and_missing_is_404() -> None:
+    now = datetime.now(UTC)
+    service, session = make_service(now)
+    get_by_id = AsyncMock(return_value=None)
+    delete_request = AsyncMock()
+    service._repo = cast(
+        HelpRequestRepository,
+        SimpleNamespace(get_by_id=get_by_id, delete=delete_request),
+    )
+
+    for audit_context in (
+        make_audit_context("student"),
+        make_audit_context("admin", student_view=True),
+    ):
+        with pytest.raises(ApplicationError) as forbidden:
+            await service.remove(uuid4(), audit_context=audit_context)
+        assert forbidden.value.status_code == 403
+
+    missing_id = uuid4()
+    with pytest.raises(ApplicationError) as missing:
+        await service.remove(
+            missing_id,
+            audit_context=make_audit_context("admin"),
+        )
+    assert missing.value.status_code == 404
+    assert missing.value.code == "RESOURCE_NOT_FOUND"
+    get_by_id.assert_awaited_once_with(missing_id, for_update=True)
+    delete_request.assert_not_awaited()
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_help_request_delete_failure_rolls_back_transaction() -> None:
+    now = datetime.now(UTC)
+    request = make_request(now, request_type="question", status="resolved")
+    notification = cast(StudentNotification, SimpleNamespace(read_at=None))
+    service, session = make_service(now)
+    service._repo = cast(
+        HelpRequestRepository,
+        SimpleNamespace(
+            get_by_id=AsyncMock(return_value=request),
+            delete=AsyncMock(side_effect=RuntimeError("delete failed")),
+        ),
+    )
+    service._notifications = cast(
+        StudentNotificationRepository,
+        SimpleNamespace(
+            add_all=Mock(),
+            unread_ids_for_target=AsyncMock(return_value=[]),
+            unread_for_target=AsyncMock(return_value=[notification]),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="delete failed"):
+        await service.remove(
+            request.id,
+            audit_context=make_audit_context("admin"),
+        )
+
+    session.commit.assert_not_awaited()
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_help_request_delete_endpoint_requires_authentication() -> None:
+    app = create_app(Settings(app_env="test", trusted_hosts="testserver"))
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.delete(
+            f"/api/v1/admin/help-requests/{uuid4()}",
+        )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "AUTHENTICATION_REQUIRED"
