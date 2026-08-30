@@ -12,7 +12,9 @@ from app.auth.service import AuthenticatedContext, AuthenticationService
 from app.core.config import Settings
 from app.core.errors import ApplicationError, ErrorDetail
 from app.core.identifiers import uuid7
-from app.core.security import is_campus_email, normalize_email
+from app.core.security import OutboxCipher, is_campus_email, normalize_email
+from app.notifications.models import OutboxJob
+from app.notifications.repository import OutboxRepository
 from app.users.models import Cohort, Direction, User
 from app.users.repository import UserRepository
 from app.users.schemas import (
@@ -49,9 +51,11 @@ class UserAdministrationService:
         self._session = session
         self._users = UserRepository(session)
         self._audit = AuditRepository(session)
+        self._outbox = OutboxRepository(session)
         self._auth = AuthenticationService(session, settings, clock=clock)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._settings = settings
+        self._outbox_cipher = OutboxCipher(settings.outbox_encryption_key.get_secret_value())
 
     def _add_audit(
         self,
@@ -406,112 +410,276 @@ class UserAdministrationService:
         await self._session.commit()
         return await self._response(user)
 
+    async def _deny_account_erasure(
+        self,
+        *,
+        user: User,
+        audit: AuditContext,
+        action: str,
+        mode: str,
+        reason: str,
+        blocked: str,
+        status_code: int,
+        code: str,
+        message: str,
+        details: list[ErrorDetail] | None = None,
+    ) -> None:
+        self._add_audit(
+            audit,
+            action=action,
+            target_type="user",
+            target_id=user.id,
+            change_summary={
+                "mode": mode,
+                "reason": reason,
+                "blocked": blocked,
+            },
+            result="denied",
+        )
+        await self._session.commit()
+        raise ApplicationError(
+            status_code=status_code,
+            code=code,
+            message=message,
+            details=details or (),
+        )
+
+    def _enqueue_account_object_cleanup(
+        self,
+        *,
+        user_id: UUID,
+        file_id: UUID,
+        object_key: str,
+        minio_upload_id: str | None,
+        now: datetime,
+    ) -> None:
+        secret_payload = (
+            self._outbox_cipher.encrypt({"minio_upload_id": minio_upload_id})
+            if minio_upload_id is not None
+            else None
+        )
+        self._outbox.add(
+            OutboxJob(
+                id=uuid7(),
+                job_type="delete_account_object",
+                event_key=f"account:{user_id}:object:{file_id}",
+                payload={"object_key": object_key},
+                secret_payload_ciphertext=secret_payload,
+                status="pending",
+                available_at=now,
+                attempt_count=0,
+                max_attempts=8,
+                locked_by=None,
+                locked_at=None,
+                last_error_code=None,
+                last_error_summary=None,
+                created_at=now,
+                sent_at=None,
+            )
+        )
+
+    async def _erase_account(
+        self,
+        user_id: UUID,
+        *,
+        current_password: str,
+        confirmation_email: str,
+        reason: str,
+        audit: AuditContext,
+        mode: str,
+        backup_confirmed: bool,
+    ) -> None:
+        await self._auth.acquire_admin_lifecycle_lock()
+        await self._auth.lock_one_time_tokens_for_user(user_id)
+        await self._auth.lock_sessions_for_user(user_id)
+        user = await self._users.get_by_id(user_id, for_update=True)
+        if user is None:
+            await self._session.rollback()
+            raise self._not_found("用户")
+
+        action = "user.delete" if mode == "admin" else "user.self_delete"
+        normalized_reason = reason.strip()
+        if mode == "admin" and user.id == audit.actor.user.id:
+            await self._deny_account_erasure(
+                user=user,
+                audit=audit,
+                action=action,
+                mode=mode,
+                reason=normalized_reason,
+                blocked="current_actor",
+                status_code=409,
+                code="STATE_CONFLICT",
+                message="管理接口不能删除当前账号，请从个人资料页注销本人账号。",
+            )
+
+        if audit.actor.user.id == user.id:
+            actor = user
+        else:
+            locked_actor = await self._users.get_by_id(audit.actor.user.id, for_update=True)
+            if locked_actor is None or locked_actor.status != "active":
+                await self._session.rollback()
+                raise ApplicationError(
+                    status_code=401,
+                    code="AUTHENTICATION_REQUIRED",
+                    message="登录状态已失效，请重新登录。",
+                )
+            actor = locked_actor
+        if mode == "admin" and len(normalized_reason) < 3:
+            await self._deny_account_erasure(
+                user=user,
+                audit=audit,
+                action=action,
+                mode=mode,
+                reason=normalized_reason,
+                blocked="invalid_reason",
+                status_code=400,
+                code="VALIDATION_ERROR",
+                message="永久删除原因至少需要 3 个字符。",
+                details=[
+                    ErrorDetail(
+                        field="reason",
+                        reason="DELETE_REASON_TOO_SHORT",
+                    )
+                ],
+            )
+        if not self._auth.verify_current_password(actor, current_password):
+            await self._deny_account_erasure(
+                user=user,
+                audit=audit,
+                action=action,
+                mode=mode,
+                reason=normalized_reason,
+                blocked="invalid_current_password",
+                status_code=401,
+                code="INVALID_CREDENTIALS",
+                message="当前密码不正确。",
+            )
+
+        if normalize_email(confirmation_email) != user.email_normalized:
+            await self._deny_account_erasure(
+                user=user,
+                audit=audit,
+                action=action,
+                mode=mode,
+                reason=normalized_reason,
+                blocked="confirmation_email_mismatch",
+                status_code=400,
+                code="VALIDATION_ERROR",
+                message="确认邮箱与待删除账号不一致。",
+                details=[
+                    ErrorDetail(
+                        field="confirmation_email",
+                        reason="ACCOUNT_EMAIL_MISMATCH",
+                    )
+                ],
+            )
+
+        if mode == "admin" and not backup_confirmed:
+            await self._deny_account_erasure(
+                user=user,
+                audit=audit,
+                action=action,
+                mode=mode,
+                reason=normalized_reason,
+                blocked="backup_not_confirmed",
+                status_code=400,
+                code="VALIDATION_ERROR",
+                message="删除前必须确认近期 PostgreSQL 与 MinIO 备份可恢复。",
+                details=[
+                    ErrorDetail(
+                        field="backup_confirmed",
+                        reason="BACKUP_CONFIRMATION_REQUIRED",
+                    )
+                ],
+            )
+
+        if (
+            user.role == "admin"
+            and user.status == "active"
+            and await self._users.active_admin_count() <= 1
+        ):
+            await self._deny_account_erasure(
+                user=user,
+                audit=audit,
+                action=action,
+                mode=mode,
+                reason=normalized_reason,
+                blocked="last_active_admin",
+                status_code=409,
+                code="STATE_CONFLICT",
+                message="不能删除系统中最后一个激活管理员。",
+            )
+
+        now = self._clock()
+        previous_role = user.role
+        previous_status = user.status
+        preparation = await self._users.prepare_account_erasure(user, now=now)
+        for cleanup in preparation.object_cleanups:
+            self._enqueue_account_object_cleanup(
+                user_id=user.id,
+                file_id=cleanup.file_id,
+                object_key=cleanup.object_key,
+                minio_upload_id=cleanup.minio_upload_id,
+                now=now,
+            )
+
+        self._add_audit(
+            audit,
+            action=action,
+            target_type="user",
+            target_id=user.id,
+            change_summary={
+                "mode": mode,
+                "reason": normalized_reason,
+                "previous_role": previous_role,
+                "previous_status": previous_status,
+                "deletion_counts": preparation.deletion_counts,
+                "object_cleanup_count": len(preparation.object_cleanups),
+                "teams_transferred": preparation.teams_transferred,
+                "teams_dissolved": preparation.teams_dissolved,
+                "teams_invalidated": preparation.teams_invalidated,
+            },
+        )
+        await self._session.flush()
+        await self._users.erase_account(user, preparation)
+        await self._session.commit()
+
     async def delete_user(
         self,
         user_id: UUID,
         *,
         reason: str,
+        current_password: str,
+        confirmation_email: str,
+        backup_confirmed: bool,
         audit: AuditContext,
     ) -> None:
-        await self._auth.acquire_admin_lifecycle_lock()
-        user = await self._users.get_by_id(user_id)
-        if user is None:
-            await self._session.rollback()
-            raise self._not_found("用户")
-
-        normalized_reason = reason.strip()
-        if user.id == audit.actor.user.id:
-            self._add_audit(
-                audit,
-                action="user.delete",
-                target_type="user",
-                target_id=user.id,
-                change_summary={
-                    "reason": normalized_reason,
-                    "blocked": "current_actor",
-                },
-                result="denied",
-            )
-            await self._session.commit()
-            raise ApplicationError(
-                status_code=409,
-                code="STATE_CONFLICT",
-                message="不能删除当前登录的管理员账号。",
-            )
-
-        await self._auth.lock_one_time_tokens_for_user(user.id)
-        latest_session_activity = await self._auth.lock_sessions_for_user(user.id)
-        user = await self._users.get_by_id(user_id, for_update=True)
-        if user is None:
-            await self._session.rollback()
-            raise self._not_found("用户")
-        if latest_session_activity is not None and (
-            user.last_active_at is None or latest_session_activity > user.last_active_at
-        ):
-            await self._users.touch_activity(user, at=latest_session_activity)
-
-        now = self._clock()
-        blocked: str | None = None
-        message = "账号当前不满足永久删除条件。"
-        if not self._is_inactive(user, now=now):
-            blocked = "not_inactive"
-            message = "只能删除严格超过 10 天未进入系统的激活账号。"
-        elif (
-            user.role == "admin"
-            and user.status == "active"
-            and await self._users.active_admin_count() <= 1
-        ):
-            blocked = "last_active_admin"
-            message = "不能删除系统中最后一个激活管理员。"
-
-        if blocked is not None:
-            self._add_audit(
-                audit,
-                action="user.delete",
-                target_type="user",
-                target_id=user.id,
-                change_summary={"reason": normalized_reason, "blocked": blocked},
-                result="denied",
-            )
-            await self._session.commit()
-            raise ApplicationError(
-                status_code=409,
-                code="STATE_CONFLICT",
-                message=message,
-            )
-
-        deleted = await self._users.delete_if_unreferenced(user)
-        if not deleted:
-            self._add_audit(
-                audit,
-                action="user.delete",
-                target_type="user",
-                target_id=user.id,
-                change_summary={
-                    "reason": normalized_reason,
-                    "blocked": "retained_business_data",
-                },
-                result="denied",
-            )
-            await self._session.commit()
-            raise ApplicationError(
-                status_code=409,
-                code="USER_DELETE_BLOCKED",
-                message="账号存在必须保留的业务记录，请改为禁用账号。",
-            )
-
-        self._add_audit(
-            audit,
-            action="user.delete",
-            target_type="user",
-            target_id=user_id,
-            change_summary={
-                "reason": normalized_reason,
-                "previous_role": user.role,
-                "previous_status": user.status,
-            },
+        await self._erase_account(
+            user_id,
+            current_password=current_password,
+            confirmation_email=confirmation_email,
+            reason=reason,
+            audit=audit,
+            mode="admin",
+            backup_confirmed=backup_confirmed,
         )
-        await self._session.commit()
+
+    async def delete_own_account(
+        self,
+        *,
+        current_password: str,
+        confirmation_email: str,
+        audit: AuditContext,
+    ) -> None:
+        await self._erase_account(
+            audit.actor.user.id,
+            current_password=current_password,
+            confirmation_email=confirmation_email,
+            reason="self_service_account_deletion",
+            audit=audit,
+            mode="self_service",
+            backup_confirmed=True,
+        )
 
     @staticmethod
     def _cohort_response(cohort: Cohort) -> CohortResponse:

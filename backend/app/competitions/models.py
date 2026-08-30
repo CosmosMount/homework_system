@@ -66,11 +66,11 @@ class Competition(TimestampRevisionMixin, Base):
     submission_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     min_team_size: Mapped[int] = mapped_column(Integer, nullable=False)
     max_team_size: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_by: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    created_by: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
-    updated_by: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    updated_by: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -91,7 +91,6 @@ class CompetitionRegistration(TimestampRevisionMixin, Base):
             "AND disqualified_at IS NULL AND disqualified_by IS NULL "
             "AND disqualification_reason IS NULL) OR "
             "(status = 'disqualified' AND disqualified_at IS NOT NULL "
-            "AND disqualified_by IS NOT NULL "
             "AND length(trim(disqualification_reason)) > 0)",
             name="status_metadata_consistent",
         ),
@@ -112,14 +111,14 @@ class CompetitionRegistration(TimestampRevisionMixin, Base):
         PGUUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False
     )
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     disqualified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     disqualified_by: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     disqualification_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -171,7 +170,7 @@ class Team(TimestampRevisionMixin, Base):
         CheckConstraint(
             "(min_size_waived_at IS NULL AND min_size_waived_by IS NULL "
             "AND waiver_reason IS NULL) OR "
-            "(min_size_waived_at IS NOT NULL AND min_size_waived_by IS NOT NULL "
+            "(min_size_waived_at IS NOT NULL "
             "AND length(trim(waiver_reason)) > 0)",
             name="waiver_metadata_consistent",
         ),
@@ -179,7 +178,6 @@ class Team(TimestampRevisionMixin, Base):
             "(status <> 'disqualified' AND disqualified_at IS NULL "
             "AND disqualified_by IS NULL AND disqualification_reason IS NULL) OR "
             "(status = 'disqualified' AND disqualified_at IS NOT NULL "
-            "AND disqualified_by IS NOT NULL "
             "AND length(trim(disqualification_reason)) > 0)",
             name="disqualification_metadata_consistent",
         ),
@@ -216,12 +214,12 @@ class Team(TimestampRevisionMixin, Base):
         DateTime(timezone=True), nullable=True
     )
     min_size_waived_by: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     waiver_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     disqualified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     disqualified_by: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     disqualification_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -263,7 +261,7 @@ class TeamMember(Base):
         PGUUID(as_uuid=True), ForeignKey("competitions.id", ondelete="CASCADE"), nullable=False
     )
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

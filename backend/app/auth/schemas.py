@@ -43,6 +43,11 @@ class LoginResponse(BaseModel):
     user: UserResponse
 
 
+class AccountDeleteRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    confirmation_email: str = Field(min_length=3, max_length=320)
+
+
 class CsrfResponse(BaseModel):
     csrf_token: str
 

@@ -104,17 +104,29 @@ export async function getSessions(): Promise<Session[]> {
 
 type AdminUserQuery = Readonly<{
   activity?: "inactive";
+  page?: number;
   pageSize?: number;
+  search?: string;
 }>;
 
 export async function getAdminUsers({
   activity,
+  page = 1,
   pageSize = 100,
+  search,
 }: AdminUserQuery = {}): Promise<AdminUserPage> {
+  const safePage = Math.min(10_000, Math.max(1, Math.trunc(page)));
   const safePageSize = Math.min(100, Math.max(1, Math.trunc(pageSize)));
-  const params = new URLSearchParams({ page_size: String(safePageSize) });
+  const params = new URLSearchParams({
+    page: String(safePage),
+    page_size: String(safePageSize),
+  });
   if (activity === "inactive") {
     params.set("activity", activity);
+  }
+  const normalizedSearch = search?.trim().slice(0, 200);
+  if (normalizedSearch) {
+    params.set("search", normalizedSearch);
   }
   const result = await serverApi<AdminUserPage>(
     "/admin/users?" + params.toString(),

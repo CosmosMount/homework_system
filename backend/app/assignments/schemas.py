@@ -125,7 +125,7 @@ class AssignmentExtensionResponse(BaseModel):
     user_id: UUID
     extended_deadline: datetime
     reason: str
-    granted_by: UUID
+    granted_by: UUID | None
     created_at: datetime
     updated_at: datetime
     revision: int

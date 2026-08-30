@@ -8,10 +8,12 @@ from app.auth.dependencies import (
     AuthenticatedContextDependency,
     AuthenticationServiceDependency,
     CsrfDependency,
+    SessionDependency,
     request_settings,
     require_public_same_origin,
 )
 from app.auth.schemas import (
+    AccountDeleteRequest,
     AdminSessionResponse,
     CsrfResponse,
     EmailRequest,
@@ -27,6 +29,7 @@ from app.auth.schemas import (
 from app.core.network import request_ip_prefix, summarize_user_agent
 from app.core.request_context import current_request_id
 from app.users.schemas import UserResponse
+from app.users.service import AuditContext, UserAdministrationService
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 PublicOriginDependency = Annotated[None, Depends(require_public_same_origin)]
@@ -157,6 +160,29 @@ async def logout(
     _csrf: CsrfDependency,
 ) -> None:
     await service.logout(context)
+    _clear_auth_cookies(response, request)
+    response.status_code = status.HTTP_204_NO_CONTENT
+
+
+@router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_own_account(
+    payload: AccountDeleteRequest,
+    request: Request,
+    response: Response,
+    session: SessionDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> None:
+    service = UserAdministrationService(session, request_settings(request))
+    await service.delete_own_account(
+        current_password=payload.current_password,
+        confirmation_email=payload.confirmation_email,
+        audit=AuditContext(
+            actor=context,
+            request_id=current_request_id() or "unknown",
+            ip_prefix=request_ip_prefix(request),
+        ),
+    )
     _clear_auth_cookies(response, request)
     response.status_code = status.HTTP_204_NO_CONTENT
 

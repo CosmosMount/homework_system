@@ -380,7 +380,7 @@ export type SubmissionAttachment = {
 export type Feedback = {
   id: string;
   body_html: string;
-  created_by: string;
+  created_by: string | null;
   created_at: string;
   updated_at: string;
   revision: number;
@@ -390,7 +390,7 @@ export type SubmissionVersion = {
   id: string;
   submission_id: string;
   version_number: number;
-  submitted_by: string;
+  submitted_by: string | null;
   text_html: string | null;
   external_url: string | null;
   total_file_bytes: number;
@@ -454,7 +454,7 @@ export type AssignmentExtension = {
   user_id: string;
   extended_deadline: string;
   reason: string;
-  granted_by: string;
+  granted_by: string | null;
   created_at: string;
   updated_at: string;
   revision: number;

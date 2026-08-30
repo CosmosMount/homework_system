@@ -72,7 +72,7 @@ class Submission(Base):
     )
     owner_user_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True,
     )
     owner_team_id: Mapped[UUID | None] = mapped_column(
@@ -123,14 +123,14 @@ class SubmissionVersion(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid7)
     submission_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("submissions.id", ondelete="RESTRICT"),
+        ForeignKey("submissions.id", ondelete="CASCADE"),
         nullable=False,
     )
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    submitted_by: Mapped[UUID] = mapped_column(
+    submitted_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
     text_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
     text_html: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -160,7 +160,7 @@ class VersionFile(Base):
 
     version_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("submission_versions.id", ondelete="RESTRICT"),
+        ForeignKey("submission_versions.id", ondelete="CASCADE"),
         primary_key=True,
     )
     file_id: Mapped[UUID] = mapped_column(
@@ -181,15 +181,15 @@ class Feedback(TimestampRevisionMixin, Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid7)
     version_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("submission_versions.id", ondelete="RESTRICT"),
+        ForeignKey("submission_versions.id", ondelete="CASCADE"),
         nullable=False,
     )
     body_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     body_html: Mapped[str] = mapped_column(Text, nullable=False)
-    created_by: Mapped[UUID] = mapped_column(
+    created_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
 

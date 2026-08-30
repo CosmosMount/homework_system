@@ -37,7 +37,6 @@ class HelpRequest(TimestampRevisionMixin, Base):
                 status = 'resolved'
                 AND length(trim(resolution_markdown)) BETWEEN 1 AND 20000
                 AND resolution_html IS NOT NULL
-                AND resolved_by IS NOT NULL
                 AND resolved_at IS NOT NULL
             )
             """,
@@ -65,12 +64,12 @@ class HelpRequest(TimestampRevisionMixin, Base):
     resolution_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     resolved_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

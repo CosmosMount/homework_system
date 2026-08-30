@@ -116,7 +116,7 @@ class User(TimestampRevisionMixin, Base):
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     disabled_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     disabled_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

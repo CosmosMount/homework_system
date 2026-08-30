@@ -52,7 +52,7 @@ class SubmissionAttachmentResponse(BaseModel):
 class FeedbackResponse(BaseModel):
     id: UUID
     body_html: str
-    created_by: UUID
+    created_by: UUID | None
     created_at: datetime
     updated_at: datetime
     revision: int
@@ -62,7 +62,7 @@ class SubmissionVersionResponse(BaseModel):
     id: UUID
     submission_id: UUID
     version_number: int
-    submitted_by: UUID
+    submitted_by: UUID | None
     text_html: str | None
     external_url: str | None
     total_file_bytes: int

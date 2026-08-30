@@ -13,7 +13,7 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260828_0014"]
+    assert script.get_heads() == ["20260829_0015"]
 
 
 def test_account_activity_migration_has_reversible_static_contract() -> None:
@@ -67,6 +67,29 @@ def test_help_request_migration_is_reversible_and_follows_questionnaires() -> No
     assert '"ix_help_requests_admin_list"' in source
     assert 'ondelete="RESTRICT"' in source
     assert 'op.drop_table("help_requests")' in source
+
+
+def test_account_deletion_migration_has_safe_static_contract() -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+    migration_path = backend_root / "migrations" / "versions" / "20260829_0015_account_deletion.py"
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260829_0015"' in source
+    assert 'down_revision: str | None = "20260828_0014"' in source
+    assert "_SHARED_REFERENCES" in source
+    assert "_PERSONAL_REFERENCES" in source
+    assert 'ondelete="SET NULL"' in source
+    assert 'ondelete="CASCADE"' in source
+    assert '"fk_files_owner_user_id_users"' in source
+    assert '"fk_submissions_owner_user_id_users"' in source
+    assert '"fk_help_requests_created_by_users"' in source
+    assert '"fk_assignment_excellent_version_submission_versions"' in source
+    assert "current_setting('pnx.account_erasure', true) = 'on'" in source
+    assert "NOT EXISTS" in source
+    assert "submission versions are immutable" in source
+    assert "_restore_original_version_guard()" in source
+    assert "ACCOUNT_ERASURE_DOWNGRADE_REQUIRES_BACKUP_RESTORE_OR_FORWARD_FIX" in source
+    assert "captain_user_id" not in source
 
 
 def test_alembic_config_accepts_percent_encoded_database_password() -> None:

@@ -52,6 +52,9 @@ class UserRestoreRequest(BaseModel):
 
 class UserDeleteRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
+    current_password: str = Field(min_length=1, max_length=128)
+    confirmation_email: str = Field(min_length=3, max_length=320)
+    backup_confirmed: bool
 
 
 class UserRoleRequest(BaseModel):

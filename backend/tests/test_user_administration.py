@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
@@ -5,7 +6,6 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit.models import AuditLog
@@ -14,7 +14,11 @@ from app.auth.service import AuthenticatedContext, AuthenticationService
 from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.users.models import User
-from app.users.repository import UserRepository
+from app.users.repository import (
+    AccountErasurePreparation,
+    AccountObjectCleanup,
+    UserRepository,
+)
 from app.users.schemas import UserRoleRequest
 from app.users.service import AuditContext, UserAdministrationService
 
@@ -308,25 +312,124 @@ async def test_inactive_filter_preserves_repository_total_and_page_contract() ->
     )
 
 
+@pytest.mark.parametrize(
+    ("search", "expected_value"),
+    [
+        ("管理员", "admin"),
+        ("学生", "student"),
+        ("正常", "active"),
+        ("待验证", "pending_email"),
+        ("已禁用", "disabled"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_repository_user_search_matches_localized_and_enum_role_status_labels(
+    search: str,
+    expected_value: str,
+) -> None:
+    scalar = AsyncMock(return_value=0)
+    scalars = AsyncMock(return_value=SimpleNamespace(all=Mock(return_value=[])))
+    repository = UserRepository(cast(AsyncSession, SimpleNamespace(scalar=scalar, scalars=scalars)))
+
+    await repository.list_users(
+        page=1,
+        page_size=20,
+        status=None,
+        role=None,
+        cohort_id=None,
+        direction_id=None,
+        search=search,
+        activity=None,
+        inactive_before=None,
+    )
+
+    assert scalars.await_args is not None
+    statement = scalars.await_args.args[0]
+    parameter_values = statement.compile().params.values()
+    assert any(
+        value == expected_value or isinstance(value, (list, tuple)) and expected_value in value
+        for value in parameter_values
+    )
+
+    await repository.list_users(
+        page=1,
+        page_size=20,
+        status=None,
+        role=None,
+        cohort_id=None,
+        direction_id=None,
+        search=expected_value.upper(),
+        activity=None,
+        inactive_before=None,
+    )
+
+    assert scalars.await_args is not None
+    english_statement = scalars.await_args.args[0]
+    english_parameter_values = english_statement.compile().params.values()
+    assert any(
+        value == expected_value or isinstance(value, (list, tuple)) and expected_value in value
+        for value in english_parameter_values
+    )
+
+
+@pytest.mark.asyncio
+async def test_repository_user_search_treats_like_wildcards_as_text() -> None:
+    scalars = AsyncMock(return_value=SimpleNamespace(all=Mock(return_value=[])))
+    scalar = AsyncMock(return_value=0)
+    repository = UserRepository(
+        cast(
+            AsyncSession,
+            SimpleNamespace(scalar=scalar, scalars=scalars),
+        )
+    )
+
+    await repository.list_users(
+        page=1,
+        page_size=20,
+        status=None,
+        role=None,
+        cohort_id=None,
+        direction_id=None,
+        search=r"account\%_",
+        activity=None,
+        inactive_before=None,
+    )
+
+    assert scalars.await_args is not None
+    statement = scalars.await_args.args[0]
+    assert r"%account\\\%\_%" in statement.compile().params.values()
+    assert scalar.await_args is not None
+    count_statement = scalar.await_args.args[0]
+    compiled_statement = str(statement.compile())
+    assert "ESCAPE" in compiled_statement
+    assert "users.email_normalized" in compiled_statement
+    assert "users.full_name" in compiled_statement
+    assert "users.student_number" in compiled_statement
+    assert count_statement.whereclause.compare(statement.whereclause)
+
+
 def build_delete_service(
     *,
     now: datetime,
     target: User,
-    latest_session_activity: datetime | None = None,
+    actor: User | None = None,
     active_admin_count: int = 2,
-    delete_succeeds: bool = True,
+    password_valid: bool = True,
+    preparation: AccountErasurePreparation | None = None,
 ) -> tuple[
     UserAdministrationService,
     SimpleNamespace,
     SimpleNamespace,
-    AsyncMock,
+    SimpleNamespace,
+    Mock,
     Mock,
 ]:
+    current_actor = actor or make_active_admin()
     commit = AsyncMock()
-    session = cast(
-        AsyncSession,
-        SimpleNamespace(commit=commit, rollback=AsyncMock()),
-    )
+    rollback = AsyncMock()
+    flush = AsyncMock()
+    session_namespace = SimpleNamespace(commit=commit, rollback=rollback, flush=flush)
+    session = cast(AsyncSession, session_namespace)
     service = UserAdministrationService(
         session,
         Settings(app_env="test"),
@@ -334,292 +437,469 @@ def build_delete_service(
     )
     authentication = SimpleNamespace(
         acquire_admin_lifecycle_lock=AsyncMock(),
-        lock_sessions_for_user=AsyncMock(return_value=latest_session_activity),
+        lock_sessions_for_user=AsyncMock(),
         lock_one_time_tokens_for_user=AsyncMock(),
+        verify_current_password=Mock(return_value=password_valid),
     )
 
-    async def touch_activity(user: User, *, at: datetime) -> datetime:
-        user.last_active_at = at
-        return at
+    async def get_user(user_id: Any, *, for_update: bool = False) -> User | None:
+        del for_update
+        if user_id == target.id:
+            return target
+        if user_id == current_actor.id:
+            return current_actor
+        return None
 
+    resolved_preparation = preparation or AccountErasurePreparation(
+        object_cleanups=(),
+        deletion_counts={"submissions": 0, "personal_files": 0},
+        teams_transferred=0,
+        teams_dissolved=0,
+        teams_invalidated=0,
+    )
     users = SimpleNamespace(
-        get_by_id=AsyncMock(return_value=target),
-        touch_activity=AsyncMock(side_effect=touch_activity),
+        get_by_id=AsyncMock(side_effect=get_user),
         active_admin_count=AsyncMock(return_value=active_admin_count),
-        delete_if_unreferenced=AsyncMock(return_value=delete_succeeds),
+        prepare_account_erasure=AsyncMock(return_value=resolved_preparation),
+        erase_account=AsyncMock(),
     )
     audit_add = Mock()
+    outbox_add = Mock()
     service._auth = cast(AuthenticationService, authentication)
     service._users = cast(UserRepository, users)
     service._audit = cast(AuditRepository, SimpleNamespace(add=audit_add))
-    return service, authentication, users, commit, audit_add
+    service._outbox = cast(Any, SimpleNamespace(add=outbox_add))
+    return service, authentication, users, session_namespace, audit_add, outbox_add
 
 
 @pytest.mark.asyncio
-async def test_current_admin_cannot_delete_self() -> None:
-    now = datetime(2026, 8, 27, 8, 0, tzinfo=UTC)
-    target = make_account(
-        now=now,
-        role="admin",
-        last_active_at=now - timedelta(days=11),
-    )
-    service, authentication, users, commit, audit_add = build_delete_service(
+async def test_current_admin_must_use_self_service_instead_of_admin_delete() -> None:
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    target = make_account(now=now, role="admin", last_active_at=now)
+    service, authentication, users, session, audit_add, _ = build_delete_service(
         now=now,
         target=target,
+        actor=target,
     )
 
     with pytest.raises(ApplicationError) as caught:
         await service.delete_user(
             target.id,
-            reason="不得删除当前账号",
+            reason="管理员本人申请删除",
+            current_password="current-password",
+            confirmation_email=target.email,
+            backup_confirmed=True,
             audit=audit_context(target),
         )
 
     assert caught.value.status_code == 409
     assert caught.value.code == "STATE_CONFLICT"
-    assert caught.value.message == "不能删除当前登录的管理员账号。"
+    assert "个人资料页" in caught.value.message
     authentication.acquire_admin_lifecycle_lock.assert_awaited_once()
-    authentication.lock_sessions_for_user.assert_not_awaited()
-    users.delete_if_unreferenced.assert_not_awaited()
-    commit.assert_awaited_once()
+    authentication.lock_one_time_tokens_for_user.assert_awaited_once_with(target.id)
+    authentication.lock_sessions_for_user.assert_awaited_once_with(target.id)
+    authentication.verify_current_password.assert_not_called()
+    users.prepare_account_erasure.assert_not_awaited()
+    session.commit.assert_awaited_once()
     denial = audit_add.call_args.args[0]
     assert denial.result == "denied"
     assert denial.change_summary["blocked"] == "current_actor"
 
 
 @pytest.mark.asyncio
-async def test_exactly_ten_days_inactive_account_cannot_be_deleted() -> None:
-    now = datetime(2026, 8, 27, 8, 0, tzinfo=UTC)
-    target = make_account(
-        now=now,
-        last_active_at=now - timedelta(days=10),
-    )
-    service, _, users, commit, audit_add = build_delete_service(
+async def test_admin_delete_rejects_wrong_current_password_without_logging_secrets() -> None:
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    target = make_account(now=now, last_active_at=now)
+    actor = make_active_admin()
+    service, authentication, users, session, audit_add, _ = build_delete_service(
         now=now,
         target=target,
+        actor=actor,
+        password_valid=False,
     )
 
     with pytest.raises(ApplicationError) as caught:
         await service.delete_user(
             target.id,
-            reason="边界保护测试",
-            audit=audit_context(make_active_admin()),
+            reason="用户提出数据删除请求",
+            current_password="never-log-this-password",
+            confirmation_email=target.email,
+            backup_confirmed=True,
+            audit=audit_context(actor),
         )
 
-    assert caught.value.status_code == 409
-    assert caught.value.code == "STATE_CONFLICT"
-    assert caught.value.message == "只能删除严格超过 10 天未进入系统的激活账号。"
-    users.delete_if_unreferenced.assert_not_awaited()
-    commit.assert_awaited_once()
-    assert audit_add.call_args.args[0].change_summary["blocked"] == "not_inactive"
+    assert caught.value.status_code == 401
+    assert caught.value.code == "INVALID_CREDENTIALS"
+    authentication.verify_current_password.assert_called_once_with(
+        actor,
+        "never-log-this-password",
+    )
+    users.prepare_account_erasure.assert_not_awaited()
+    session.commit.assert_awaited_once()
+    denial = audit_add.call_args.args[0]
+    serialized = json.dumps(denial.change_summary, ensure_ascii=False)
+    assert denial.change_summary["blocked"] == "invalid_current_password"
+    assert "never-log-this-password" not in serialized
+    assert target.email not in serialized
 
 
 @pytest.mark.asyncio
-async def test_recent_locked_session_prevents_stale_account_deletion() -> None:
-    now = datetime(2026, 8, 27, 8, 0, tzinfo=UTC)
-    target = make_account(
-        now=now,
-        last_active_at=now - timedelta(days=20),
-    )
-    recent_session = now - timedelta(days=1)
-    service, authentication, users, commit, audit_add = build_delete_service(
+async def test_admin_delete_requires_target_email_and_backup_confirmation() -> None:
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    target = make_account(now=now, last_active_at=now)
+    actor = make_active_admin()
+    service, _, users, session, audit_add, _ = build_delete_service(
         now=now,
         target=target,
-        latest_session_activity=recent_session,
+        actor=actor,
     )
 
-    with pytest.raises(ApplicationError) as caught:
+    with pytest.raises(ApplicationError) as email_error:
         await service.delete_user(
             target.id,
-            reason="会话竞态保护测试",
-            audit=audit_context(make_active_admin()),
+            reason="用户提出数据删除请求",
+            current_password="current-password",
+            confirmation_email="other@connect.hkust-gz.edu.cn",
+            backup_confirmed=True,
+            audit=audit_context(actor),
         )
+    assert email_error.value.code == "VALIDATION_ERROR"
+    assert email_error.value.details[0].field == "confirmation_email"
+    assert audit_add.call_args.args[0].change_summary["blocked"] == ("confirmation_email_mismatch")
 
-    assert caught.value.code == "STATE_CONFLICT"
-    authentication.lock_sessions_for_user.assert_awaited_once_with(target.id)
-    users.touch_activity.assert_awaited_once_with(target, at=recent_session)
-    users.delete_if_unreferenced.assert_not_awaited()
-    commit.assert_awaited_once()
-    assert audit_add.call_args.args[0].change_summary["blocked"] == "not_inactive"
+    service, _, users, session, audit_add, _ = build_delete_service(
+        now=now,
+        target=target,
+        actor=actor,
+    )
+    with pytest.raises(ApplicationError) as backup_error:
+        await service.delete_user(
+            target.id,
+            reason="用户提出数据删除请求",
+            current_password="current-password",
+            confirmation_email=target.email,
+            backup_confirmed=False,
+            audit=audit_context(actor),
+        )
+    assert backup_error.value.code == "VALIDATION_ERROR"
+    assert backup_error.value.details[0].field == "backup_confirmed"
+    assert audit_add.call_args.args[0].change_summary["blocked"] == "backup_not_confirmed"
+    users.prepare_account_erasure.assert_not_awaited()
+    session.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_last_active_admin_cannot_be_permanently_deleted() -> None:
-    now = datetime(2026, 8, 27, 8, 0, tzinfo=UTC)
-    target = make_account(
-        now=now,
-        role="admin",
-        last_active_at=now - timedelta(days=11),
-    )
-    service, _, users, commit, audit_add = build_delete_service(
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    target = make_account(now=now, role="admin", last_active_at=now)
+    actor = make_active_admin()
+    service, _, users, session, audit_add, _ = build_delete_service(
         now=now,
         target=target,
+        actor=actor,
         active_admin_count=1,
     )
 
     with pytest.raises(ApplicationError) as caught:
         await service.delete_user(
             target.id,
-            reason="最后管理员保护测试",
-            audit=audit_context(make_active_admin()),
+            reason="管理员离任账号清理",
+            current_password="current-password",
+            confirmation_email=target.email,
+            backup_confirmed=True,
+            audit=audit_context(actor),
         )
 
     assert caught.value.code == "STATE_CONFLICT"
     assert caught.value.message == "不能删除系统中最后一个激活管理员。"
     users.active_admin_count.assert_awaited_once()
-    users.delete_if_unreferenced.assert_not_awaited()
-    commit.assert_awaited_once()
+    users.prepare_account_erasure.assert_not_awaited()
+    session.commit.assert_awaited_once()
     assert audit_add.call_args.args[0].change_summary["blocked"] == "last_active_admin"
 
 
+@pytest.mark.parametrize(
+    ("status", "recent"),
+    [
+        ("active", True),
+        ("pending_email", True),
+        ("disabled", False),
+    ],
+)
 @pytest.mark.asyncio
-async def test_retained_business_data_returns_stable_delete_error() -> None:
-    now = datetime(2026, 8, 27, 8, 0, tzinfo=UTC)
+async def test_admin_can_delete_recent_pending_or_disabled_accounts(
+    status: str,
+    recent: bool,
+) -> None:
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
     target = make_account(
         now=now,
-        last_active_at=now - timedelta(days=11),
+        status=status,
+        last_active_at=now if recent else now - timedelta(days=60),
     )
-    service, _, users, commit, audit_add = build_delete_service(
+    actor = make_active_admin()
+    service, _, users, session, audit_add, _ = build_delete_service(
         now=now,
         target=target,
-        delete_succeeds=False,
+        actor=actor,
+    )
+
+    await service.delete_user(
+        target.id,
+        reason="用户提出数据删除请求",
+        current_password="current-password",
+        confirmation_email=f"  {target.email.upper()}  ",
+        backup_confirmed=True,
+        audit=audit_context(actor),
+    )
+
+    users.prepare_account_erasure.assert_awaited_once_with(target, now=now)
+    users.erase_account.assert_awaited_once()
+    session.flush.assert_awaited_once()
+    session.commit.assert_awaited_once()
+    success = audit_add.call_args.args[0]
+    assert success.result == "success"
+    assert success.change_summary["previous_status"] == status
+    assert "is_inactive" not in success.change_summary
+
+
+@pytest.mark.asyncio
+async def test_successful_admin_delete_enqueues_encrypted_object_cleanup_and_safe_audit() -> None:
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    target = make_account(now=now, last_active_at=now)
+    actor = make_active_admin()
+    cleanup = AccountObjectCleanup(
+        file_id=uuid4(),
+        object_key="private/account-object-key",
+        minio_upload_id="private-multipart-upload-id",
+    )
+    preparation = AccountErasurePreparation(
+        object_cleanups=(cleanup,),
+        deletion_counts={"submissions": 3, "personal_files": 1},
+        teams_transferred=1,
+        teams_dissolved=0,
+        teams_invalidated=1,
+    )
+    service, _, users, session, audit_add, outbox_add = build_delete_service(
+        now=now,
+        target=target,
+        actor=actor,
+        preparation=preparation,
+    )
+
+    await service.delete_user(
+        target.id,
+        reason="用户提出数据删除请求",
+        current_password="current-password",
+        confirmation_email=target.email,
+        backup_confirmed=True,
+        audit=audit_context(actor),
+    )
+
+    job = outbox_add.call_args.args[0]
+    assert job.job_type == "delete_account_object"
+    assert job.payload == {"object_key": cleanup.object_key}
+    assert cleanup.minio_upload_id not in (job.secret_payload_ciphertext or "")
+    assert cast(Any, service)._outbox_cipher.decrypt(job.secret_payload_ciphertext) == {
+        "minio_upload_id": cleanup.minio_upload_id
+    }
+    users.erase_account.assert_awaited_once_with(target, preparation)
+    session.flush.assert_awaited_once()
+    session.commit.assert_awaited_once()
+
+    success = audit_add.call_args.args[0]
+    serialized = json.dumps(success.change_summary, ensure_ascii=False)
+    assert success.change_summary["deletion_counts"]["submissions"] == 3
+    assert success.change_summary["object_cleanup_count"] == 1
+    assert success.change_summary["teams_transferred"] == 1
+    assert cleanup.object_key not in serialized
+    assert cleanup.minio_upload_id is not None
+    assert cleanup.minio_upload_id not in serialized
+    assert target.email not in serialized
+    assert "current-password" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_self_service_delete_uses_same_erasure_pipeline() -> None:
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    target = make_account(now=now, last_active_at=now)
+    service, authentication, users, session, audit_add, _ = build_delete_service(
+        now=now,
+        target=target,
+        actor=target,
+    )
+
+    await service.delete_own_account(
+        current_password="current-password",
+        confirmation_email=target.email,
+        audit=audit_context(target),
+    )
+
+    authentication.verify_current_password.assert_called_once_with(
+        target,
+        "current-password",
+    )
+    users.prepare_account_erasure.assert_awaited_once_with(target, now=now)
+    users.erase_account.assert_awaited_once()
+    session.commit.assert_awaited_once()
+    success = audit_add.call_args.args[0]
+    assert success.action == "user.self_delete"
+    assert success.change_summary["mode"] == "self_service"
+    assert success.change_summary["reason"] == "self_service_account_deletion"
+
+
+@pytest.mark.asyncio
+async def test_self_service_still_protects_last_active_admin() -> None:
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    target = make_account(now=now, role="admin", last_active_at=now)
+    service, _, users, session, audit_add, _ = build_delete_service(
+        now=now,
+        target=target,
+        actor=target,
+        active_admin_count=1,
     )
 
     with pytest.raises(ApplicationError) as caught:
-        await service.delete_user(
-            target.id,
-            reason="业务外键保护测试",
-            audit=audit_context(make_active_admin()),
+        await service.delete_own_account(
+            current_password="current-password",
+            confirmation_email=target.email,
+            audit=audit_context(target),
         )
 
-    assert caught.value.status_code == 409
-    assert caught.value.code == "USER_DELETE_BLOCKED"
-    assert caught.value.message == "账号存在必须保留的业务记录，请改为禁用账号。"
-    users.delete_if_unreferenced.assert_awaited_once_with(target)
-    commit.assert_awaited_once()
+    assert caught.value.code == "STATE_CONFLICT"
+    users.prepare_account_erasure.assert_not_awaited()
+    session.commit.assert_awaited_once()
     denial = audit_add.call_args.args[0]
-    assert denial.result == "denied"
-    assert denial.change_summary["blocked"] == "retained_business_data"
+    assert denial.action == "user.self_delete"
+    assert denial.change_summary["blocked"] == "last_active_admin"
 
 
 @pytest.mark.asyncio
-async def test_delete_user_locks_tokens_and_sessions_before_user_row() -> None:
-    now = datetime(2026, 8, 27, 8, 0, tzinfo=UTC)
-    target = make_active_admin()
-    target.email = "inactive@connect.hkust-gz.edu.cn"
-    target.email_normalized = target.email
-    target.student_number = "inactive-test"
-    target.role = "student"
-    target.created_at = now - timedelta(days=30)
-    target.email_verified_at = now - timedelta(days=20)
-    target.last_active_at = now - timedelta(days=11)
-
-    commit = AsyncMock()
-    session = cast(
-        AsyncSession,
-        SimpleNamespace(commit=commit, rollback=AsyncMock()),
-    )
-    service = UserAdministrationService(
-        session,
-        Settings(app_env="test"),
-        clock=lambda: now,
+async def test_delete_locks_tokens_and_sessions_before_target_user_row() -> None:
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    target = make_account(now=now, last_active_at=now)
+    actor = make_active_admin()
+    service, authentication, users, _, _, _ = build_delete_service(
+        now=now,
+        target=target,
+        actor=actor,
     )
     lock_order: list[str] = []
 
     async def acquire_lifecycle_lock() -> None:
         lock_order.append("advisory")
 
-    async def lock_sessions(_user_id: Any) -> None:
-        lock_order.append("sessions")
-
     async def lock_tokens(_user_id: Any) -> None:
         lock_order.append("one_time_tokens")
 
-    async def get_user(_user_id: Any, *, for_update: bool = False) -> User:
-        lock_order.append("user_for_update" if for_update else "user_read")
-        return target
+    async def lock_sessions(_user_id: Any) -> None:
+        lock_order.append("sessions")
 
-    async def delete_user(_user: User) -> bool:
-        lock_order.append("delete")
-        return True
+    async def get_user(user_id: Any, *, for_update: bool = False) -> User:
+        assert for_update is True
+        lock_order.append("target_user" if user_id == target.id else "actor_user")
+        return target if user_id == target.id else actor
 
-    service._auth = cast(
-        AuthenticationService,
-        SimpleNamespace(
-            acquire_admin_lifecycle_lock=acquire_lifecycle_lock,
-            lock_sessions_for_user=lock_sessions,
-            lock_one_time_tokens_for_user=lock_tokens,
-        ),
-    )
-    service._users = cast(
-        UserRepository,
-        SimpleNamespace(
-            get_by_id=get_user,
-            delete_if_unreferenced=delete_user,
-        ),
-    )
-    audit_add = Mock()
-    service._audit = cast(AuditRepository, SimpleNamespace(add=audit_add))
+    async def prepare(user: User, *, now: datetime) -> AccountErasurePreparation:
+        del user, now
+        lock_order.append("prepare")
+        return AccountErasurePreparation(
+            object_cleanups=(),
+            deletion_counts={},
+            teams_transferred=0,
+            teams_dissolved=0,
+            teams_invalidated=0,
+        )
+
+    async def erase(
+        user: User,
+        preparation: AccountErasurePreparation,
+    ) -> None:
+        del user, preparation
+        lock_order.append("erase")
+
+    authentication.acquire_admin_lifecycle_lock = acquire_lifecycle_lock
+    authentication.lock_one_time_tokens_for_user = lock_tokens
+    authentication.lock_sessions_for_user = lock_sessions
+    authentication.verify_current_password = Mock(return_value=True)
+    users.get_by_id = get_user
+    users.prepare_account_erasure = prepare
+    users.erase_account = erase
 
     await service.delete_user(
         target.id,
-        reason="清理长期未进入账号",
-        audit=audit_context(make_active_admin()),
+        reason="用户提出数据删除请求",
+        current_password="current-password",
+        confirmation_email=target.email,
+        backup_confirmed=True,
+        audit=audit_context(actor),
     )
 
     assert lock_order == [
         "advisory",
-        "user_read",
         "one_time_tokens",
         "sessions",
-        "user_for_update",
-        "delete",
+        "target_user",
+        "actor_user",
+        "prepare",
+        "erase",
     ]
-    commit.assert_awaited_once()
-    assert audit_add.call_args.args[0].action == "user.delete"
 
 
-class _DatabaseError(Exception):
-    def __init__(self, sqlstate: str) -> None:
-        super().__init__(sqlstate)
-        self.sqlstate = sqlstate
-
-
-class _FailingNestedTransaction:
-    def __init__(self, error: IntegrityError) -> None:
-        self._error = error
-
-    async def __aenter__(self) -> None:
-        raise self._error
-
-    async def __aexit__(self, *args: Any) -> None:
-        return None
-
-
-def repository_raising(error: IntegrityError) -> UserRepository:
-    session = cast(
-        AsyncSession,
-        SimpleNamespace(
-            begin_nested=Mock(return_value=_FailingNestedTransaction(error)),
-        ),
+@pytest.mark.asyncio
+async def test_admin_delete_rejects_reason_that_is_only_whitespace() -> None:
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    target = make_account(now=now, last_active_at=now)
+    actor = make_active_admin()
+    service, authentication, users, session, audit_add, _ = build_delete_service(
+        now=now,
+        target=target,
+        actor=actor,
     )
-    return UserRepository(session)
+
+    with pytest.raises(ApplicationError) as caught:
+        await service.delete_user(
+            target.id,
+            reason="   ",
+            current_password="current-password",
+            confirmation_email=target.email,
+            backup_confirmed=True,
+            audit=audit_context(actor),
+        )
+
+    assert caught.value.status_code == 400
+    assert caught.value.code == "VALIDATION_ERROR"
+    assert caught.value.details[0].field == "reason"
+    authentication.verify_current_password.assert_not_called()
+    users.prepare_account_erasure.assert_not_awaited()
+    session.commit.assert_awaited_once()
+    denial = audit_add.call_args.args[0]
+    assert denial.change_summary == {
+        "mode": "admin",
+        "reason": "",
+        "blocked": "invalid_reason",
+    }
 
 
 @pytest.mark.asyncio
-async def test_delete_if_unreferenced_maps_foreign_key_violation_to_false() -> None:
-    error = IntegrityError("DELETE FROM users", {}, _DatabaseError("23503"))
-    repository = repository_raising(error)
+async def test_repository_erasure_enables_transaction_scoped_version_guard() -> None:
+    now = datetime(2026, 8, 29, 8, 0, tzinfo=UTC)
+    target = make_account(now=now, last_active_at=now)
+    session_namespace = SimpleNamespace(
+        execute=AsyncMock(),
+        delete=AsyncMock(),
+        flush=AsyncMock(),
+    )
+    repository = UserRepository(cast(AsyncSession, session_namespace))
+    preparation = AccountErasurePreparation(
+        object_cleanups=(),
+        deletion_counts={},
+        teams_transferred=0,
+        teams_dissolved=0,
+        teams_invalidated=0,
+    )
 
-    assert await repository.delete_if_unreferenced(make_active_admin()) is False
+    await repository.erase_account(target, preparation)
 
-
-@pytest.mark.asyncio
-async def test_delete_if_unreferenced_reraises_other_integrity_errors() -> None:
-    error = IntegrityError("DELETE FROM users", {}, _DatabaseError("40001"))
-    repository = repository_raising(error)
-
-    with pytest.raises(IntegrityError) as caught:
-        await repository.delete_if_unreferenced(make_active_admin())
-
-    assert caught.value is error
+    statement = session_namespace.execute.await_args.args[0]
+    assert str(statement) == "SET LOCAL pnx.account_erasure = 'on'"

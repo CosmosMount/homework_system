@@ -38,8 +38,8 @@ class StoredFile(Base):
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid7)
-    owner_user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    owner_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     purpose: Mapped[str] = mapped_column(String(40), nullable=False)
     object_key: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
@@ -81,7 +81,7 @@ class UploadSession(Base):
         unique=True,
     )
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     purpose: Mapped[str] = mapped_column(String(40), nullable=False)
     context_type: Mapped[str] = mapped_column(String(40), nullable=False)

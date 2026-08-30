@@ -44,8 +44,8 @@ class KnowledgeSyncRun(Base):
         String(16), nullable=False, default="pending", server_default="pending"
     )
     source_url: Mapped[str] = mapped_column(String(1000), nullable=False)
-    triggered_by: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    triggered_by: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

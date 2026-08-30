@@ -12,6 +12,7 @@ from app.notifications.service import (
     apply_token_superseded,
     token_email_is_deliverable,
 )
+from app.uploads.object_store import ObjectStoreError
 
 
 def make_job(
@@ -213,3 +214,120 @@ async def test_worker_sends_current_token_email_once() -> None:
     assert processor.sent_ids == [job.id]
     assert processor.superseded_ids == []
     assert processor.failed_ids == []
+
+
+def make_account_object_job(*, object_key: object = "account/private-object") -> OutboxJob:
+    now = datetime.now(UTC)
+    return OutboxJob(
+        id=uuid4(),
+        job_type="delete_account_object",
+        event_key=f"account:{uuid4()}:object:{uuid4()}",
+        payload={"object_key": object_key},
+        secret_payload_ciphertext="encrypted-upload-id",
+        status="processing",
+        available_at=now,
+        attempt_count=0,
+        max_attempts=8,
+        locked_by="worker-1",
+        locked_at=now,
+        last_error_code=None,
+        last_error_summary=None,
+        created_at=now,
+        sent_at=None,
+    )
+
+
+class RecordingObjectStore:
+    def __init__(self, *, fail_delete: bool = False) -> None:
+        self.fail_delete = fail_delete
+        self.abort_calls: list[tuple[str, str]] = []
+        self.delete_calls: list[str] = []
+
+    async def abort_multipart(self, *, object_key: str, upload_id: str) -> None:
+        self.abort_calls.append((object_key, upload_id))
+
+    async def delete_object(self, object_key: str) -> None:
+        self.delete_calls.append(object_key)
+        if self.fail_delete:
+            raise ObjectStoreError("OBJECT_DELETE_FAILED")
+
+
+class ObjectCleanupProcessorHarness(OutboxProcessor):
+    def __init__(
+        self,
+        job: OutboxJob,
+        *,
+        upload_id: object = "multipart-upload-id",
+        fail_delete: bool = False,
+    ) -> None:
+        self._job = job
+        self._upload_id = upload_id
+        self.object_store = RecordingObjectStore(fail_delete=fail_delete)
+        self._object_store = self.object_store
+        self.sent_ids: list[UUID] = []
+        self.failures: list[tuple[UUID, str, bool]] = []
+
+    async def _claim(self, now: datetime) -> list[OutboxJob]:
+        return [self._job]
+
+    def _secret_payload(self, job: OutboxJob) -> dict[str, object]:
+        del job
+        return {} if self._upload_id is None else {"minio_upload_id": self._upload_id}
+
+    async def _mark_sent(self, job_id: UUID, now: datetime) -> None:
+        self.sent_ids.append(job_id)
+
+    async def _mark_failed(
+        self,
+        job_id: UUID,
+        *,
+        now: datetime,
+        code: str,
+        permanent: bool,
+    ) -> None:
+        self.failures.append((job_id, code, permanent))
+
+
+@pytest.mark.asyncio
+async def test_worker_aborts_multipart_then_deletes_account_object_idempotently() -> None:
+    job = make_account_object_job()
+    processor = ObjectCleanupProcessorHarness(job)
+
+    assert await processor.run_once() == 1
+    assert processor.object_store.abort_calls == [("account/private-object", "multipart-upload-id")]
+    assert processor.object_store.delete_calls == ["account/private-object"]
+    assert processor.sent_ids == [job.id]
+    assert processor.failures == []
+
+
+@pytest.mark.asyncio
+async def test_worker_deletes_completed_account_object_without_multipart_abort() -> None:
+    job = make_account_object_job()
+    processor = ObjectCleanupProcessorHarness(job, upload_id=None)
+
+    assert await processor.run_once() == 1
+    assert processor.object_store.abort_calls == []
+    assert processor.object_store.delete_calls == ["account/private-object"]
+    assert processor.sent_ids == [job.id]
+
+
+@pytest.mark.asyncio
+async def test_worker_retries_account_object_store_failure_without_leaking_key() -> None:
+    job = make_account_object_job()
+    processor = ObjectCleanupProcessorHarness(job, fail_delete=True)
+
+    assert await processor.run_once() == 1
+    assert processor.sent_ids == []
+    assert processor.failures == [(job.id, "OBJECT_DELETE_FAILED", False)]
+    assert "account/private-object" not in processor.failures[0][1]
+
+
+@pytest.mark.asyncio
+async def test_worker_marks_invalid_account_object_payload_permanent() -> None:
+    job = make_account_object_job(object_key=123)
+    processor = ObjectCleanupProcessorHarness(job)
+
+    assert await processor.run_once() == 1
+    assert processor.object_store.delete_calls == []
+    assert processor.sent_ids == []
+    assert processor.failures == [(job.id, "INVALID_JOB_PAYLOAD", True)]

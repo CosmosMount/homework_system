@@ -23,7 +23,11 @@ def test_admin_user_activity_filter_and_page_response_are_explicit() -> None:
         if parameter["in"] == "query"
     }
 
-    assert {"page", "page_size", "activity"} <= set(parameters)
+    assert {"page", "page_size", "search", "activity"} <= set(parameters)
+    assert parameters["page"]["schema"]["maximum"] == 10_000
+    assert parameters["page_size"]["schema"]["maximum"] == 100
+    search_variants = parameters["search"]["schema"]["anyOf"]
+    assert {variant.get("maxLength") for variant in search_variants} >= {200}
     assert "inactive" in str(parameters["activity"]["schema"])
     response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
     assert response_schema == {"$ref": "#/components/schemas/UserPage"}
@@ -35,18 +39,36 @@ def test_admin_user_activity_filter_and_page_response_are_explicit() -> None:
     assert admin_user["properties"]["inactive_days"]["minimum"] == 0
 
 
-def test_admin_user_delete_requires_reason_and_returns_empty_204() -> None:
+def test_account_delete_contracts_require_reauthentication_and_confirmation() -> None:
     schema = create_app(Settings(app_env="test")).openapi()
-    operation = schema["paths"]["/api/v1/admin/users/{user_id}"]["delete"]
-    request_schema = operation["requestBody"]["content"]["application/json"]["schema"]
+    admin_operation = schema["paths"]["/api/v1/admin/users/{user_id}"]["delete"]
+    admin_request_schema = admin_operation["requestBody"]["content"]["application/json"]["schema"]
 
-    assert request_schema == {"$ref": "#/components/schemas/UserDeleteRequest"}
+    assert admin_request_schema == {"$ref": "#/components/schemas/UserDeleteRequest"}
     delete_request = schema["components"]["schemas"]["UserDeleteRequest"]
-    assert delete_request["required"] == ["reason"]
+    assert set(delete_request["required"]) == {
+        "reason",
+        "current_password",
+        "confirmation_email",
+        "backup_confirmed",
+    }
     assert delete_request["properties"]["reason"]["minLength"] == 3
     assert delete_request["properties"]["reason"]["maxLength"] == 500
-    assert set(operation["responses"]) >= {"204", "422"}
-    assert "content" not in operation["responses"]["204"]
+    assert delete_request["properties"]["current_password"]["maxLength"] == 128
+    assert delete_request["properties"]["confirmation_email"]["maxLength"] == 320
+    assert set(admin_operation["responses"]) >= {"204", "422"}
+    assert "content" not in admin_operation["responses"]["204"]
+
+    self_operation = schema["paths"]["/api/v1/auth/account"]["delete"]
+    self_request = schema["components"]["schemas"]["AccountDeleteRequest"]
+    assert set(self_request["required"]) == {
+        "current_password",
+        "confirmation_email",
+    }
+    assert self_operation["requestBody"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/AccountDeleteRequest"
+    }
+    assert "content" not in self_operation["responses"]["204"]
 
 
 def test_admin_user_mutations_return_activity_aware_user_schema() -> None:
@@ -130,12 +152,12 @@ def test_help_request_openapi_exposes_private_public_and_admin_contracts() -> No
 
     assert expected_paths <= set(paths)
     operation_count = sum(
-        method in {"get", "post", "put"}
+        method in {"delete", "get", "post", "put"}
         for path, operations in paths.items()
         if "help-requests" in path
         for method in operations
     )
-    assert operation_count == 8
+    assert operation_count == 9
 
     assert paths["/api/v1/help-requests"]["post"]["responses"]["201"]["content"][
         "application/json"
@@ -155,6 +177,9 @@ def test_help_request_openapi_exposes_private_public_and_admin_contracts() -> No
     assert public_parameters == {"page", "page_size"}
     assert {"type", "status", "query", "page", "page_size"} <= admin_parameters
 
+    delete_responses = paths["/api/v1/admin/help-requests/{request_id}"]["delete"]["responses"]
+    assert "204" in delete_responses
+    assert "content" not in delete_responses["204"]
     assert paths["/api/v1/help-requests/public/{request_id}"]["get"]["responses"]["200"]["content"][
         "application/json"
     ]["schema"] == {"$ref": "#/components/schemas/PublicHelpRequestDetail"}
@@ -218,3 +243,5 @@ def test_stage_three_openapi_contains_dashboard_announcements_notifications_and_
     )
     assert idempotency_parameter["in"] == "header"
     assert idempotency_parameter["required"] is True
+    delete_operation = paths["/api/v1/admin/announcements/{announcement_id}"]["delete"]
+    assert "204" in delete_operation["responses"]

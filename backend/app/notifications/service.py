@@ -21,6 +21,7 @@ from app.notifications.mailer import (
 )
 from app.notifications.models import OutboxJob
 from app.notifications.repository import OutboxRepository
+from app.uploads.object_store import MinioObjectStore, ObjectStoreError
 
 RETRY_DELAYS = (
     timedelta(minutes=1),
@@ -113,6 +114,12 @@ class KnowledgeSyncProcessor(Protocol):
     async def mark_failed(self, run_id: UUID, error: KnowledgeSyncError) -> None: ...
 
 
+class AccountObjectStore(Protocol):
+    async def abort_multipart(self, *, object_key: str, upload_id: str) -> None: ...
+
+    async def delete_object(self, object_key: str) -> None: ...
+
+
 class OutboxProcessor:
     def __init__(
         self,
@@ -123,6 +130,7 @@ class OutboxProcessor:
         announcement_publisher: AnnouncementPublisher | None = None,
         assignment_processor: AssignmentProcessor | None = None,
         knowledge_sync: KnowledgeSyncProcessor | None = None,
+        object_store: AccountObjectStore | None = None,
     ) -> None:
         self._factory = factory
         self._settings = settings
@@ -132,6 +140,7 @@ class OutboxProcessor:
         )
         self._assignment_processor = assignment_processor or ScheduledAssignmentProcessor(factory)
         self._knowledge_sync = knowledge_sync or KnowledgeSynchronizer(factory, settings)
+        self._object_store = object_store or MinioObjectStore(settings)
         self._cipher = OutboxCipher(settings.outbox_encryption_key.get_secret_value())
 
     async def _claim(self, now: datetime) -> list[OutboxJob]:
@@ -160,6 +169,9 @@ class OutboxProcessor:
             job.locked_at = None
             job.last_error_code = None
             job.last_error_summary = None
+            if job.job_type == "delete_account_object":
+                job.payload = {}
+                job.secret_payload_ciphertext = None
 
     async def _mark_failed(
         self,
@@ -173,16 +185,18 @@ class OutboxProcessor:
             job = await OutboxRepository(session).get_by_id(job_id, for_update=True)
             if job is None or job.status != "processing":
                 return
+            if job.job_type == "sync_knowledge":
+                summary = "知识库同步任务失败，未记录飞书凭证或服务响应正文。"
+            elif job.job_type == "delete_account_object":
+                summary = "账号对象清理失败，未记录对象键或上传标识。"
+            else:
+                summary = None
             apply_delivery_failure(
                 job,
                 now=now,
                 code=code,
                 permanent=permanent,
-                summary=(
-                    "知识库同步任务失败，未记录飞书凭证或服务响应正文。"
-                    if job.job_type == "sync_knowledge"
-                    else None
-                ),
+                summary=summary,
             )
 
     async def _token_email_is_deliverable(
@@ -204,6 +218,21 @@ class OutboxProcessor:
                 return
             apply_token_superseded(job)
 
+    async def _delete_account_object(self, job: OutboxJob) -> None:
+        object_key = job.payload.get("object_key")
+        if not isinstance(object_key, str) or not object_key:
+            raise ValueError("invalid account object key")
+        secret_payload = self._secret_payload(job)
+        minio_upload_id = secret_payload.get("minio_upload_id")
+        if minio_upload_id is not None:
+            if not isinstance(minio_upload_id, str) or not minio_upload_id:
+                raise ValueError("invalid multipart upload id")
+            await self._object_store.abort_multipart(
+                object_key=object_key,
+                upload_id=minio_upload_id,
+            )
+        await self._object_store.delete_object(object_key)
+
     async def run_once(self) -> int:
         now = datetime.now(UTC)
         jobs = await self._claim(now)
@@ -224,6 +253,8 @@ class OutboxProcessor:
                 elif job.job_type == "sync_knowledge":
                     run_id = UUID(str(job.payload["run_id"]))
                     await self._knowledge_sync.synchronize(run_id)
+                elif job.job_type == "delete_account_object":
+                    await self._delete_account_object(job)
                 else:
                     if not await self._token_email_is_deliverable(job, datetime.now(UTC)):
                         await self._mark_token_superseded(job.id)
@@ -249,6 +280,13 @@ class OutboxProcessor:
                     now=datetime.now(UTC),
                     code=str(exc) or "PERMANENT_FAILURE",
                     permanent=True,
+                )
+            except ObjectStoreError as exc:
+                await self._mark_failed(
+                    job.id,
+                    now=datetime.now(UTC),
+                    code=str(exc) or "OBJECT_STORE_FAILURE",
+                    permanent=False,
                 )
             except (TransientMailError, OSError) as exc:
                 await self._mark_failed(

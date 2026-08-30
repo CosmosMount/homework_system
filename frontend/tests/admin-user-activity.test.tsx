@@ -14,6 +14,9 @@ import type {
 
 const {
   csrfFetchMock,
+  redirectMock,
+  refreshMock,
+  replaceMock,
   getAdminAnnouncementsMock,
   getAdminAssignmentsMock,
   getAdminUsersMock,
@@ -23,6 +26,9 @@ const {
   requireAdminMock,
 } = vi.hoisted(() => ({
   csrfFetchMock: vi.fn(),
+  redirectMock: vi.fn(),
+  refreshMock: vi.fn(),
+  replaceMock: vi.fn(),
   getAdminAnnouncementsMock: vi.fn(),
   getAdminAssignmentsMock: vi.fn(),
   getAdminUsersMock: vi.fn(),
@@ -33,8 +39,9 @@ const {
 }));
 
 vi.mock("next/navigation", () => ({
+  redirect: redirectMock,
   usePathname: () => "/admin/users",
-  useRouter: () => ({ refresh: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ refresh: refreshMock, replace: replaceMock }),
 }));
 
 vi.mock("@/lib/api/client", async (importOriginal) => ({
@@ -127,11 +134,16 @@ const disabledUser: AdminUser = {
 
 const directions: Direction[] = [];
 
-function userPage(items: AdminUser[], total = items.length): AdminUserPage {
+function userPage(
+  items: AdminUser[],
+  total = items.length,
+  page = 1,
+  pageSize = 20,
+): AdminUserPage {
   return {
     items,
-    page: 1,
-    page_size: 100,
+    page,
+    page_size: pageSize,
     total,
   };
 }
@@ -139,6 +151,9 @@ function userPage(items: AdminUser[], total = items.length): AdminUserPage {
 describe("admin account activity UI", () => {
   beforeEach(() => {
     csrfFetchMock.mockReset();
+    redirectMock.mockReset();
+    refreshMock.mockReset();
+    replaceMock.mockReset();
     getAdminAnnouncementsMock.mockReset();
     getAdminAssignmentsMock.mockReset();
     getAdminUsersMock.mockReset();
@@ -154,7 +169,12 @@ describe("admin account activity UI", () => {
     getDirectionsMock.mockResolvedValue(directions);
     getOutboxJobsMock.mockResolvedValue({ items: [] });
     getAdminUsersMock.mockImplementation(
-      (query?: { activity?: "inactive" }) =>
+      (query?: {
+        activity?: "inactive";
+        page?: number;
+        pageSize?: number;
+        search?: string;
+      }) =>
         Promise.resolve(
           query?.activity === "inactive"
             ? userPage([inactiveUser], 1)
@@ -180,22 +200,78 @@ describe("admin account activity UI", () => {
     });
   });
 
-  it("passes only the supported activity filter to the admin user API", async () => {
+  it("passes the activity, page and search filters to the admin user API", async () => {
+    getAdminUsersMock.mockResolvedValueOnce(userPage([inactiveUser], 155, 2, 20));
     render(
       await AdminUsersPage({
-        searchParams: Promise.resolve({ activity: "inactive" }),
+        searchParams: Promise.resolve({
+          activity: "inactive",
+          page: "2",
+          search: "沉睡学生",
+        }),
       }),
     );
 
     expect(getAdminUsersMock).toHaveBeenCalledWith({
       activity: "inactive",
-      pageSize: 100,
+      page: 2,
+      pageSize: 20,
+      search: "沉睡学生",
     });
     expect(
       screen.getByRole("link", { name: "超过 10 天未进入" }),
     ).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("heading", { name: "沉睡学生" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "近期学生" })).not.toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "搜索用户" })).toHaveValue(
+      "沉睡学生",
+    );
+
+    getAdminUsersMock.mockResolvedValueOnce(userPage([], 155, 999, 20));
+    await AdminUsersPage({
+      searchParams: Promise.resolve({
+        activity: "inactive",
+        page: "999",
+        search: "沉睡学生",
+      }),
+    });
+
+    expect(redirectMock).toHaveBeenCalledOnce();
+    const redirectUrl = new URL(
+      String(redirectMock.mock.calls[0]?.[0]),
+      "https://example.test",
+    );
+    expect(redirectUrl.searchParams.get("activity")).toBe("inactive");
+    expect(redirectUrl.searchParams.get("search")).toBe("沉睡学生");
+    expect(redirectUrl.searchParams.get("page")).toBe("8");
+  });
+
+  it("exposes every server page instead of treating the first 100 users as complete", () => {
+    render(
+      <UserAdminPanel
+        activity="inactive"
+        directions={directions}
+        initialTotal={155}
+        initialUsers={[inactiveUser]}
+        page={2}
+        pageSize={20}
+        search="待处理账号"
+      />,
+    );
+
+    expect(screen.getByText("本页显示 1 个，共 155 个匹配账号")).toBeInTheDocument();
+    expect(screen.getByText("第 2 / 8 页")).toBeInTheDocument();
+
+    const previous = screen.getByRole("link", { name: "上一页" });
+    const next = screen.getByRole("link", { name: "下一页" });
+    const previousUrl = new URL(previous.getAttribute("href") ?? "", "https://example.test");
+    const nextUrl = new URL(next.getAttribute("href") ?? "", "https://example.test");
+    expect(previousUrl.searchParams.get("page")).toBeNull();
+    expect(nextUrl.searchParams.get("page")).toBe("3");
+    for (const url of [previousUrl, nextUrl]) {
+      expect(url.searchParams.get("search")).toBe("待处理账号");
+      expect(url.searchParams.get("activity")).toBe("inactive");
+    }
   });
 
   it("renders recent, inactive and never-entered activity states", () => {
@@ -217,7 +293,7 @@ describe("admin account activity UI", () => {
     ).toBeInTheDocument();
     expect(
       screen.getAllByRole("button", { name: "永久删除账号" }),
-    ).toHaveLength(1);
+    ).toHaveLength(3);
   });
 
   it("keeps activity fields after an ordinary profile update", async () => {
@@ -279,12 +355,6 @@ describe("admin account activity UI", () => {
     expect(screen.queryByText("pending_email")).not.toBeInTheDocument();
     expect(screen.queryByText("disabled")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("搜索用户"), {
-      target: { value: "已禁用" },
-    });
-    expect(screen.getByRole("heading", { name: "停用学生" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "近期学生" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "待验证学生" })).not.toBeInTheDocument();
   });
 
   it("dispatches the clicked role action and updates the account role", async () => {
@@ -299,6 +369,7 @@ describe("admin account activity UI", () => {
         directions={directions}
         initialTotal={1}
         initialUsers={[recentUser]}
+        search="学生"
       />,
     );
 
@@ -308,6 +379,7 @@ describe("admin account activity UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "设为管理员" }));
 
     await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledOnce());
+    expect(refreshMock).toHaveBeenCalledOnce();
     expect(csrfFetchMock).toHaveBeenCalledWith("/admin/users/recent-id/role", {
       method: "POST",
       body: JSON.stringify({
@@ -320,13 +392,9 @@ describe("admin account activity UI", () => {
     ).toBeInTheDocument();
   });
 
-  it("requires confirmation and removes a successfully deleted account", async () => {
-    const confirm = vi
-      .spyOn(window, "confirm")
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(true);
+  it("submits all inline confirmations and removes a deleted account", async () => {
     csrfFetchMock.mockResolvedValue(undefined);
-    render(
+    const { unmount } = render(
       <UserAdminPanel
         activity="inactive"
         directions={directions}
@@ -334,34 +402,115 @@ describe("admin account activity UI", () => {
         initialUsers={[inactiveUser]}
       />,
     );
-    fireEvent.change(screen.getByLabelText("操作原因"), {
-      target: { value: "长期未使用" },
+    fireEvent.change(screen.getByLabelText("永久删除原因"), {
+      target: { value: "用户提出删除请求" },
     });
-
-    fireEvent.click(screen.getByRole("button", { name: "永久删除账号" }));
-    expect(confirm).toHaveBeenCalledOnce();
-    expect(csrfFetchMock).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("管理员当前密码"), {
+      target: { value: "admin-current-password" },
+    });
+    fireEvent.change(screen.getByLabelText("确认目标账号邮箱"), {
+      target: { value: inactiveUser.email },
+    });
+    fireEvent.click(
+      screen.getByLabelText(/我已确认近期 PostgreSQL 与 MinIO 加密备份可恢复/),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "永久删除账号" }));
     await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledOnce());
+    expect(refreshMock).toHaveBeenCalledOnce();
+    expect(replaceMock).not.toHaveBeenCalled();
     expect(csrfFetchMock).toHaveBeenCalledWith("/admin/users/inactive-id", {
       method: "DELETE",
-      body: JSON.stringify({ reason: "长期未使用" }),
+      body: JSON.stringify({
+        reason: "用户提出删除请求",
+        current_password: "admin-current-password",
+        confirmation_email: inactiveUser.email,
+        backup_confirmed: true,
+      }),
     });
     expect(
       screen.queryByRole("heading", { name: "沉睡学生" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("显示 0 / 0 个账号")).toBeInTheDocument();
+    expect(screen.getByText("本页显示 0 个，共 0 个匹配账号")).toBeInTheDocument();
     expect(screen.getByText("已永久删除账号 沉睡学生。")).toBeInTheDocument();
+    unmount();
+    csrfFetchMock.mockClear();
+    refreshMock.mockClear();
+    replaceMock.mockClear();
+
+    render(
+      <UserAdminPanel
+        activity="inactive"
+        directions={directions}
+        initialTotal={141}
+        initialUsers={[inactiveUser]}
+        page={8}
+        pageSize={20}
+        search="沉睡"
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("永久删除原因"), {
+      target: { value: "用户提出删除请求" },
+    });
+    fireEvent.change(screen.getByLabelText("管理员当前密码"), {
+      target: { value: "admin-current-password" },
+    });
+    fireEvent.change(screen.getByLabelText("确认目标账号邮箱"), {
+      target: { value: inactiveUser.email },
+    });
+    fireEvent.click(
+      screen.getByLabelText(/我已确认近期 PostgreSQL 与 MinIO 加密备份可恢复/),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "永久删除账号" }));
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledOnce());
+    expect(refreshMock).not.toHaveBeenCalled();
+    expect(replaceMock).toHaveBeenCalledOnce();
+    const replacementUrl = new URL(
+      String(replaceMock.mock.calls[0]?.[0]),
+      "https://example.test",
+    );
+    expect(replacementUrl.searchParams.get("activity")).toBe("inactive");
+    expect(replacementUrl.searchParams.get("search")).toBe("沉睡");
+    expect(replacementUrl.searchParams.get("page")).toBe("7");
   });
 
-  it("keeps the account and displays a backend deletion conflict", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("shows deletion for a recent account and rejects a mismatched email locally", () => {
+    render(
+      <UserAdminPanel
+        activity={null}
+        directions={directions}
+        initialTotal={1}
+        initialUsers={[recentUser]}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("永久删除原因"), {
+      target: { value: "用户提出删除请求" },
+    });
+    fireEvent.change(screen.getByLabelText("管理员当前密码"), {
+      target: { value: "admin-current-password" },
+    });
+    fireEvent.change(screen.getByLabelText("确认目标账号邮箱"), {
+      target: { value: inactiveUser.email },
+    });
+    fireEvent.click(
+      screen.getByLabelText(/我已确认近期 PostgreSQL 与 MinIO 加密备份可恢复/),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "永久删除账号" }));
+
+    expect(
+      screen.getByText("确认邮箱必须与待删除账号邮箱完全一致。"),
+    ).toBeInTheDocument();
+    expect(csrfFetchMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "近期学生" })).toBeInTheDocument();
+  });
+
+  it("keeps the account, displays backend denial and clears the password field", async () => {
     csrfFetchMock.mockRejectedValue(
-      new ApiError(new Response(null, { status: 409 }), {
+      new ApiError(new Response(null, { status: 401 }), {
         error: {
-          code: "ACCOUNT_HAS_RETAINED_DATA",
-          message: "账号存在需保留业务数据，请改为禁用账号。",
+          code: "INVALID_CREDENTIALS",
+          message: "当前密码不正确。",
           request_id: "request-id",
         },
       }),
@@ -374,14 +523,23 @@ describe("admin account activity UI", () => {
         initialUsers={[inactiveUser]}
       />,
     );
-    fireEvent.change(screen.getByLabelText("操作原因"), {
-      target: { value: "长期未使用" },
+    fireEvent.change(screen.getByLabelText("永久删除原因"), {
+      target: { value: "用户提出删除请求" },
     });
+    const password = screen.getByLabelText("管理员当前密码");
+    fireEvent.change(password, {
+      target: { value: "wrong-password" },
+    });
+    fireEvent.change(screen.getByLabelText("确认目标账号邮箱"), {
+      target: { value: inactiveUser.email },
+    });
+    fireEvent.click(
+      screen.getByLabelText(/我已确认近期 PostgreSQL 与 MinIO 加密备份可恢复/),
+    );
     fireEvent.click(screen.getByRole("button", { name: "永久删除账号" }));
 
-    expect(
-      await screen.findByText("账号存在需保留业务数据，请改为禁用账号。"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("当前密码不正确。")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "沉睡学生" })).toBeInTheDocument();
+    expect(password).toHaveValue("");
   });
 });

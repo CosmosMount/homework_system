@@ -1,5 +1,6 @@
 import { ProfileEditor } from "@/components/admin/profile-editor";
 import { AppShell } from "@/components/layout/app-shell";
+import { AccountDeletion } from "@/components/profile/account-deletion";
 import { getDashboard, requireUser } from "@/lib/api/server";
 import { isAdminView } from "@/lib/api/types";
 
@@ -34,6 +35,7 @@ export default async function ProfilePage() {
         ))}
       </dl>
       {isAdminView(user) ? <ProfileEditor initialUser={user} /> : null}
+      <AccountDeletion user={user} />
     </AppShell>
   );
 }

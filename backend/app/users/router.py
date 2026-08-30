@@ -53,7 +53,7 @@ def _audit_context(request: Request, admin: AdminContextDependency) -> AuditCont
 async def list_users(
     service: UserAdministrationServiceDependency,
     _admin: AdminContextDependency,
-    page: Annotated[int, Query(ge=1)] = 1,
+    page: Annotated[int, Query(ge=1, le=10_000)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     account_status: Annotated[
         Literal["pending_email", "active", "disabled"] | None,
@@ -153,6 +153,9 @@ async def delete_user(
     await service.delete_user(
         user_id,
         reason=payload.reason,
+        current_password=payload.current_password,
+        confirmation_email=payload.confirmation_email,
+        backup_confirmed=payload.backup_confirmed,
         audit=_audit_context(request, admin),
     )
 
