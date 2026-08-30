@@ -335,6 +335,57 @@ describe("admin permissions UI", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the assignment when delete confirmation is cancelled", () => {
+    const published: AssignmentAdmin = {
+      ...assignment(),
+      status: "published",
+      published_at: "2026-08-25T10:00:00Z",
+    };
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(
+      <AssignmentEditor
+        directions={[]}
+        initialAssignment={published}
+        initialSubmissions={[]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "删除作业" }));
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(csrfFetchMock).not.toHaveBeenCalled();
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("confirms and deletes a published assignment before returning to the list", async () => {
+    const published: AssignmentAdmin = {
+      ...assignment(),
+      status: "published",
+      published_at: "2026-08-25T10:00:00Z",
+    };
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    csrfFetchMock.mockResolvedValue(undefined);
+
+    render(
+      <AssignmentEditor
+        directions={[]}
+        initialAssignment={published}
+        initialSubmissions={[]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "删除作业" }));
+
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledOnce());
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining("学生列表、详情和优秀作业入口隐藏"),
+    );
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/admin/assignments/assignment-1",
+      { method: "DELETE" },
+    );
+    expect(replaceMock).toHaveBeenCalledWith("/admin/assignments");
+  });
+
   it("saves the admin own profile through the audited admin endpoint", async () => {
     csrfFetchMock.mockResolvedValue({ ...admin, full_name: "新管理员", revision: 4 });
     render(<ProfileEditor initialUser={admin} />);

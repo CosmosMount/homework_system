@@ -184,6 +184,25 @@ async def patch_assignment(
     )
 
 
+@router.delete(
+    "/admin/assignments/{assignment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def delete_assignment(
+    assignment_id: UUID,
+    request: Request,
+    service: AssignmentServiceDependency,
+    admin: AdminContextDependency,
+    _csrf: CsrfDependency,
+) -> Response:
+    await service.remove(
+        assignment_id,
+        audit=_audit_context(request, admin),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post(
     "/admin/assignments/{assignment_id}/publish",
     response_model=AssignmentAdminResponse,

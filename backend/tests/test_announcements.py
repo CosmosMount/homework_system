@@ -14,10 +14,12 @@ from app.announcements.repository import AnnouncementRepository
 from app.announcements.schemas import AnnouncementAudience
 from app.announcements.service import AnnouncementAuditContext, AnnouncementService
 from app.auth.service import AuthenticatedContext
+from app.core.errors import ApplicationError
 from app.notifications.mailer import render_mail
 from app.notifications.models import OutboxJob
 from app.notifications.repository import (
     NotificationUnreadCounts,
+    OutboxRepository,
     StudentNotificationRepository,
 )
 from app.notifications.service import OutboxProcessor
@@ -420,3 +422,120 @@ async def test_archive_refreshes_server_updated_fields_after_commit() -> None:
         for_update=True,
     )
     assert all(item.read_at == announcement.archived_at for item in unread_notifications)
+
+
+@pytest.mark.asyncio
+async def test_remove_draft_deletes_record_and_active_schedule_in_one_commit() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    service = AnnouncementService(cast(AsyncSession, session))
+    announcement = make_announcement(all_students=True)
+    announcement.status = "draft"
+    announcement.published_at = None
+    admin = make_student(cohort_id=None, direction_id=None)
+    admin.role = "admin"
+    repository = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=announcement),
+        delete=AsyncMock(),
+    )
+    outbox = SimpleNamespace(delete_active_by_event_key=AsyncMock())
+    audit_repository = Mock()
+    service._announcements = cast(AnnouncementRepository, repository)
+    service._outbox = cast(OutboxRepository, outbox)
+    service._audit = audit_repository
+
+    await service.remove(
+        announcement.id,
+        audit=AnnouncementAuditContext(
+            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+            request_id="delete-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    repository.get_by_id.assert_awaited_once_with(announcement.id, for_update=True)
+    outbox.delete_active_by_event_key.assert_awaited_once_with(
+        f"announcement:{announcement.id}:publish"
+    )
+    repository.delete.assert_awaited_once_with(announcement)
+    session.commit.assert_awaited_once()
+    audit = audit_repository.add.call_args.args[0]
+    assert audit.action == "announcement.delete"
+    assert audit.change_summary == {
+        "previous_status": "draft",
+        "deletion_mode": "physical",
+    }
+
+
+@pytest.mark.asyncio
+async def test_remove_published_archives_and_student_detail_becomes_not_found() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    service = AnnouncementService(cast(AsyncSession, session))
+    announcement = make_announcement(all_students=True)
+    admin = make_student(cohort_id=None, direction_id=None)
+    admin.role = "admin"
+    student = make_student(cohort_id=None, direction_id=None)
+    repository = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=announcement),
+        delete=AsyncMock(),
+    )
+    unread = [SimpleNamespace(read_at=None)]
+    notifications = SimpleNamespace(unread_for_target=AsyncMock(return_value=unread))
+    service._announcements = cast(AnnouncementRepository, repository)
+    service._notifications = cast(StudentNotificationRepository, notifications)
+    service._audit = Mock()
+
+    await service.remove(
+        announcement.id,
+        audit=AnnouncementAuditContext(
+            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+            request_id="delete-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    assert announcement.status == "archived"
+    assert unread[0].read_at == announcement.archived_at
+    repository.delete.assert_not_awaited()
+    session.commit.assert_awaited_once()
+
+    with pytest.raises(ApplicationError) as exc_info:
+        await service.get_student(
+            announcement.id,
+            context=cast(AuthenticatedContext, SimpleNamespace(user=student)),
+        )
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_remove_archived_announcement_is_idempotent() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    service = AnnouncementService(cast(AsyncSession, session))
+    announcement = make_announcement(all_students=True)
+    announcement.status = "archived"
+    announcement.archived_at = datetime.now(UTC)
+    admin = make_student(cohort_id=None, direction_id=None)
+    admin.role = "admin"
+    repository = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=announcement),
+        delete=AsyncMock(),
+    )
+    outbox = SimpleNamespace(delete_active_by_event_key=AsyncMock())
+    audit_repository = Mock()
+    service._announcements = cast(AnnouncementRepository, repository)
+    service._outbox = cast(OutboxRepository, outbox)
+    service._audit = audit_repository
+
+    await service.remove(
+        announcement.id,
+        audit=AnnouncementAuditContext(
+            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+            request_id="repeat-delete-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    repository.get_by_id.assert_awaited_once_with(announcement.id, for_update=True)
+    repository.delete.assert_not_awaited()
+    outbox.delete_active_by_event_key.assert_not_awaited()
+    audit_repository.add.assert_not_called()
+    session.commit.assert_awaited_once()

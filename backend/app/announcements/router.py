@@ -1,7 +1,7 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 
 from app.announcements.schemas import (
     AnnouncementAdminPage,
@@ -154,6 +154,25 @@ async def patch_announcement(
         payload,
         audit=_audit_context(request, admin),
     )
+
+
+@router.delete(
+    "/admin/announcements/{announcement_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def delete_announcement(
+    announcement_id: UUID,
+    request: Request,
+    service: AnnouncementServiceDependency,
+    admin: AdminContextDependency,
+    _csrf: CsrfDependency,
+) -> Response:
+    await service.remove(
+        announcement_id,
+        audit=_audit_context(request, admin),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

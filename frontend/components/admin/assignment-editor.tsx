@@ -337,24 +337,43 @@ export function AssignmentEditor({
     }
   }
 
-  async function transition(action: "close" | "archive") {
+  async function close() {
     if (assignment === null) return;
-    const prompt =
-      action === "close"
-        ? "确认提前关闭？这会覆盖所有个人延期。"
-        : "确认归档？归档后作业只读。";
-    if (!window.confirm(prompt)) return;
+    if (!window.confirm("确认提前关闭？这会覆盖所有个人延期。")) return;
     setPending(true);
     setMessage(null);
     setError(null);
     try {
       const result = await csrfFetch<AssignmentAdmin>(
-        "/admin/assignments/" + assignment.id + "/" + action,
+        "/admin/assignments/" + assignment.id + "/close",
         { method: "POST" },
       );
       setAssignment(result);
-      setMessage(action === "close" ? "作业已关闭。" : "作业已归档。");
+      setMessage("作业已关闭。");
       router.refresh();
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function remove() {
+    if (assignment === null) return;
+    const prompt =
+      assignment.status === "draft"
+        ? "确认永久删除这份未发布作业？定时发布会一并取消。"
+        : "确认删除作业？作业会立即从学生列表、详情和优秀作业入口隐藏，正式提交与审计记录继续保留。";
+    if (!window.confirm(prompt)) return;
+    setPending(true);
+    setMessage(null);
+    setError(null);
+    try {
+      await csrfFetch(
+        "/admin/assignments/" + assignment.id,
+        { method: "DELETE" },
+      );
+      router.replace("/admin/assignments");
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -541,20 +560,20 @@ export function AssignmentEditor({
             <button
               className="min-h-11 border border-[var(--color-danger)] px-5 text-[var(--color-danger)]"
               disabled={pending}
-              onClick={() => transition("close")}
+              onClick={close}
               type="button"
             >
               提前关闭
             </button>
           ) : null}
-          {assignment && ["published", "closed"].includes(assignment.status) ? (
+          {assignment ? (
             <button
-              className="min-h-11 border border-[var(--color-border-strong)] px-5"
+              className="min-h-11 border border-[var(--color-danger)] px-5 text-[var(--color-danger)]"
               disabled={pending}
-              onClick={() => transition("archive")}
+              onClick={remove}
               type="button"
             >
-              归档
+              删除作业
             </button>
           ) : null}
         </div>

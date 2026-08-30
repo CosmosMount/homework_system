@@ -65,6 +65,9 @@ class AssignmentRepository:
     def add(self, assignment: Assignment) -> None:
         self._session.add(assignment)
 
+    async def delete(self, assignment: Assignment) -> None:
+        await self._session.delete(assignment)
+
     async def get_by_id(
         self,
         assignment_id: UUID,
@@ -316,7 +319,7 @@ class AssignmentRepository:
                 )
                 .where(
                     Assignment.id == assignment_id,
-                    Assignment.status != "draft",
+                    Assignment.status.in_(("published", "closed")),
                     audience_match,
                 )
             )
@@ -365,7 +368,7 @@ class AssignmentRepository:
             )
         filters: list[ColumnElement[bool]] = [
             audience_match,
-            Assignment.status != "draft",
+            Assignment.status.in_(("published", "closed")),
         ]
         if query:
             filters.append(Assignment.title.ilike(f"%{query.strip()}%"))
@@ -374,12 +377,7 @@ class AssignmentRepository:
         elif status == "submitted":
             filters.append(submission_exists)
         elif status == "closed":
-            filters.append(
-                or_(
-                    Assignment.status == "archived",
-                    ~accepts_submissions,
-                )
-            )
+            filters.append(~accepts_submissions)
 
         base = (
             select(Assignment, AssignmentExtension)

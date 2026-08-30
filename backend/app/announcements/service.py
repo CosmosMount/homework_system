@@ -177,7 +177,7 @@ class AnnouncementService:
     def _add_audit(
         self,
         *,
-        actor_user_id: UUID,
+        actor_user_id: UUID | None,
         action: str,
         announcement_id: UUID,
         request_id: str,
@@ -497,7 +497,7 @@ class AnnouncementService:
         self,
         announcement: Announcement,
         *,
-        actor_user_id: UUID,
+        actor_user_id: UUID | None,
         request_id: str,
         ip_prefix: str,
         now: datetime,
@@ -646,6 +646,39 @@ class AnnouncementService:
         )
         await self._session.commit()
 
+    async def _archive_record(
+        self,
+        announcement: Announcement,
+        *,
+        audit: AnnouncementAuditContext,
+        action: str,
+        deletion_mode: str | None = None,
+    ) -> None:
+        now = self._clock()
+        announcement.status = "archived"
+        announcement.archived_at = now
+        announcement.updated_by = audit.actor.user.id
+        announcement.revision += 1
+        unread_notifications = await self._notifications.unread_for_target(
+            target_type="announcement",
+            target_id=announcement.id,
+            for_update=True,
+        )
+        for notification in unread_notifications:
+            notification.read_at = now
+        change_summary: dict[str, object] = {"status": "archived"}
+        if deletion_mode is not None:
+            change_summary["deletion_mode"] = deletion_mode
+        self._add_audit(
+            actor_user_id=audit.actor.user.id,
+            action=action,
+            announcement_id=announcement.id,
+            request_id=audit.request_id,
+            ip_prefix=audit.ip_prefix,
+            change_summary=change_summary,
+            now=now,
+        )
+
     async def archive(
         self,
         announcement_id: UUID,
@@ -665,30 +698,56 @@ class AnnouncementService:
         if announcement.status != "published":
             await self._session.rollback()
             raise self._state_conflict("只有已发布通知可以归档。")
-        now = self._clock()
-        announcement.status = "archived"
-        announcement.archived_at = now
-        announcement.updated_by = audit.actor.user.id
-        announcement.revision += 1
-        unread_notifications = await self._notifications.unread_for_target(
-            target_type="announcement",
-            target_id=announcement.id,
-            for_update=True,
-        )
-        for notification in unread_notifications:
-            notification.read_at = now
-        self._add_audit(
-            actor_user_id=audit.actor.user.id,
+        await self._archive_record(
+            announcement,
+            audit=audit,
             action="announcement.archive",
-            announcement_id=announcement.id,
-            request_id=audit.request_id,
-            ip_prefix=audit.ip_prefix,
-            change_summary={"status": "archived"},
-            now=now,
         )
         await self._session.commit()
         await self._session.refresh(announcement)
         return await self._admin_response(announcement)
+
+    async def remove(
+        self,
+        announcement_id: UUID,
+        *,
+        audit: AnnouncementAuditContext,
+    ) -> None:
+        announcement = await self._announcements.get_by_id(
+            announcement_id,
+            for_update=True,
+        )
+        if announcement is None:
+            await self._session.rollback()
+            raise self._not_found()
+        if announcement.status == "archived":
+            await self._session.commit()
+            return
+        if announcement.status in {"draft", "scheduled"}:
+            previous_status = announcement.status
+            now = self._clock()
+            await self._outbox.delete_active_by_event_key(f"announcement:{announcement.id}:publish")
+            await self._announcements.delete(announcement)
+            self._add_audit(
+                actor_user_id=audit.actor.user.id,
+                action="announcement.delete",
+                announcement_id=announcement.id,
+                request_id=audit.request_id,
+                ip_prefix=audit.ip_prefix,
+                change_summary={
+                    "previous_status": previous_status,
+                    "deletion_mode": "physical",
+                },
+                now=now,
+            )
+        else:
+            await self._archive_record(
+                announcement,
+                audit=audit,
+                action="announcement.delete",
+                deletion_mode="archive",
+            )
+        await self._session.commit()
 
     async def send_update(
         self,
@@ -824,7 +883,7 @@ class AnnouncementService:
         context: AuthenticatedContext,
     ) -> AnnouncementDetailResponse:
         announcement = await self._announcements.get_by_id(announcement_id)
-        if announcement is None or announcement.status not in {"published", "archived"}:
+        if announcement is None or announcement.status != "published":
             raise self._not_found()
         cohort_ids, direction_ids = await self._announcements.audience_ids(announcement.id)
         if not self._audience_matches(

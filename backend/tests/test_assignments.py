@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,8 +13,12 @@ from app.assignments.models import Assignment, AssignmentAudienceUser, Assignmen
 from app.assignments.policy import can_submit_assignment
 from app.assignments.repository import AssignmentRepository
 from app.assignments.schemas import AssignmentCreateRequest
+from app.assignments.service import AssignmentAuditContext, AssignmentService
+from app.auth.service import AuthenticatedContext
+from app.core.errors import ApplicationError
 from app.notifications.mailer import render_mail
 from app.notifications.models import OutboxJob
+from app.notifications.repository import OutboxRepository
 from app.notifications.service import OutboxProcessor
 from app.users.models import User
 
@@ -294,3 +299,144 @@ async def test_student_view_preview_uses_live_audience_without_changing_snapshot
     snapshot_sql = str(session.statement)
     assert "assignment_audience_users" in snapshot_sql
     assert "assignment_directions" not in snapshot_sql
+
+
+@pytest.mark.asyncio
+async def test_student_assignment_queries_exclude_archived_resources() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    rows = Mock()
+    rows.all.return_value = []
+    session.execute.return_value = rows
+    session.scalar.return_value = 0
+    repository = AssignmentRepository(cast(AsyncSession, session))
+
+    await repository.list_for_student(
+        user_id=uuid4(),
+        page=1,
+        page_size=20,
+        status=None,
+        query=None,
+        now=datetime.now(UTC),
+    )
+
+    statement = session.execute.await_args.args[0]
+    assert "assignments.status IN" in str(statement)
+    assert "assignments.status !=" not in str(statement)
+
+
+@pytest.mark.asyncio
+async def test_remove_draft_assignment_deletes_record_and_active_schedule() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    service = AssignmentService(cast(AsyncSession, session))
+    assignment = make_assignment(
+        status="draft",
+        deadline=datetime.now(UTC) + timedelta(days=1),
+    )
+    assignment.published_at = None
+    admin = cast(User, SimpleNamespace(id=uuid4()))
+    repository = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=assignment),
+        delete=AsyncMock(),
+    )
+    outbox = SimpleNamespace(delete_active_by_event_key=AsyncMock())
+    audit_repository = Mock()
+    service._assignments = cast(AssignmentRepository, repository)
+    service._outbox = cast(OutboxRepository, outbox)
+    service._audit = audit_repository
+
+    await service.remove(
+        assignment.id,
+        audit=AssignmentAuditContext(
+            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+            request_id="delete-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    outbox.delete_active_by_event_key.assert_awaited_once_with(
+        f"assignment:{assignment.id}:publish"
+    )
+    repository.delete.assert_awaited_once_with(assignment)
+    session.commit.assert_awaited_once()
+    audit = audit_repository.add.call_args.args[0]
+    assert audit.action == "assignment.delete"
+    assert audit.change_summary["deletion_mode"] == "physical"
+
+
+@pytest.mark.asyncio
+async def test_remove_published_assignment_archives_and_hides_excellent_work_from_student() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    service = AssignmentService(cast(AsyncSession, session))
+    assignment = make_assignment(
+        status="published",
+        deadline=datetime.now(UTC) + timedelta(days=1),
+    )
+    admin = cast(User, SimpleNamespace(id=uuid4()))
+    repository = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=assignment),
+        delete=AsyncMock(),
+        is_audience_user=AsyncMock(return_value=True),
+    )
+    service._assignments = cast(AssignmentRepository, repository)
+    service._audit = Mock()
+
+    await service.remove(
+        assignment.id,
+        audit=AssignmentAuditContext(
+            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+            request_id="delete-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    assert assignment.status == "archived"
+    repository.delete.assert_not_awaited()
+    session.commit.assert_awaited_once()
+
+    student_context = cast(
+        AuthenticatedContext,
+        SimpleNamespace(
+            user=SimpleNamespace(id=uuid4(), role="student"),
+            is_admin=False,
+            is_student_view=False,
+        ),
+    )
+    with pytest.raises(ApplicationError) as exc_info:
+        await service.list_excellent(assignment.id, context=student_context)
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_remove_archived_assignment_is_idempotent() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    service = AssignmentService(cast(AsyncSession, session))
+    assignment = make_assignment(
+        status="archived",
+        deadline=datetime.now(UTC) + timedelta(days=1),
+    )
+    assignment.archived_at = datetime.now(UTC)
+    admin = cast(User, SimpleNamespace(id=uuid4()))
+    repository = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=assignment),
+        delete=AsyncMock(),
+    )
+    outbox = SimpleNamespace(delete_active_by_event_key=AsyncMock())
+    audit_repository = Mock()
+    service._assignments = cast(AssignmentRepository, repository)
+    service._outbox = cast(OutboxRepository, outbox)
+    service._audit = audit_repository
+
+    await service.remove(
+        assignment.id,
+        audit=AssignmentAuditContext(
+            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+            request_id="repeat-delete-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    repository.get_by_id.assert_awaited_once_with(assignment.id, for_update=True)
+    repository.delete.assert_not_awaited()
+    outbox.delete_active_by_event_key.assert_not_awaited()
+    audit_repository.add.assert_not_called()
+    session.commit.assert_awaited_once()

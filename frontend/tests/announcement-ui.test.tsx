@@ -1,14 +1,26 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AnnouncementEditor } from "@/components/admin/announcement-editor";
 import { AnnouncementListPanel } from "@/components/admin/announcement-list-panel";
 import { SafeHtml } from "@/components/announcements/safe-html";
 import { AppShell } from "@/components/layout/app-shell";
 import type { AnnouncementAdmin, User } from "@/lib/api/types";
 
+const { csrfFetchMock, refreshMock, replaceMock } = vi.hoisted(() => ({
+  csrfFetchMock: vi.fn(),
+  refreshMock: vi.fn(),
+  replaceMock: vi.fn(),
+}));
+
 vi.mock("next/navigation", () => ({
   usePathname: () => "/announcements",
-  useRouter: () => ({ refresh: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ refresh: refreshMock, replace: replaceMock }),
+}));
+
+vi.mock("@/lib/api/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/client")>()),
+  csrfFetch: csrfFetchMock,
 }));
 
 const student: User = {
@@ -58,6 +70,12 @@ function announcement(
 }
 
 describe("announcement UI", () => {
+  beforeEach(() => {
+    csrfFetchMock.mockReset();
+    refreshMock.mockReset();
+    replaceMock.mockReset();
+  });
+
   it("shows the unread badge and student navigation", () => {
     render(
       <AppShell
@@ -148,5 +166,42 @@ describe("announcement UI", () => {
       target: { value: "不存在" },
     });
     expect(screen.getByText("没有符合筛选条件的通知。")).toBeInTheDocument();
+  });
+
+  it("keeps the announcement when delete confirmation is cancelled", () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(
+      <AnnouncementEditor
+        directions={[]}
+        initialAnnouncement={announcement("announcement-1", "已发布通知", "published")}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "删除通知" }));
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(csrfFetchMock).not.toHaveBeenCalled();
+    expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("confirms and deletes a published announcement before returning to the list", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    csrfFetchMock.mockResolvedValue(undefined);
+
+    render(
+      <AnnouncementEditor
+        directions={[]}
+        initialAnnouncement={announcement("announcement-1", "已发布通知", "published")}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "删除通知" }));
+
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledOnce());
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("学生列表和详情隐藏"));
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/admin/announcements/announcement-1",
+      { method: "DELETE" },
+    );
+    expect(replaceMock).toHaveBeenCalledWith("/admin/announcements");
   });
 });

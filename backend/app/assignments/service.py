@@ -113,7 +113,7 @@ class AssignmentService:
     def _add_audit(
         self,
         *,
-        actor_user_id: UUID,
+        actor_user_id: UUID | None,
         action: str,
         assignment_id: UUID,
         request_id: str,
@@ -443,7 +443,7 @@ class AssignmentService:
         self,
         assignment: Assignment,
         *,
-        actor_user_id: UUID,
+        actor_user_id: UUID | None,
         request_id: str,
         ip_prefix: str,
         now: datetime,
@@ -606,6 +606,33 @@ class AssignmentService:
         )
         await self._session.commit()
 
+    def _archive_record(
+        self,
+        assignment: Assignment,
+        *,
+        audit: AssignmentAuditContext,
+        action: str,
+        deletion_mode: str | None = None,
+    ) -> None:
+        now = self._clock()
+        assignment.status = "archived"
+        assignment.archived_at = now
+        assignment.closed_at = assignment.closed_at or now
+        assignment.updated_by = audit.actor.user.id
+        assignment.revision += 1
+        change_summary: dict[str, object] = {"status": "archived"}
+        if deletion_mode is not None:
+            change_summary["deletion_mode"] = deletion_mode
+        self._add_audit(
+            actor_user_id=audit.actor.user.id,
+            action=action,
+            assignment_id=assignment.id,
+            request_id=audit.request_id,
+            ip_prefix=audit.ip_prefix,
+            change_summary=change_summary,
+            now=now,
+        )
+
     async def archive(
         self,
         assignment_id: UUID,
@@ -622,24 +649,52 @@ class AssignmentService:
         if assignment.status not in {"published", "closed"}:
             await self._session.rollback()
             raise self._state_conflict("草稿作业不能归档。")
-        now = self._clock()
-        assignment.status = "archived"
-        assignment.archived_at = now
-        assignment.closed_at = assignment.closed_at or now
-        assignment.updated_by = audit.actor.user.id
-        assignment.revision += 1
-        self._add_audit(
-            actor_user_id=audit.actor.user.id,
+        self._archive_record(
+            assignment,
+            audit=audit,
             action="assignment.archive",
-            assignment_id=assignment.id,
-            request_id=audit.request_id,
-            ip_prefix=audit.ip_prefix,
-            change_summary={},
-            now=now,
         )
         await self._session.commit()
         await self._session.refresh(assignment)
         return await self._admin_response(assignment)
+
+    async def remove(
+        self,
+        assignment_id: UUID,
+        *,
+        audit: AssignmentAuditContext,
+    ) -> None:
+        assignment = await self._assignments.get_by_id(assignment_id, for_update=True)
+        if assignment is None:
+            await self._session.rollback()
+            raise self._not_found()
+        if assignment.status == "archived":
+            await self._session.commit()
+            return
+        if assignment.status == "draft":
+            now = self._clock()
+            await self._outbox.delete_active_by_event_key(f"assignment:{assignment.id}:publish")
+            await self._assignments.delete(assignment)
+            self._add_audit(
+                actor_user_id=audit.actor.user.id,
+                action="assignment.delete",
+                assignment_id=assignment.id,
+                request_id=audit.request_id,
+                ip_prefix=audit.ip_prefix,
+                change_summary={
+                    "previous_status": "draft",
+                    "deletion_mode": "physical",
+                },
+                now=now,
+            )
+        else:
+            self._archive_record(
+                assignment,
+                audit=audit,
+                action="assignment.delete",
+                deletion_mode="archive",
+            )
+        await self._session.commit()
 
     @staticmethod
     def _can_submit(
@@ -1079,7 +1134,11 @@ class AssignmentService:
         ):
             raise self._not_found()
         assignment = await self._assignments.get_by_id(assignment_id)
-        if assignment is None or assignment.status == "draft":
+        if (
+            assignment is None
+            or assignment.status == "draft"
+            or (assignment.status == "archived" and not context_is_admin(context))
+        ):
             raise self._not_found()
         return await self._excellent_summaries(assignment_id)
 
@@ -1100,7 +1159,12 @@ class AssignmentService:
         record: ExcellentSubmissionRecord | None = await self._assignments.excellent_record(
             assignment_id, version_id
         )
-        if assignment is None or assignment.status == "draft" or record is None:
+        if (
+            assignment is None
+            or record is None
+            or assignment.status == "draft"
+            or (assignment.status == "archived" and not context_is_admin(context))
+        ):
             raise self._not_found()
         files = await self._submissions.files_for_version(version_id)
         return ExcellentSubmissionDetailResponse(

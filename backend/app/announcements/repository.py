@@ -22,6 +22,9 @@ class AnnouncementRepository:
     def add(self, announcement: Announcement) -> None:
         self._session.add(announcement)
 
+    async def delete(self, announcement: Announcement) -> None:
+        await self._session.delete(announcement)
+
     async def get_by_id(
         self,
         announcement_id: UUID,

@@ -27,6 +27,8 @@ def test_stage_four_openapi_contains_assignments_submissions_and_upload_purpose(
     }
 
     assert expected_paths <= set(paths)
+    delete_operation = paths["/api/v1/admin/assignments/{assignment_id}"]["delete"]
+    assert "204" in delete_operation["responses"]
     create_parameters = paths["/api/v1/assignments/{assignment_id}/submission-versions"]["post"][
         "parameters"
     ]

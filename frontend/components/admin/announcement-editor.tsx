@@ -182,20 +182,24 @@ export function AnnouncementEditor({
     }
   }
 
-  async function archive() {
-    if (announcement === null || !window.confirm("归档后通知将从学生默认列表隐藏，确认继续？")) {
+  async function remove() {
+    if (announcement === null) {
       return;
     }
+    const prompt =
+      announcement.status === "published"
+        ? "确认删除通知？通知会立即从学生列表和详情隐藏，历史提醒与审计记录继续保留。"
+        : "确认永久删除这条未发布通知？定时发布会取消，已绑定附件将进入孤立文件清理流程。";
+    if (!window.confirm(prompt)) return;
     setPending(true);
+    setMessage(null);
     setError(null);
     try {
-      const archived = await csrfFetch<AnnouncementAdmin>(
-        "/admin/announcements/" + announcement.id + "/archive",
-        { method: "POST" },
+      await csrfFetch(
+        "/admin/announcements/" + announcement.id,
+        { method: "DELETE" },
       );
-      setAnnouncement(archived);
-      setMessage("通知已归档，历史详情链接仍保留。");
-      router.refresh();
+      router.replace("/admin/announcements");
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -429,24 +433,24 @@ export function AnnouncementEditor({
               {publishAt ? "保存并安排发布" : "保存并立即发布"}
             </button>
             {announcement?.status === "published" ? (
-              <>
-                <button
-                  className="min-h-11 border border-[var(--color-border-strong)] px-5 disabled:opacity-55"
-                  disabled={pending}
-                  onClick={sendUpdate}
-                  type="button"
-                >
-                  保存并发送更新提醒
-                </button>
-                <button
-                  className="min-h-11 border border-[var(--color-danger)] px-5 text-[var(--color-danger)] disabled:opacity-55"
-                  disabled={pending}
-                  onClick={archive}
-                  type="button"
-                >
-                  归档
-                </button>
-              </>
+              <button
+                className="min-h-11 border border-[var(--color-border-strong)] px-5 disabled:opacity-55"
+                disabled={pending}
+                onClick={sendUpdate}
+                type="button"
+              >
+                保存并发送更新提醒
+              </button>
+            ) : null}
+            {announcement ? (
+              <button
+                className="min-h-11 border border-[var(--color-danger)] px-5 text-[var(--color-danger)] disabled:opacity-55"
+                disabled={pending}
+                onClick={remove}
+                type="button"
+              >
+                删除通知
+              </button>
             ) : null}
           </div>
         ) : null}

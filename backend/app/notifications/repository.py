@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, func, or_, select
+from sqlalchemy import ColumnElement, and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.announcements.models import Announcement
@@ -78,6 +78,14 @@ class OutboxRepository:
             select(OutboxJob).where(OutboxJob.event_key == event_key)
         )
         return result
+
+    async def delete_active_by_event_key(self, event_key: str) -> None:
+        await self._session.execute(
+            delete(OutboxJob).where(
+                OutboxJob.event_key == event_key,
+                OutboxJob.status.in_(("pending", "processing", "retry")),
+            )
+        )
 
     async def list_jobs(
         self,
