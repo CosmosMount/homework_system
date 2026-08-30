@@ -7,7 +7,9 @@ from typing import cast
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.knowledge.models import KnowledgeAsset
 from app.uploads.models import StoredFile
 from app.uploads.object_store import MinioObjectStore, ObjectInspection
 from app.uploads.operations import (
@@ -15,7 +17,7 @@ from app.uploads.operations import (
     StorageReconciler,
     StorageTransfer,
 )
-from app.uploads.repository import UploadRepository
+from app.uploads.repository import StorageReconciliationReference, UploadRepository
 
 
 def _stored_file(
@@ -44,11 +46,34 @@ def _stored_file(
 
 
 class FakeRepository:
-    def __init__(self, records: list[StoredFile]) -> None:
+    def __init__(
+        self,
+        records: list[StoredFile | StorageReconciliationReference],
+    ) -> None:
         self.records = records
 
-    async def files_for_reconciliation(self) -> list[StoredFile]:
+    async def files_for_reconciliation(
+        self,
+    ) -> list[StoredFile | StorageReconciliationReference]:
         return self.records
+
+
+class FakeScalarResult:
+    def __init__(self, records: list[object]) -> None:
+        self.records = records
+
+    def all(self) -> list[object]:
+        return self.records
+
+
+class FakeReconciliationSession:
+    def __init__(self, batches: list[list[object]]) -> None:
+        self.batches = iter(batches)
+        self.statements: list[str] = []
+
+    async def scalars(self, statement: object) -> FakeScalarResult:
+        self.statements.append(str(statement))
+        return FakeScalarResult(next(self.batches))
 
 
 def _write_payload(destination: Path, payload: bytes) -> None:
@@ -134,20 +159,71 @@ async def test_storage_reconciliation_reports_only_actionable_object_metadata() 
 
 
 @pytest.mark.asyncio
-async def test_storage_export_and_empty_bucket_import_round_trip(tmp_path: Path) -> None:
+async def test_storage_reconciliation_tracks_knowledge_assets() -> None:
+    payload = b"knowledge-asset"
+    now = datetime.now(UTC)
+    asset = KnowledgeAsset(
+        id=uuid4(),
+        external_asset_token="asset-token",
+        asset_kind="image",
+        object_key="knowledge/asset-id/object-id.png",
+        file_name="asset.png",
+        media_type="image/png",
+        size_bytes=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
+        width=None,
+        height=None,
+        created_at=now,
+        last_seen_at=now,
+    )
+    session = FakeReconciliationSession([[], [asset]])
+    repository = UploadRepository(cast(AsyncSession, session))
+
+    references = await repository.files_for_reconciliation()
+
+    assert len(session.statements) == 2
+    assert "knowledge_assets" in session.statements[1]
+    assert len(references) == 1
+    reference = references[0]
+    assert isinstance(reference, StorageReconciliationReference)
+    assert reference.object_key == asset.object_key
+    assert reference.size_bytes == asset.size_bytes
+    assert reference.sha256 == asset.sha256
+    assert reference.status == "available"
+    assert reference.deleted_at is None
+
+    report = await StorageReconciler(
+        cast(UploadRepository, FakeRepository(references)),
+        cast(MinioObjectStore, FakeObjectStore({asset.object_key: payload})),
+    ).run()
+
+    assert report.ok is True
+    assert report.database_file_count == 1
+    assert report.available_file_count == 1
+    assert report.untracked_objects == []
+
+
+@pytest.mark.asyncio
+async def test_storage_export_and_empty_bucket_import_round_trip_includes_knowledge_objects(
+    tmp_path: Path,
+) -> None:
     source = FakeObjectStore(
         {
             "objects/2026/08/first": b"first-payload",
             "objects/2026/08/second": b"second-payload",
+            "knowledge/asset-id/object-id.png": b"knowledge-payload",
         }
     )
     bundle = tmp_path / "bundle"
     export_summary = await StorageTransfer(cast(MinioObjectStore, source)).export(bundle)
 
     manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
-    assert export_summary["object_count"] == 2
+    assert export_summary["object_count"] == 3
     assert "original_name" not in json.dumps(manifest)
     assert {item["object_key"] for item in manifest["objects"]} == set(source.payloads)
+    assert (
+        bundle / "payload/knowledge/asset-id/object-id.png"
+    ).read_bytes() == b"knowledge-payload"
 
     target = FakeObjectStore({})
     import_summary = await StorageTransfer(cast(MinioObjectStore, target)).import_into_empty_bucket(

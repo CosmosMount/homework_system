@@ -151,11 +151,25 @@ EXPECTED_HEAD=$(jq -er '.alembic_head' "$TARGET_MANIFEST")
 grep -Fqx "$EXPECTED_HEAD" "$STAGING_DIRECTORY/alembic-current.txt" ||
   backup_die "RESTORED_ALEMBIC_HEAD_MISMATCH"
 
+RECONCILIATION_EXIT=0
 compose_run run --rm --no-deps -T backend \
   python -m app.cli reconcile-storage \
-  >"$STAGING_DIRECTORY/reconciliation.json"
-jq -e '.status == "ok"' "$STAGING_DIRECTORY/reconciliation.json" >/dev/null ||
+  >"$STAGING_DIRECTORY/reconciliation.json" || RECONCILIATION_EXIT=$?
+(( RECONCILIATION_EXIT == 0 || RECONCILIATION_EXIT == 4 )) ||
+  backup_die "RESTORED_STORAGE_RECONCILIATION_FAILED"
+jq -e '
+  (.missing_objects | type) == "array"
+  and (.size_mismatches | type) == "array"
+  and (.sha256_mismatches | type) == "array"
+  and (.untracked_objects | type) == "array"
+  and (.missing_objects | length) == 0
+  and (.size_mismatches | length) == 0
+  and (.sha256_mismatches | length) == 0
+' "$STAGING_DIRECTORY/reconciliation.json" >/dev/null ||
   backup_die "RESTORED_STORAGE_INCONSISTENT"
+UNTRACKED_OBJECT_COUNT=$(
+  jq -er '.untracked_objects | length' "$STAGING_DIRECTORY/reconciliation.json"
+)
 
 RESTORE_DURATION_SECONDS=$(( $(date +%s) - RESTORE_STARTED_EPOCH ))
 BACKUP_EPOCH=$(date -d "$BACKUP_CREATED_AT" +%s)
@@ -169,7 +183,8 @@ jq -n \
   --arg object_base_backup_id "$OBJECT_BASE_BACKUP_ID" \
   --argjson rpo_seconds "$RPO_SECONDS" \
   --argjson rto_seconds "$RESTORE_DURATION_SECONDS" \
-  --argjson object_count "$(jq -er '.object_count' "$STAGING_DIRECTORY/import-summary.json")" '
+  --argjson object_count "$(jq -er '.object_count' "$STAGING_DIRECTORY/import-summary.json")" \
+  --argjson untracked_object_count "$UNTRACKED_OBJECT_COUNT" '
   {
     status: "ok",
     backup_id: $backup_id,
@@ -181,6 +196,7 @@ jq -n \
     ),
     rpo_seconds: $rpo_seconds,
     rto_seconds: $rto_seconds,
-    object_count: $object_count
+    object_count: $object_count,
+    untracked_object_count: $untracked_object_count
   }
 '

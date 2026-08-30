@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
@@ -6,8 +7,19 @@ from sqlalchemy import delete, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.announcements.models import AnnouncementFile
+from app.knowledge.models import KnowledgeAsset
 from app.submissions.models import VersionFile
 from app.uploads.models import StoredFile, UploadPart, UploadSession
+
+
+@dataclass(frozen=True, slots=True)
+class StorageReconciliationReference:
+    id: UUID
+    object_key: str
+    size_bytes: int
+    sha256: str
+    status: str
+    deleted_at: datetime | None
 
 
 class UploadRepository:
@@ -45,10 +57,32 @@ class UploadRepository:
             statement = statement.with_for_update()
         return list((await self._session.scalars(statement)).all())
 
-    async def files_for_reconciliation(self) -> list[StoredFile]:
-        return list(
+    async def files_for_reconciliation(
+        self,
+    ) -> list[StoredFile | StorageReconciliationReference]:
+        stored_files = list(
             (await self._session.scalars(select(StoredFile).order_by(StoredFile.object_key))).all()
         )
+        knowledge_assets = list(
+            (
+                await self._session.scalars(
+                    select(KnowledgeAsset).order_by(KnowledgeAsset.object_key)
+                )
+            ).all()
+        )
+        references: list[StoredFile | StorageReconciliationReference] = [*stored_files]
+        references.extend(
+            StorageReconciliationReference(
+                id=asset.id,
+                object_key=asset.object_key,
+                size_bytes=asset.size_bytes,
+                sha256=asset.sha256,
+                status="available",
+                deleted_at=None,
+            )
+            for asset in knowledge_assets
+        )
+        return sorted(references, key=lambda record: record.object_key)
 
     async def get_session(
         self,

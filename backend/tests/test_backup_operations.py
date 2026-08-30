@@ -47,6 +47,10 @@ def test_incremental_restore_imports_base_then_delta_before_reconciliation() -> 
     assert extract_base < import_base < apply_delta < reconcile
     assert "RESTORE_INCREMENTAL_BASE_MANIFEST_INVALID" in source
     assert "RESTORE_OBJECT_BACKUP_MODE_INVALID" in source
+    assert "untracked_object_count" in source
+    assert "jq -e '.status == \"ok\"'" not in source
+    assert "(.missing_objects | length) == 0" in source
+    assert "RECONCILIATION_EXIT == 4" in source
 
 
 def _create_backup_set(directory: Path, backup_id: str, metadata: dict[str, object]) -> None:
