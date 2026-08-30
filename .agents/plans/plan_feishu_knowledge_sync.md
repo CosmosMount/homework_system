@@ -237,3 +237,69 @@
 - 隔离源码差异仅为 `app-shell-navigation.tsx`、`app-shell-events.ts`、`knowledge-reader.tsx` 和 `knowledge-ui.test.tsx`；账号活跃度/清理差异未进入镜像。
 - Frontend 已替换为 `sha256:2ad76bd…`，Nginx 已重启；六服务 healthy，四个健康端点为 200，页面/API 匿名守卫为 307/401。
 - 最新知识库运行仍为 `succeeded`、212 篇文档、977 个媒体引用，最新 Outbox 仍为 `sent`、`attempt_count=1`；未重新同步飞书，管理员手动接口、Worker、快照和 Alembic `20260827_0011` 不变。
+
+## 2026-08-29 LaTeX 公式解析修订
+
+### 背景与必要性
+
+- 飞书 Docx 以 `block_type=16` 表示独立公式块，并在普通富文本的 `equation.content` 中表示行内公式。现有规范化器虽能读取行内公式文本，却没有保留公式语义；独立公式块未进入受控块映射，前端最终把 LaTeX 命令显示为普通文本或直接丢弃。
+- 固定参考提交 `c28f8a0` 同样没有完整转换公式。本修订只扩展 `KB-003` 的受控块兼容范围，不改变 ADR-032 固定的目录、正文、标题读取顺序、失败语义或媒体处理契约。
+
+### 实施范围
+
+1. 后端把 `block_type=16` 规范化为独立 `equation` 块，并为普通富文本中的 `equation` segment 保留显式公式标记；继续清除空字符并限制单段长度，不接收 HTML。
+2. 前端使用本地 KaTeX 将显式标记的行内与独立公式分别渲染为 inline/display 数学公式；禁用受信 HTML 扩展，解析失败时显示原始 LaTeX 文本，避免单个坏公式破坏整篇文档。
+3. 更新知识块 TypeScript 类型、KaTeX 全局样式和前后端定向回归，覆盖反斜杠命令、上下标、分式、行内/独立公式及非法公式回退。
+4. 新增 ADR 记录对参考提交块转换契约的定向扩展，并同步产品需求、页面、架构、安全、测试、变更记录、项目记忆与任务状态。
+
+### 验证方式与边界
+
+- 后端运行知识库规范化定向测试，确认公式内容和类型在 JSONB 前保持完整；前端运行知识库组件测试，确认 KaTeX 语义节点和安全回退。
+- 运行 Ruff/格式、严格 Mypy、ESLint、严格 TypeScript、知识库前后端测试及 Next.js 生产构建；若工作区其他未完成改动阻塞完整质量门，必须明确区分本轮定向结果与外部阻塞。
+- 本修订不改变公开 API 路径、鉴权、数据库表或迁移；已有成功快照不会原地改写，部署后需由真实管理员手动触发一次新同步，才会让历史飞书公式进入新成功快照。
+
+### 实施与验收结果
+
+- 后端已把飞书富文本 `equation.content` 标为行内公式，并把 `block_type=16` 保存为独立 `equation` 块；反斜杠命令在结构化 JSON 中原样保留。
+- 前端新增锁定的 `katex@0.16.22` 本地依赖和全局字体样式，区分行内/独立公式；`trust=false`、宏展开/尺寸限制和 HTML 扩展硬错误保持安全边界，坏公式显示转义后的源文。
+- 30 项后端知识库测试、受影响后端文件 Ruff/格式/严格 Mypy、前端知识库 8 项、完整 23 文件/99 项测试、ESLint、严格 TypeScript 与 Next.js 生产构建通过；`npm install` 审计 0 漏洞。
+- 本轮未部署、未触发真实飞书同步、未读写运行数据库或 MinIO，不涉及 Alembic 迁移。上线后必须由真实管理员手动同步一次，并以新运行 `succeeded` 为验收条件。
+
+## 2026-08-29 LaTeX 公式隔离热修部署计划
+
+### 部署范围与隔离
+
+- Backend 与 Worker 必须以当前运行的 `registration-constraint-20260829` Backend 镜像为基底，只覆盖 `backend/app/knowledge/normalizer.py`；不得复制整个工作树或知识库目录，避免带入账号删除模型与 `20260829_0015` 迁移。
+- Frontend 从当前 Git 发布基线构建，只叠加当前已上线的管理员通知/作业删除界面以及本轮公式渲染所需的 `layout.tsx`、`knowledge-blocks.tsx`、知识块类型、`katex@0.16.22` 依赖和锁文件；不得包含个人资料注销、管理员账号删除组件或对应 API 类型。
+- PostgreSQL、MinIO 和数据卷保持原位，不重建、不运行 Alembic 迁移，也不自动调用飞书、邮件、上传、认证或账号删除写接口。
+
+### 部署前保护
+
+1. 记录六服务状态、运行镜像 ID、重启次数、当前 Alembic 版本、核心业务计数、最近成功知识库运行和最新 `sync_knowledge` Outbox。
+2. 验证登录页、四个健康端点、知识库页面 307 与 API 401 匿名守卫。
+3. 使用运行中的 PostgreSQL 17 生成自定义格式备份，限制为 `0600`，用同版本 `pg_restore --list` 校验并记录大小与 SHA-256；MinIO 本轮无结构或对象写入，仍须确认服务健康。
+
+### 候选构建与审计
+
+1. Backend 候选检查镜像层和运行文件哈希，确认相对当前运行镜像只替换规范化器，且应用用户可读、导入成功、Alembic head 不变。
+2. Frontend 候选在 `/tmp` 隔离上下文构建；通过文件清单、关键词和编译产物检查确认包含 KaTeX/公式能力与现有内容删除入口，不含 `20260829_0015`、新增个人资料注销组件或新版账号删除确认字段。
+3. 候选使用独立固定标签，不覆盖当前回滚标签；候选审计失败时不得替换运行容器。
+
+### 替换、验收与回滚
+
+1. 先替换 Backend 与 Worker并等待 healthy，再替换 Frontend，最后重建 Nginx 刷新上游；PostgreSQL 与 MinIO 不重启。
+2. 部署后复核六服务 healthy、重启次数、四健康端点、知识库页面/API 匿名 307/401、运行 Backend 公式规范化代码、Frontend KaTeX 编译产物和应用容器非 root 身份。
+3. 对比部署前后 Alembic、核心业务计数、最近成功知识库快照和 Outbox，确认没有迁移、同步或业务数据写入。
+4. 应用回滚只切回 `registration-constraint-20260829` 的 Backend/Worker 与其 Frontend 基线并按相同顺序替换；数据库保持 `20260828_0014`，不得用备份覆盖部署窗口内真实用户数据。
+5. 部署完成后不代替管理员触发同步；由真实管理员手动执行一次，并仅在新运行 `succeeded` 后验收历史公式进入新快照。
+
+### 部署与验收结果
+
+- 部署前六服务 healthy、重启次数 0，Alembic 为 `20260828_0014 (head)`；登录页与四健康端点为 200，知识库页面/API 匿名守卫为 307/401。
+- PostgreSQL 17 备份 `/tmp/pnx-training-before-feishu-latex-20260829T112100Z.dump` 已通过同版本 `pg_restore --list`，大小 4,330,074 字节、0600、SHA-256 `b53cea2fd8927f4ce4f8aaca1b8a8bc759a1c508ac2db18208887f7a0c8b31a0`。
+- Backend 候选以当前运行镜像为基底，只新增规范化器单文件层；Frontend 相对发布基线只有 8 个预期差异文件，隔离生产构建、0 漏洞安装审计和知识库 8 项组件测试通过。候选不含 `0015`、个人资料注销组件、`/api/v1/auth/account` 或新版账号删除确认字段。
+- 已按 Backend/Worker、Frontend、Nginx 顺序替换到 `feishu-latex-20260829`；Backend/Worker 镜像为 `sha256:5e7b335da4fcd0488939c9cd4476f798ecab1c303c6ebb3466bca84f49a61f95`，Frontend 为 `sha256:6076084d5de5aad1829d8cc5a663091b9fc4b2c8365f6c4446374638aef2acf7`。
+- 六服务 healthy、重启次数 0，应用容器均为 `appuser`；未创建 migrate，PostgreSQL 与 MinIO 未重启。运行 Backend 公式规范化断言、Frontend KaTeX JS/CSS 和现有内容删除入口断言通过，启动窗口日志无异常。
+- 部署前后核心业务计数完全一致，最近成功知识库保持 `succeeded/212/986`，最新同步 Outbox 保持 `sent/1`，账号对象清理 Outbox 为 0；本轮没有触发同步、邮件、上传、认证或账号删除。
+- 旧 `registration-constraint-20260829` Backend/Worker 与 Frontend 基线镜像继续保留以便应用回滚；数据库无迁移。真实管理员仍需手动同步一次，并在新运行成功后验收历史公式。
+- 临时 Frontend 测试镜像和隔离构建目录已清理；Docker socket 的 `user:pnx:rw-` 临时 ACL 需要部署方使用交互式 sudo 撤销并复核，应用服务不依赖该权限继续运行。

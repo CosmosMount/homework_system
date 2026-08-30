@@ -1,0 +1,8 @@
+ARG BASE_IMAGE=pnx-training-backend:dev
+FROM ${BASE_IMAGE}
+
+USER root
+COPY --chown=appuser:appgroup app/knowledge/normalizer.py /app/app/knowledge/normalizer.py
+RUN chmod 0644 /app/app/knowledge/normalizer.py
+
+USER appuser

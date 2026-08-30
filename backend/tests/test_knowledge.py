@@ -389,6 +389,85 @@ def test_normalizer_rejects_unsafe_links_and_localizes_known_assets() -> None:
     assert safe_href("javascript:alert(1)") is None
 
 
+def test_normalizer_preserves_inline_and_display_equations() -> None:
+    inline_latex = r"e^{i\pi}+1=0"
+    display_latex = r"\int_0^\infty e^{-x^2}\,dx=\frac{\sqrt{\pi}}{2}"
+    oversized_latex = "x" * 20_001
+    blocks = [
+        {
+            "block_id": "page",
+            "block_type": 1,
+            "children": ["paragraph", "display-equation", "oversized-equation"],
+        },
+        {
+            "block_id": "paragraph",
+            "block_type": 2,
+            "text": {
+                "elements": [
+                    {"text_run": {"content": "欧拉公式："}},
+                    {"equation": {"content": inline_latex}},
+                ]
+            },
+        },
+        {
+            "block_id": "display-equation",
+            "block_type": 16,
+            "equation": {
+                "elements": [{"equation": {"content": display_latex}}],
+            },
+        },
+        {
+            "block_id": "oversized-equation",
+            "block_type": 16,
+            "equation": {
+                "elements": [{"equation": {"content": oversized_latex}}],
+            },
+        },
+    ]
+
+    normalized = normalize_document(
+        blocks,
+        assets={},
+        asset_names={},
+        fallback_url="https://pnx.feishu.cn/wiki/source",
+    )
+
+    assert normalized[0]["type"] == "paragraph"
+    assert normalized[0]["segments"] == [
+        {
+            "text": "欧拉公式：",
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "strikethrough": False,
+            "inline_code": False,
+        },
+        {
+            "text": inline_latex,
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "strikethrough": False,
+            "inline_code": False,
+            "equation": True,
+        },
+    ]
+    assert normalized[1]["type"] == "equation"
+    assert normalized[1]["segments"] == [
+        {
+            "text": display_latex,
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "strikethrough": False,
+            "inline_code": False,
+            "equation": True,
+        }
+    ]
+    assert normalized[2]["type"] == "equation"
+    assert len(normalized[2]["segments"][0]["text"]) == 20_000
+
+
 def test_normalizer_preserves_reference_metadata_and_merged_tables() -> None:
     attachment_id = uuid4()
     blocks = [

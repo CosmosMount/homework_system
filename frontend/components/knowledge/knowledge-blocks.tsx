@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import type { ReactNode, SVGProps } from "react";
+import katex from "katex";
 
 import type {
   KnowledgeBlock,
@@ -34,13 +35,47 @@ function assetUrl(assetId: string): string {
   return "/api/v1/knowledge/assets/" + encodeURIComponent(assetId) + "/content";
 }
 
+function MathFormula({ latex, displayMode = false }: Readonly<{
+  latex: string;
+  displayMode?: boolean;
+}>) {
+  let html: string | undefined;
+  try {
+    html = katex.renderToString(latex, {
+      displayMode,
+      maxExpand: 1000,
+      maxSize: 20,
+      output: "htmlAndMathml",
+      strict: (errorCode) => errorCode === "htmlExtension" ? "error" : "warn",
+      throwOnError: true,
+      trust: false,
+    });
+  } catch {
+    html = undefined;
+  }
+  if (html !== undefined) {
+    const className = displayMode
+      ? "my-6 max-w-full overflow-x-auto py-2 text-center text-slate-900"
+      : "inline-block max-w-full overflow-x-auto align-middle text-slate-900";
+    const Tag = displayMode ? "div" : "span";
+    return <Tag className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+  }
+  const className = displayMode
+    ? "my-6 max-w-full overflow-x-auto whitespace-pre-wrap rounded border border-amber-200 bg-amber-50 px-4 py-3 text-left font-mono text-sm text-amber-950"
+    : "rounded bg-amber-50 px-1.5 py-0.5 font-mono text-[0.9em] text-amber-950";
+  const Tag = displayMode ? "pre" : "code";
+  return <Tag aria-label="公式解析失败" className={className}>{latex}</Tag>;
+}
+
 function RichText({ segments = [], tokenToDocument, onOpenDocument }: Readonly<{
   segments?: KnowledgeRichSegment[];
   tokenToDocument: ReadonlyMap<string, string>;
   onOpenDocument: (documentId: string) => void;
 }>) {
   return segments.map((segment, index) => {
-    let content: ReactNode = segment.text;
+    let content: ReactNode = segment.equation
+      ? <MathFormula latex={segment.text} />
+      : segment.text;
     if (segment.inline_code) content = <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[0.9em] text-[#1687c9]">{content}</code>;
     if (segment.bold) content = <strong className="font-bold text-slate-900">{content}</strong>;
     if (segment.italic) content = <em>{content}</em>;
@@ -183,6 +218,7 @@ function Block({ block, tokenToDocument, onOpenDocument }: Readonly<{ block: Kno
     case "heading": return (block.level ?? 1) <= 1 ? <h2 className="scroll-mt-8 break-words pt-8 text-2xl font-bold text-slate-900 sm:text-3xl" id={"kb-" + block.id}>{rich}</h2> : <h3 className="scroll-mt-8 break-words pt-7 text-xl font-bold text-slate-900 sm:text-2xl" id={"kb-" + block.id}>{rich}</h3>;
     case "todo": return <div className="my-3 flex gap-3 bg-slate-50 px-4 py-3 text-slate-700" style={{ borderRadius: 4 }}><span aria-label={block.done ? "已完成" : "未完成"}>{block.done ? "☑" : "☐"}</span><div className={block.done ? "text-slate-500 line-through" : ""}>{rich}<Nested block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div></div>;
     case "quote": return <blockquote className="my-5 break-words border-l-2 border-[#1687c9]/80 bg-[#1687c9]/[0.05] px-4 py-3 leading-7 text-slate-700 sm:px-5">{rich}<Nested block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></blockquote>;
+    case "equation": return <MathFormula displayMode latex={(block.segments ?? []).map((segment) => segment.text).join("")} />;
     case "callout": {
       const background = tone(block.background_color ?? block.tone);
       const border = tone(block.border_color);

@@ -122,7 +122,7 @@ function overview(): KnowledgeOverview {
 describe("knowledge document renderer", () => {
   it("renders code copy, tables, protected images, attachments, and internal links", () => {
     const openDocument = vi.fn();
-    render(
+    const { container } = render(
       <KnowledgeBlocks
         blocks={[
           {
@@ -135,7 +135,26 @@ describe("knowledge document renderer", () => {
                 href: "https://pnx.feishu.cn/wiki/node-target",
               },
               { text: "外部", href: "https://example.edu" },
+              { text: "e^{i\\pi}+1=0", equation: true },
             ],
+          },
+          {
+            id: "equation",
+            type: "equation",
+            segments: [{
+              text: "\\int_0^\\infty e^{-x^2}\\,dx=\\frac{\\sqrt{\\pi}}{2}",
+              equation: true,
+            }],
+          },
+          {
+            id: "invalid-equation",
+            type: "equation",
+            segments: [{ text: "\\notacommand{", equation: true }],
+          },
+          {
+            id: "untrusted-equation",
+            type: "equation",
+            segments: [{ text: "\\htmlClass{danger}{x}", equation: true }],
           },
           {
             id: "code",
@@ -190,6 +209,13 @@ describe("knowledge document renderer", () => {
       "_blank",
     );
     expect(screen.getByText("Python")).toBeInTheDocument();
+    expect(container.querySelectorAll(".katex")).toHaveLength(2);
+    expect(container.querySelector(".katex-display")).toBeInTheDocument();
+    const equationFallbacks = screen.getAllByLabelText("公式解析失败");
+    expect(equationFallbacks).toHaveLength(2);
+    expect(equationFallbacks[0]).toHaveTextContent("\\notacommand{");
+    expect(equationFallbacks[1]).toHaveTextContent("\\htmlClass{danger}{x}");
+    expect(container.querySelector(".danger")).not.toBeInTheDocument();
     expect(screen.getByAltText("结构图.png")).toHaveAttribute(
       "src",
       "/api/v1/knowledge/assets/asset-image/content",

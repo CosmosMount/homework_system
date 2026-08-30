@@ -881,6 +881,7 @@ export type KnowledgeOverview = {
 
 export type KnowledgeRichSegment = {
   text: string;
+  equation?: boolean;
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
@@ -906,6 +907,7 @@ export type KnowledgeBlock = {
     | "ordered"
     | "code"
     | "quote"
+    | "equation"
     | "todo"
     | "callout"
     | "divider"

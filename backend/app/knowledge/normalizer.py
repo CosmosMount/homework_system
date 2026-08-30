@@ -18,6 +18,7 @@ _BLOCK_FIELDS = {
     13: ("ordered", "ordered"),
     14: ("code", "code"),
     15: ("quote", "quote"),
+    16: ("equation", "equation"),
     17: ("todo", "todo"),
     19: ("callout", "callout"),
     22: ("divider", "divider"),
@@ -132,6 +133,7 @@ def _rich_text(
         text = ""
         href: str | None = None
         document_token: str | None = None
+        is_equation = False
         style_source: object = {}
         text_run = raw.get("text_run")
         mention_doc = raw.get("mention_doc")
@@ -155,7 +157,8 @@ def _rich_text(
         elif isinstance(mention_user, dict):
             text = "@" + (_clean_text(mention_user.get("name")) or "成员")
         elif isinstance(equation, dict):
-            text = _clean_text(equation.get("content"))
+            text = _clean_text(equation.get("content"), limit=20_000)
+            is_equation = True
         elif isinstance(inline_file, dict):
             token = inline_file.get("file_token")
             if isinstance(token, str) and token:
@@ -182,6 +185,8 @@ def _rich_text(
             segment["href"] = href
         if document_token is not None:
             segment["document_token"] = document_token
+        if is_equation:
+            segment["equation"] = True
         result.append(segment)
     return result
 
@@ -329,6 +334,7 @@ def normalize_document(
             "ordered",
             "code",
             "quote",
+            "equation",
             "todo",
         }:
             result["segments"] = _rich_text(
