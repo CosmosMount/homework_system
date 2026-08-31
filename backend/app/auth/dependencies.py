@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.service import AuthenticatedContext, AuthenticationService
 from app.core.config import Settings
 from app.core.errors import ApplicationError
+from app.core.network import client_ip
 from app.core.origin import require_same_origin
 from app.database.session import get_session
 
@@ -34,7 +35,10 @@ async def get_authenticated_context(
     service: AuthenticationServiceDependency,
 ) -> AuthenticatedContext:
     settings = request_settings(request)
-    return await service.authenticate(request.cookies.get(settings.session_cookie_name))
+    return await service.authenticate(
+        request.cookies.get(settings.session_cookie_name),
+        client_ip=client_ip(request),
+    )
 
 
 AuthenticatedContextDependency = Annotated[

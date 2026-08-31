@@ -66,6 +66,7 @@ export function LoginForm({ returnTo = null }: Readonly<{ returnTo?: string | nu
         body: JSON.stringify({
           identifier: form.get("identifier"),
           password: form.get("password"),
+          remember_me: form.get("remember_me") === "on",
         }),
       });
       clearCsrfToken();
@@ -109,6 +110,23 @@ export function LoginForm({ returnTo = null }: Readonly<{ returnTo?: string | nu
           {showPassword ? "隐藏密码" : "显示密码"}
         </button>
       </Field>
+      <div className="space-y-2">
+        <label className="flex cursor-pointer items-center gap-3 text-sm font-medium text-[var(--color-text-primary)]">
+          <input
+            aria-describedby="remember-login-hint"
+            className="h-4 w-4 rounded border-[var(--color-border)] accent-[var(--color-accent)]"
+            name="remember_me"
+            type="checkbox"
+          />
+          <span>记住登录状态</span>
+        </label>
+        <p
+          className="text-xs leading-5 text-[var(--color-text-secondary)]"
+          id="remember-login-hint"
+        >
+          仅在私人设备和当前网络使用；最多 30 天免重复登录，系统不会保存你的密码。
+        </p>
+      </div>
       {error ? <FormMessage>{errorMessage(error)}</FormMessage> : null}
       <button
         className={buttonClassName + " w-full"}

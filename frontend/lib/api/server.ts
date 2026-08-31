@@ -1,6 +1,6 @@
 import "server-only";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { isAdminView } from "@/lib/api/types";
@@ -54,10 +54,19 @@ const internalApiBase =
   process.env.API_INTERNAL_BASE_URL ?? "http://backend:8000/api/v1";
 
 async function serverApi<T>(path: string): Promise<Response | T> {
-  const cookieHeader = (await cookies()).toString();
+  const [cookieStore, incomingHeaders] = await Promise.all([cookies(), headers()]);
+  const cookieHeader = cookieStore.toString();
+  const forwardedFor = incomingHeaders.get("x-forwarded-for")?.trim();
+  const internalHeaders = new Headers();
+  if (cookieHeader) {
+    internalHeaders.set("cookie", cookieHeader);
+  }
+  if (forwardedFor) {
+    internalHeaders.set("x-forwarded-for", forwardedFor);
+  }
   const response = await fetch(internalApiBase + path, {
     cache: "no-store",
-    headers: cookieHeader ? { cookie: cookieHeader } : undefined,
+    headers: internalHeaders,
   });
   if (!response.ok) {
     return response;

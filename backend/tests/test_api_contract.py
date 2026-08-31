@@ -93,9 +93,18 @@ def test_login_request_accepts_identifier_and_legacy_email_alias() -> None:
     legacy = LoginRequest.model_validate(
         {"email": "student@connect.hkust-gz.edu.cn", "password": "test-password"}
     )
+    remembered = LoginRequest.model_validate(
+        {
+            "identifier": "student",
+            "password": "test-password",
+            "remember_me": True,
+        }
+    )
 
     assert primary.identifier == "student"
+    assert primary.remember_me is False
     assert legacy.identifier == "student@connect.hkust-gz.edu.cn"
+    assert remembered.remember_me is True
 
 
 def test_login_openapi_exposes_identifier_instead_of_legacy_email() -> None:
@@ -105,6 +114,8 @@ def test_login_openapi_exposes_identifier_instead_of_legacy_email() -> None:
     assert set(login_request["required"]) == {"identifier", "password"}
     assert "identifier" in login_request["properties"]
     assert "email" not in login_request["properties"]
+    assert login_request["properties"]["remember_me"]["type"] == "boolean"
+    assert login_request["properties"]["remember_me"]["default"] is False
 
 
 def test_questionnaire_openapi_exposes_questions_limits_stats_and_admin_roster() -> None:

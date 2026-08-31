@@ -56,6 +56,11 @@ export function SessionList({
                     当前设备
                   </span>
                 ) : null}
+                {session.remembered ? (
+                  <span className="border border-[var(--color-info)] px-2 py-0.5 text-xs text-[var(--color-info)]">
+                    已记住登录
+                  </span>
+                ) : null}
                 {session.revoked_at ? (
                   <span className="text-xs text-[var(--color-text-muted)]">
                     已撤销

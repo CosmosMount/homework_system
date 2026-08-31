@@ -52,6 +52,7 @@ export type Session = {
   idle_expires_at: string;
   absolute_expires_at: string;
   revoked_at: string | null;
+  remembered: boolean;
   ip_prefix: string;
   user_agent_summary: string;
   is_current: boolean;
@@ -69,6 +70,7 @@ export type AdminSession = {
   last_seen_at: string;
   idle_expires_at: string;
   absolute_expires_at: string;
+  remembered: boolean;
   ip_prefix: string;
   user_agent_summary: string;
   is_current: boolean;

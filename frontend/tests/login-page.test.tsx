@@ -53,6 +53,12 @@ describe("login page", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("密码")).toHaveAttribute("type", "password");
+    expect(
+      screen.getByRole("checkbox", { name: "记住登录状态" }),
+    ).not.toBeChecked();
+    expect(screen.getByText(/最多 30 天免重复登录/)).toHaveTextContent(
+      "系统不会保存你的密码",
+    );
     expect(screen.getByRole("link", { name: "重新发送验证邮件" })).toHaveAttribute(
       "href", "/resend-verification",
     );
@@ -81,12 +87,38 @@ describe("login page", () => {
         body: JSON.stringify({
           identifier: "admin",
           password: "correct-password",
+          remember_me: false,
         }),
       });
     });
     expect(clearCsrfTokenMock).toHaveBeenCalledOnce();
     expect(replaceMock).toHaveBeenCalledWith("/admin/dashboard");
     expect(refreshMock).toHaveBeenCalledOnce();
+  });
+
+  it("requests a persistent login only when explicitly checked", async () => {
+    apiFetchMock.mockResolvedValue({ user: { role: "student" } });
+    render(await LoginPage());
+
+    fireEvent.change(screen.getByLabelText("用户名或校园邮箱"), {
+      target: { value: "student" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "correct-password" },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "记住登录状态" }));
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    await waitFor(() => {
+      expect(apiFetchMock).toHaveBeenCalledWith("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          identifier: "student",
+          password: "correct-password",
+          remember_me: true,
+        }),
+      });
+    });
   });
 
   it("shows the message from a local runtime error", async () => {

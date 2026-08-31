@@ -17,9 +17,16 @@ function SessionRow({ session }: Readonly<{ session: AdminSession }>) {
             {session.user_email} · {session.user_role === "admin" ? "管理员" : "学生"}
           </p>
         </div>
-        {session.is_current ? (
-          <span className="bg-[var(--color-success)] px-2 py-1 text-xs text-black">当前设备</span>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {session.remembered ? (
+            <span className="border border-[var(--color-info)] px-2 py-1 text-xs text-[var(--color-info)]">
+              已记住登录
+            </span>
+          ) : null}
+          {session.is_current ? (
+            <span className="bg-[var(--color-success)] px-2 py-1 text-xs text-black">当前设备</span>
+          ) : null}
+        </div>
       </div>
       <dl className="mt-5 grid gap-3 text-sm text-[var(--color-text-secondary)] sm:grid-cols-4">
         <div><dt className="text-[var(--color-text-muted)]">设备</dt><dd>{session.user_agent_summary}</dd></div>

@@ -37,6 +37,7 @@ class LoginRequest(BaseModel):
         min_length=1, max_length=320, validation_alias=AliasChoices("identifier", "email")
     )
     password: str = Field(min_length=1, max_length=128)
+    remember_me: bool = False
 
 
 class LoginResponse(BaseModel):
@@ -59,6 +60,7 @@ class SessionResponse(BaseModel):
     idle_expires_at: datetime
     absolute_expires_at: datetime
     revoked_at: datetime | None
+    remembered: bool
     ip_prefix: str
     user_agent_summary: str
     is_current: bool
@@ -75,6 +77,7 @@ class AdminSessionResponse(BaseModel):
     last_seen_at: datetime
     idle_expires_at: datetime
     absolute_expires_at: datetime
+    remembered: bool
     ip_prefix: str
     user_agent_summary: str
 

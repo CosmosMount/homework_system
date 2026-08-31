@@ -37,6 +37,7 @@ class Session(Base):
         default=False,
         server_default="false",
     )
+    ip_binding_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     ip_prefix: Mapped[str] = mapped_column(String(64), nullable=False)
     user_agent_summary: Mapped[str] = mapped_column(String(200), nullable=False)
 

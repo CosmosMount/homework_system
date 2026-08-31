@@ -31,6 +31,7 @@ from app.core.security import (
     normalize_email,
     normalize_login_identifier,
     random_urlsafe_token,
+    session_ip_binding_hash,
     sha256_hexdigest,
     tokens_match,
     validate_password,
@@ -41,11 +42,16 @@ from app.users.models import User
 from app.users.repository import UserRepository
 from app.users.schemas import CategorySummary, UserResponse
 
+_STANDARD_SESSION_ABSOLUTE_LIFETIME = timedelta(days=14)
+_REMEMBERED_SESSION_LIFETIME = timedelta(days=30)
+_REMEMBERED_COOKIE_MAX_AGE_SECONDS = int(_REMEMBERED_SESSION_LIFETIME.total_seconds())
+
 
 @dataclass(frozen=True, slots=True)
 class SessionCredentials:
     session_token: str
     csrf_token: str
+    cookie_max_age_seconds: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,8 +504,10 @@ class AuthenticationService:
         *,
         identifier: str,
         password: str,
+        client_ip: str,
         ip_prefix: str,
         user_agent_summary: str,
+        remember_me: bool = False,
         request_id: str = "unknown",
     ) -> LoginResult:
         normalized_email = normalize_login_identifier(
@@ -594,8 +602,15 @@ class AuthenticationService:
             user.password_hash = self._passwords.hash(password)
 
         await self._users.touch_activity(user, at=now)
-        absolute_expires_at = now + timedelta(days=14)
-        idle_lifetime = timedelta(hours=4 if user.role == "admin" else 12)
+        absolute_lifetime = (
+            _REMEMBERED_SESSION_LIFETIME if remember_me else _STANDARD_SESSION_ABSOLUTE_LIFETIME
+        )
+        absolute_expires_at = now + absolute_lifetime
+        idle_lifetime = (
+            _REMEMBERED_SESSION_LIFETIME
+            if remember_me
+            else timedelta(hours=4 if user.role == "admin" else 12)
+        )
         raw_session = random_urlsafe_token()
         raw_csrf = random_urlsafe_token()
         session_record = Session(
@@ -608,6 +623,9 @@ class AuthenticationService:
             idle_expires_at=min(now + idle_lifetime, absolute_expires_at),
             absolute_expires_at=absolute_expires_at,
             revoked_at=None,
+            ip_binding_hash=(
+                session_ip_binding_hash(raw_session, client_ip) if remember_me else None
+            ),
             ip_prefix=ip_prefix,
             user_agent_summary=user_agent_summary,
         )
@@ -619,10 +637,18 @@ class AuthenticationService:
             credentials=SessionCredentials(
                 session_token=raw_session,
                 csrf_token=raw_csrf,
+                cookie_max_age_seconds=(
+                    _REMEMBERED_COOKIE_MAX_AGE_SECONDS if remember_me else None
+                ),
             ),
         )
 
-    async def authenticate(self, raw_session_token: str | None) -> AuthenticatedContext:
+    async def authenticate(
+        self,
+        raw_session_token: str | None,
+        *,
+        client_ip: str,
+    ) -> AuthenticatedContext:
         if not raw_session_token:
             raise ApplicationError(
                 status_code=401,
@@ -640,11 +666,16 @@ class AuthenticationService:
             )
         session_record, user = pair
         now = self._clock()
+        ip_binding_mismatch = session_record.ip_binding_hash is not None and not tokens_match(
+            session_ip_binding_hash(raw_session_token, client_ip),
+            session_record.ip_binding_hash,
+        )
         expired = (
             session_record.revoked_at is not None
             or session_record.idle_expires_at <= now
             or session_record.absolute_expires_at <= now
             or user.status != "active"
+            or ip_binding_mismatch
         )
         if expired:
             if session_record.revoked_at is None:
@@ -665,7 +696,11 @@ class AuthenticationService:
             changed = True
         activity_refresh_due = now - session_record.last_seen_at >= timedelta(minutes=5)
         if activity_refresh_due:
-            idle_lifetime = timedelta(hours=4 if user.role == "admin" else 12)
+            idle_lifetime = (
+                _REMEMBERED_SESSION_LIFETIME
+                if session_record.ip_binding_hash is not None
+                else timedelta(hours=4 if user.role == "admin" else 12)
+            )
             session_record.last_seen_at = now
             session_record.idle_expires_at = min(
                 now + idle_lifetime,
@@ -761,6 +796,7 @@ class AuthenticationService:
                 idle_expires_at=record.idle_expires_at,
                 absolute_expires_at=record.absolute_expires_at,
                 revoked_at=record.revoked_at,
+                remembered=record.ip_binding_hash is not None,
                 ip_prefix=record.ip_prefix,
                 user_agent_summary=record.user_agent_summary,
                 is_current=record.id == context.session.id,
@@ -784,6 +820,7 @@ class AuthenticationService:
                 last_seen_at=session.last_seen_at,
                 idle_expires_at=session.idle_expires_at,
                 absolute_expires_at=session.absolute_expires_at,
+                remembered=session.ip_binding_hash is not None,
                 ip_prefix=session.ip_prefix,
                 user_agent_summary=session.user_agent_summary,
                 is_current=session.id == context.session.id,

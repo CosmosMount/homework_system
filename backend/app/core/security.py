@@ -129,6 +129,14 @@ def sha256_hexdigest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def session_ip_binding_hash(session_token: str, client_ip: str) -> str:
+    return hmac.new(
+        session_token.encode("utf-8"),
+        f"pnx-session-ip-v1:{client_ip}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
 class PepperedTokenHasher:
     def __init__(self, current_secret: str, previous_secret: str | None = None) -> None:
         self._current_secret = current_secret.encode("utf-8")

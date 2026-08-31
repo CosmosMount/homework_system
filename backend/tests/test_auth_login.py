@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
+from fastapi import Request, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,11 +14,16 @@ from app.audit.repository import AuditRepository
 from app.auth.dependencies import require_admin
 from app.auth.models import Session
 from app.auth.repository import AuthRepository
+from app.auth.router import _set_auth_cookies
 from app.auth.schemas import RegisterRequest
 from app.auth.service import AuthenticatedContext, AuthenticationService
 from app.core.config import Settings
 from app.core.errors import ApplicationError, ErrorDetail
-from app.core.security import PasswordManager, PasswordVerification
+from app.core.security import (
+    PasswordManager,
+    PasswordVerification,
+    session_ip_binding_hash,
+)
 from app.users.models import User
 from app.users.repository import UserRepository
 
@@ -159,9 +165,53 @@ def make_session(user: User, *, now: datetime, last_seen_at: datetime) -> Sessio
         absolute_expires_at=now + timedelta(days=1),
         revoked_at=None,
         student_view=False,
+        ip_binding_hash=None,
         ip_prefix="192.0.2.0/24",
         user_agent_summary="Test / Test",
     )
+
+
+@pytest.mark.parametrize(
+    ("cookie_max_age_seconds", "persistent"),
+    [
+        (None, False),
+        (30 * 24 * 60 * 60, True),
+    ],
+)
+def test_auth_cookie_persistence_matches_remembered_choice(
+    cookie_max_age_seconds: int | None,
+    persistent: bool,
+) -> None:
+    settings = Settings(app_env="test")
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/auth/login",
+            "headers": [],
+            "app": SimpleNamespace(state=SimpleNamespace(settings=settings)),
+        }
+    )
+    response = Response()
+
+    _set_auth_cookies(
+        response,
+        request,
+        session_token="session-token",
+        csrf_token="csrf-token",
+        cookie_max_age_seconds=cookie_max_age_seconds,
+    )
+
+    set_cookie_headers = response.headers.getlist("set-cookie")
+    assert len(set_cookie_headers) == 2
+    expected_max_age = "max-age=2592000"
+    assert all((expected_max_age in header.lower()) is persistent for header in set_cookie_headers)
+    session_cookie = next(
+        header for header in set_cookie_headers if header.startswith("pnx_session=")
+    )
+    csrf_cookie = next(header for header in set_cookie_headers if header.startswith("pnx_csrf="))
+    assert "httponly" in session_cookie.lower()
+    assert "httponly" not in csrf_cookie.lower()
 
 
 @pytest.mark.asyncio
@@ -317,6 +367,7 @@ async def test_active_connect_user_can_login_with_username_or_email(
     result = await service.login(
         identifier=identifier,
         password="correct-password",
+        client_ip="192.0.2.10",
         ip_prefix="192.0.2.0/24",
         user_agent_summary="Test / Test",
     )
@@ -326,6 +377,9 @@ async def test_active_connect_user_can_login_with_username_or_email(
     get_by_email.assert_awaited_once_with("student@connect.hkust-gz.edu.cn")
     count_security_events.assert_not_awaited()
     add_session.assert_called_once()
+    standard_session = add_session.call_args.args[0]
+    assert standard_session.ip_binding_hash is None
+    assert result.credentials.cookie_max_age_seconds is None
     cast(AsyncMock, service._users.has_other_accounts).assert_awaited_once_with(user.id)
     cast(AsyncMock, service._auth.lock_sessions_for_user).assert_awaited_once_with(user.id)
     cast(AsyncMock, service._auth.revoke_all_sessions).assert_not_awaited()
@@ -334,6 +388,35 @@ async def test_active_connect_user_can_login_with_username_or_email(
         at=datetime(2026, 8, 25, 8, 0, tzinfo=UTC),
     )
     cast(Mock, service._audit.add).assert_not_called()
+    commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_remembered_login_creates_thirty_day_ip_bound_session() -> None:
+    now = datetime(2026, 8, 25, 8, 0, tzinfo=UTC)
+    client_address = "192.0.2.10"
+    user = make_user(status="active")
+    service, _, _, add_session, commit = build_service(user)
+
+    result = await service.login(
+        identifier="student",
+        password="correct-password",
+        client_ip=client_address,
+        ip_prefix="192.0.2.0/24",
+        user_agent_summary="Test / Test",
+        remember_me=True,
+    )
+
+    remembered_session = add_session.call_args.args[0]
+    assert remembered_session.idle_expires_at == now + timedelta(days=30)
+    assert remembered_session.absolute_expires_at == now + timedelta(days=30)
+    assert remembered_session.ip_binding_hash == session_ip_binding_hash(
+        result.credentials.session_token,
+        client_address,
+    )
+    assert len(remembered_session.ip_binding_hash) == 64
+    assert client_address not in remembered_session.ip_binding_hash
+    assert result.credentials.cookie_max_age_seconds == 30 * 24 * 60 * 60
     commit.assert_awaited_once()
 
 
@@ -351,6 +434,7 @@ async def test_correct_real_argon2id_password_is_not_blocked_by_prior_failures()
     result = await service.login(
         identifier="student",
         password=password,
+        client_ip="192.0.2.10",
         ip_prefix="192.0.2.0/24",
         user_agent_summary="Test / Test",
     )
@@ -375,6 +459,7 @@ async def test_invalid_password_is_verified_before_existing_failure_limit_is_app
         await service.login(
             identifier=" Student@CONNECT.HKUST-GZ.EDU.CN ",
             password="wrong-password",
+            client_ip="198.51.100.10",
             ip_prefix="198.51.100.0/24",
             user_agent_summary="Test / Test",
         )
@@ -406,6 +491,7 @@ async def test_unknown_account_uses_dummy_password_check_before_ip_limit() -> No
         await service.login(
             identifier="unknown",
             password="wrong-password",
+            client_ip="198.51.100.10",
             ip_prefix="198.51.100.0/24",
             user_agent_summary="Test / Test",
         )
@@ -441,6 +527,7 @@ async def test_failed_connect_identifiers_share_normalized_email_limit(
         await service.login(
             identifier=identifier,
             password="wrong-password",
+            client_ip="198.51.100.10",
             ip_prefix="198.51.100.0/24",
             user_agent_summary="Test / Test",
         )
@@ -462,6 +549,7 @@ async def test_inactive_user_cannot_bypass_status_with_username(status: str) -> 
         await service.login(
             identifier="student",
             password="correct-password",
+            client_ip="198.51.100.10",
             ip_prefix="198.51.100.0/24",
             user_agent_summary="Test / Test",
         )
@@ -497,6 +585,7 @@ async def test_only_active_account_is_promoted_to_audited_admin_on_login() -> No
     result = await service.login(
         identifier="student",
         password="correct-password",
+        client_ip="192.0.2.10",
         ip_prefix="192.0.2.0/24",
         user_agent_summary="Test / Test",
         request_id="single-account-login",
@@ -545,7 +634,7 @@ async def test_authenticated_request_refreshes_activity_at_five_minute_boundary(
         now=now,
     )
 
-    context = await service.authenticate("raw-session-token")
+    context = await service.authenticate("raw-session-token", client_ip="192.0.2.10")
 
     assert context.user is user
     assert context.session is session_record
@@ -569,7 +658,7 @@ async def test_authenticated_request_within_throttle_does_not_write_activity() -
         now=now,
     )
 
-    await service.authenticate("raw-session-token")
+    await service.authenticate("raw-session-token", client_ip="192.0.2.10")
 
     assert session_record.last_seen_at == last_seen_at
     touch_activity.assert_not_awaited()
@@ -593,7 +682,7 @@ async def test_authenticated_request_repairs_missing_account_activity() -> None:
         now=now,
     )
 
-    await service.authenticate("raw-session-token")
+    await service.authenticate("raw-session-token", client_ip="192.0.2.10")
 
     touch_activity.assert_awaited_once_with(user, at=now)
     commit.assert_awaited_once()
@@ -617,11 +706,71 @@ async def test_disabled_session_does_not_update_account_activity() -> None:
     )
 
     with pytest.raises(ApplicationError) as caught:
-        await service.authenticate("raw-session-token")
+        await service.authenticate("raw-session-token", client_ip="192.0.2.10")
 
     assert caught.value.status_code == 401
     assert session_record.revoked_at == now
     touch_activity.assert_not_awaited()
+    commit.assert_awaited_once()
+    rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_same_ip_without_session_cookie_is_not_authenticated() -> None:
+    service = AuthenticationService(
+        cast(AsyncSession, SimpleNamespace()),
+        Settings(app_env="test"),
+    )
+
+    with pytest.raises(ApplicationError) as caught:
+        await service.authenticate(None, client_ip="192.0.2.10")
+
+    assert caught.value.status_code == 401
+    assert caught.value.code == "AUTHENTICATION_REQUIRED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("client_address", "allowed"),
+    [
+        ("192.0.2.10", True),
+        ("198.51.100.10", False),
+    ],
+)
+async def test_remembered_session_requires_same_exact_ip(
+    client_address: str,
+    allowed: bool,
+) -> None:
+    now = datetime(2026, 8, 25, 8, 0, tzinfo=UTC)
+    raw_session = "raw-session-token"
+    user = make_user(status="active")
+    session_record = make_session(
+        user,
+        now=now,
+        last_seen_at=now - timedelta(minutes=1),
+    )
+    session_record.ip_binding_hash = session_ip_binding_hash(
+        raw_session,
+        "192.0.2.10",
+    )
+    service, touch_activity, commit, rollback = build_authenticate_service(
+        user,
+        session_record,
+        now=now,
+    )
+
+    if allowed:
+        context = await service.authenticate(raw_session, client_ip=client_address)
+        assert context.session is session_record
+        assert session_record.revoked_at is None
+        touch_activity.assert_awaited_once_with(user, at=now)
+    else:
+        with pytest.raises(ApplicationError) as caught:
+            await service.authenticate(raw_session, client_ip=client_address)
+        assert caught.value.status_code == 401
+        assert session_record.revoked_at == now
+        touch_activity.assert_not_awaited()
+
     commit.assert_awaited_once()
     rollback.assert_not_awaited()
 
@@ -637,6 +786,7 @@ async def test_admin_session_list_returns_active_user_metadata() -> None:
         last_seen_at=now,
         idle_expires_at=now + timedelta(hours=4),
         absolute_expires_at=now + timedelta(days=10),
+        ip_binding_hash=None,
         ip_prefix="192.0.2.0/24",
         user_agent_summary="Browser / Linux",
     )
@@ -659,6 +809,7 @@ async def test_admin_session_list_returns_active_user_metadata() -> None:
     assert result[0].user_id == admin.id
     assert result[0].user_role == "admin"
     assert result[0].is_current is True
+    assert result[0].remembered is False
     assert not hasattr(result[0], "token_hash")
 
 

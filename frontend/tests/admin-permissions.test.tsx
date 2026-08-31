@@ -418,6 +418,7 @@ describe("admin permissions UI", () => {
       last_seen_at: "2026-08-25T01:00:00Z",
       idle_expires_at: "2026-08-25T05:00:00Z",
       absolute_expires_at: "2026-09-01T00:00:00Z",
+      remembered: true,
       ip_prefix: "192.0.2.0/24",
       user_agent_summary: "Browser / Linux",
       is_current: true,
@@ -433,5 +434,6 @@ describe("admin permissions UI", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("当前设备")).toBeInTheDocument();
+    expect(screen.getByText("已记住登录")).toBeInTheDocument();
   });
 });

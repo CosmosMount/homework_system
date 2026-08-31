@@ -12,6 +12,7 @@ from app.core.security import (
     normalize_email,
     normalize_login_identifier,
     random_urlsafe_token,
+    session_ip_binding_hash,
     sha256_hexdigest,
     validate_password,
 )
@@ -96,6 +97,18 @@ def test_tokens_are_high_entropy_and_hashes_do_not_reveal_them() -> None:
     assert len(token) >= 43
     assert len(digest) == 64
     assert token not in digest
+
+
+def test_session_ip_binding_is_token_keyed_and_does_not_store_the_ip() -> None:
+    token = random_urlsafe_token()
+    client_address = "192.0.2.10"
+    digest = session_ip_binding_hash(token, client_address)
+
+    assert len(digest) == 64
+    assert token not in digest
+    assert client_address not in digest
+    assert digest == session_ip_binding_hash(token, client_address)
+    assert digest != session_ip_binding_hash(token, "198.51.100.10")
 
 
 def test_session_hasher_supports_previous_secret_rotation() -> None:

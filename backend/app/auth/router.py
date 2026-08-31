@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from app.auth.dependencies import (
     request_settings,
     require_public_same_origin,
 )
+from app.auth.models import Session
 from app.auth.schemas import (
     AccountDeleteRequest,
     AdminSessionResponse,
@@ -26,7 +28,7 @@ from app.auth.schemas import (
     SessionResponse,
     TokenRequest,
 )
-from app.core.network import request_ip_prefix, summarize_user_agent
+from app.core.network import client_ip, request_ip_prefix, summarize_user_agent
 from app.core.request_context import current_request_id
 from app.users.schemas import UserResponse
 from app.users.service import AuditContext, UserAdministrationService
@@ -41,12 +43,13 @@ def _set_auth_cookies(
     *,
     session_token: str,
     csrf_token: str,
+    cookie_max_age_seconds: int | None,
 ) -> None:
     settings = request_settings(request)
     response.set_cookie(
         settings.session_cookie_name,
         session_token,
-        max_age=14 * 24 * 60 * 60,
+        max_age=cookie_max_age_seconds,
         path="/",
         secure=settings.session_cookie_secure,
         httponly=True,
@@ -55,7 +58,7 @@ def _set_auth_cookies(
     response.set_cookie(
         settings.csrf_cookie_name,
         csrf_token,
-        max_age=14 * 24 * 60 * 60,
+        max_age=cookie_max_age_seconds,
         path="/",
         secure=settings.session_cookie_secure,
         httponly=False,
@@ -138,8 +141,10 @@ async def login(
     result = await service.login(
         identifier=payload.identifier,
         password=payload.password,
+        client_ip=client_ip(request),
         ip_prefix=request_ip_prefix(request),
         user_agent_summary=summarize_user_agent(request.headers.get("user-agent")),
+        remember_me=payload.remember_me,
         request_id=current_request_id() or "unknown",
     )
     _set_auth_cookies(
@@ -147,6 +152,7 @@ async def login(
         request,
         session_token=result.credentials.session_token,
         csrf_token=result.credentials.csrf_token,
+        cookie_max_age_seconds=result.credentials.cookie_max_age_seconds,
     )
     return LoginResponse(user=result.user)
 
@@ -204,16 +210,23 @@ async def csrf(
 ) -> CsrfResponse:
     token = await service.rotate_csrf(context)
     settings = request_settings(request)
+    cookie_max_age_seconds = _remaining_cookie_max_age(context.session)
     response.set_cookie(
         settings.csrf_cookie_name,
         token,
-        max_age=14 * 24 * 60 * 60,
+        max_age=cookie_max_age_seconds,
         path="/",
         secure=settings.session_cookie_secure,
         httponly=False,
         samesite="lax",
     )
     return CsrfResponse(csrf_token=token)
+
+
+def _remaining_cookie_max_age(session: Session) -> int | None:
+    if session.ip_binding_hash is None:
+        return None
+    return max(0, int((session.absolute_expires_at - datetime.now(UTC)).total_seconds()))
 
 
 @router.post("/student-view", response_model=UserResponse)
