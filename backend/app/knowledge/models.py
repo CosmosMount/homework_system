@@ -66,7 +66,7 @@ class KnowledgeNode(Base):
         CheckConstraint("depth >= 0", name="depth_nonnegative"),
         CheckConstraint("display_order >= 0", name="display_order_nonnegative"),
         CheckConstraint(
-            "node_type IN ('document', 'folder', 'unsupported')",
+            "node_type IN ('document', 'folder', 'file', 'unsupported')",
             name="node_type_allowed",
         ),
         UniqueConstraint("sync_run_id", "external_node_token"),
@@ -81,6 +81,9 @@ class KnowledgeNode(Base):
     )
     parent_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("knowledge_nodes.id", ondelete="CASCADE"), nullable=True
+    )
+    asset_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("knowledge_assets.id", ondelete="RESTRICT"), nullable=True
     )
     external_node_token: Mapped[str] = mapped_column(String(200), nullable=False)
     external_object_token: Mapped[str | None] = mapped_column(String(200), nullable=True)

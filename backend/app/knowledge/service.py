@@ -142,23 +142,42 @@ class KnowledgeService:
         nodes = await self._repo.list_nodes(run.id)
         documents = await self._repo.list_documents(run.id)
         document_by_node = {document.node_id: document for document in documents}
-        return KnowledgeOverviewResponse(
-            snapshot=_snapshot(run),
-            nodes=[
+        node_asset_keys = [
+            (node.external_object_token, "attachment")
+            for node in nodes
+            if node.asset_id is not None and node.external_object_token is not None
+        ]
+        node_assets = (
+            await self._repo.assets_by_external_keys(node_asset_keys) if node_asset_keys else {}
+        )
+        node_responses: list[KnowledgeNodeResponse] = []
+        for node in nodes:
+            asset_key = (
+                (node.external_object_token, "attachment")
+                if node.asset_id is not None and node.external_object_token is not None
+                else None
+            )
+            linked_asset = node_assets.get(asset_key) if asset_key is not None else None
+            node_responses.append(
                 KnowledgeNodeResponse(
                     id=node.id,
                     parent_id=node.parent_id,
                     document_id=(
                         document_by_node[node.id].id if node.id in document_by_node else None
                     ),
+                    asset_id=node.asset_id,
                     title=node.title,
                     node_type=cast(Any, node.node_type),
                     depth=node.depth,
                     display_order=node.display_order,
                     source_url=node.source_url,
+                    file_size=linked_asset.size_bytes if linked_asset is not None else None,
+                    mime_type=linked_asset.media_type if linked_asset is not None else None,
                 )
-                for node in nodes
-            ],
+            )
+        return KnowledgeOverviewResponse(
+            snapshot=_snapshot(run),
+            nodes=node_responses,
             documents=[
                 KnowledgeDocumentSummary(
                     id=document.id,
@@ -382,12 +401,23 @@ class KnowledgeSynchronizer:
         reference: AssetReference,
         *,
         now: datetime,
+        standalone_file: bool = False,
     ) -> KnowledgeAsset:
         if reference.kind == "whiteboard":
-            return await self._download_and_store_asset(client, reference, now=now)
+            return await self._download_and_store_asset(
+                client,
+                reference,
+                now=now,
+                standalone_file=standalone_file,
+            )
         async with self._drive_download_lock:
             await asyncio.sleep(_DRIVE_DOWNLOAD_DELAY_SECONDS)
-            return await self._download_and_store_asset(client, reference, now=now)
+            return await self._download_and_store_asset(
+                client,
+                reference,
+                now=now,
+                standalone_file=standalone_file,
+            )
 
     async def _download_and_store_asset(
         self,
@@ -395,8 +425,13 @@ class KnowledgeSynchronizer:
         reference: AssetReference,
         *,
         now: datetime,
+        standalone_file: bool,
     ) -> KnowledgeAsset:
-        content, reported_type = await client.download_asset(reference.token, reference.kind)
+        content, reported_type = (
+            await client.download_file(reference.token)
+            if standalone_file
+            else await client.download_asset(reference.token, reference.kind)
+        )
         asset_id = uuid7()
         if reference.kind in {"image", "whiteboard"}:
             extension, media_type = self._image_type(content)
@@ -474,10 +509,18 @@ class KnowledgeSynchronizer:
                 object_token = raw.get("obj_token")
                 object_type = str(raw.get("obj_type") or "unknown")[:32]
                 is_document = object_type == "docx" and isinstance(object_token, str)
+                is_file = object_type == "file" and isinstance(object_token, str)
+                standalone_asset = (
+                    assets.get((object_token, "attachment"))
+                    if object_type == "file" and isinstance(object_token, str)
+                    else None
+                )
                 has_child = raw.get("has_child") is True
                 node_type = (
                     "document"
                     if is_document
+                    else "file"
+                    if is_file
                     else "folder"
                     if object_type == "folder" or has_child
                     else "unsupported"
@@ -486,6 +529,7 @@ class KnowledgeSynchronizer:
                     id=uuid7(),
                     sync_run_id=run_id,
                     parent_id=None,
+                    asset_id=standalone_asset.id if standalone_asset is not None else None,
                     external_node_token=node_token,
                     external_object_token=object_token if isinstance(object_token, str) else None,
                     object_type=object_type,
@@ -583,6 +627,33 @@ class KnowledgeSynchronizer:
             all_references: dict[tuple[str, str], AssetReference] = {}
             assets: dict[tuple[str, str], KnowledgeAsset] = {}
             new_assets: list[KnowledgeAsset] = []
+
+            async def prepare_reference(
+                reference: AssetReference,
+                *,
+                standalone_file: bool = False,
+            ) -> tuple[tuple[str, str], KnowledgeAsset | None]:
+                key = (reference.token, reference.kind)
+                if key in assets:
+                    return key, assets[key]
+                try:
+                    asset = await self._prepare_asset(
+                        client,
+                        reference,
+                        now=now,
+                        standalone_file=standalone_file,
+                    )
+                except (KnowledgeSyncError, FileValidationError, ObjectStoreError):
+                    logger.warning(
+                        "knowledge_asset_fallback",
+                        extra={
+                            "event": "knowledge_asset_fallback",
+                            "asset_kind": reference.kind,
+                        },
+                    )
+                    return key, None
+                return key, asset
+
             stage = "documents"
             for display_order, node in enumerate(document_nodes):
                 object_token = cast(str, node["obj_token"])
@@ -598,25 +669,6 @@ class KnowledgeSynchronizer:
                 existing_assets = await self._read_existing_assets(references)
                 assets.update(existing_assets)
                 stage = "assets"
-
-                async def prepare_reference(
-                    reference: AssetReference,
-                ) -> tuple[tuple[str, str], KnowledgeAsset | None]:
-                    key = (reference.token, reference.kind)
-                    if key in assets:
-                        return key, assets[key]
-                    try:
-                        asset = await self._prepare_asset(client, reference, now=now)
-                    except (KnowledgeSyncError, FileValidationError, ObjectStoreError):
-                        logger.warning(
-                            "knowledge_asset_fallback",
-                            extra={
-                                "event": "knowledge_asset_fallback",
-                                "asset_kind": reference.kind,
-                            },
-                        )
-                        return key, None
-                    return key, asset
 
                 attachment_references = [
                     reference for reference in references if reference.kind == "attachment"
@@ -652,6 +704,28 @@ class KnowledgeSynchronizer:
                 )
                 self._log_progress("documents", len(documents), len(document_nodes))
                 stage = "documents"
+            standalone_file_references = [
+                AssetReference(
+                    token=cast(str, node["obj_token"]),
+                    kind="attachment",
+                    file_name=str(node.get("title") or "附件")[:255],
+                )
+                for node in raw_nodes
+                if node.get("obj_type") == "file" and isinstance(node.get("obj_token"), str)
+            ]
+            for reference in standalone_file_references:
+                all_references[(reference.token, reference.kind)] = reference
+            if len(all_references) > self._settings.feishu_knowledge_max_assets:
+                raise KnowledgeSyncError("KNOWLEDGE_ASSET_LIMIT_EXCEEDED", permanent=True)
+            if standalone_file_references:
+                stage = "assets"
+                assets.update(await self._read_existing_assets(standalone_file_references))
+                for reference in standalone_file_references:
+                    key, asset = await prepare_reference(reference, standalone_file=True)
+                    if asset is None or key in assets:
+                        continue
+                    assets[key] = asset
+                    new_assets.append(asset)
 
             stage = "persisting"
             await self._persist(

@@ -6,6 +6,7 @@ import {
   getKnowledgeDocument,
   requireUser,
 } from "@/lib/api/server";
+import { isAdminView } from "@/lib/api/types";
 
 type KnowledgePageProps = Readonly<{
   searchParams: Promise<{ doc?: string }>;
@@ -14,8 +15,8 @@ type KnowledgePageProps = Readonly<{
 export default async function KnowledgePage({
   searchParams,
 }: KnowledgePageProps) {
-  const [user, dashboard, overview, filters] = await Promise.all([
-    requireUser("/knowledge"),
+  const user = await requireUser("/knowledge");
+  const [dashboard, overview, filters] = await Promise.all([
     getDashboard(),
     getKnowledge(),
     searchParams,
@@ -23,14 +24,18 @@ export default async function KnowledgePage({
   const requested = (filters.doc ?? "").trim();
   const selectedId = overview.documents.some((item) => item.id === requested)
     ? requested
-    : overview.documents[0]?.id;
+    : undefined;
   const document = selectedId
     ? await getKnowledgeDocument(selectedId)
     : null;
 
   return (
     <AppShell fullBleed unreadCounts={dashboard.unread_counts} user={user}>
-      <KnowledgeReader initialDocument={document} overview={overview} />
+      <KnowledgeReader
+        allowFeishuSourceLinks={isAdminView(user)}
+        initialDocument={document}
+        overview={overview}
+      />
     </AppShell>
   );
 }

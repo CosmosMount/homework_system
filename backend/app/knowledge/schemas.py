@@ -19,11 +19,14 @@ class KnowledgeNodeResponse(BaseModel):
     id: UUID
     parent_id: UUID | None
     document_id: UUID | None
+    asset_id: UUID | None
     title: str
-    node_type: Literal["document", "folder", "unsupported"]
+    node_type: Literal["document", "folder", "file", "unsupported"]
     depth: int
     display_order: int
     source_url: str | None
+    file_size: int | None
+    mime_type: str | None
 
 
 class KnowledgeDocumentSummary(BaseModel):

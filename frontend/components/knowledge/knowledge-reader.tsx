@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, SVGProps } from "react";
 
 import { KnowledgeBlocks } from "@/components/knowledge/knowledge-blocks";
@@ -18,6 +18,7 @@ import { feishuDocumentToken } from "@/lib/knowledge-links";
 type KnowledgeReaderProps = Readonly<{
   overview: KnowledgeOverview;
   initialDocument: KnowledgeDocument | null;
+  allowFeishuSourceLinks?: boolean;
 }>;
 
 type TocItem = { id: string; label: string; level: number };
@@ -26,6 +27,7 @@ type IconName =
   | "chevron-right"
   | "chevrons-left"
   | "chevrons-right"
+  | "download"
   | "file"
   | "folder"
   | "list"
@@ -41,6 +43,9 @@ function Icon({
   switch (name) {
     case "chevron-down":
       shape = <path d="m6 9 6 6 6-6" />;
+      break;
+    case "download":
+      shape = <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></>;
       break;
     case "chevron-right":
       shape = <path d="m9 18 6-6-6-6" />;
@@ -95,13 +100,41 @@ function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "文档加载失败，请稍后重试。";
 }
 
+function assetUrl(assetId: string): string {
+  return "/api/v1/knowledge/assets/" + encodeURIComponent(assetId) + "/content";
+}
+
+function formatFileSize(size: number | null): string {
+  if (!size || size < 1) return "";
+  if (size < 1024) return size + " B";
+  if (size < 1024 * 1024) return (size / 1024).toFixed(1) + " KB";
+  return (size / 1024 / 1024).toFixed(1) + " MB";
+}
+
+function followedNodeIds(
+  nodeById: ReadonlyMap<string, KnowledgeNode>,
+  nodeByDocumentId: ReadonlyMap<string, KnowledgeNode>,
+  documentId: string | undefined,
+): Set<string> {
+  const next = new Set<string>();
+  const visited = new Set<string>();
+  let node = documentId ? nodeByDocumentId.get(documentId) : undefined;
+  while (node?.parent_id && !visited.has(node.parent_id)) {
+    visited.add(node.parent_id);
+    next.add(node.parent_id);
+    node = nodeById.get(node.parent_id);
+  }
+  return next;
+}
+
 const directoryIconButtonClassName =
   "grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)] text-[var(--color-accent)] transition-all outline-none hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-accent-hover)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] active:translate-y-px";
 
 const directoryHeaderClassName =
   "mb-3 flex items-center justify-between gap-3 border-b border-[var(--color-border)] pb-3";
 
-function DocumentBody({ document, onOpenDocument, tokenToDocument }: Readonly<{
+function DocumentBody({ allowFeishuSourceLinks, document, onOpenDocument, tokenToDocument }: Readonly<{
+  allowFeishuSourceLinks: boolean;
   document: KnowledgeDocument;
   onOpenDocument: (documentId: string) => void;
   tokenToDocument: ReadonlyMap<string, string>;
@@ -136,7 +169,7 @@ function DocumentBody({ document, onOpenDocument, tokenToDocument }: Readonly<{
   }, [document.id, toc]);
   return (
     <div className={"grid " + (tocOpen ? "gap-5 lg:grid-cols-[minmax(0,1fr)_180px] lg:gap-10" : "gap-0 lg:grid-cols-[minmax(0,1fr)_40px]")}>
-      <div className="min-w-0 space-y-5 text-slate-700" data-testid="knowledge-document-content"><KnowledgeBlocks blocks={document.blocks} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div>
+      <div className="min-w-0 space-y-5 text-slate-700" data-testid="knowledge-document-content"><KnowledgeBlocks allowFeishuSourceLinks={allowFeishuSourceLinks} blocks={document.blocks} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div>
       <aside className={"hidden lg:sticky lg:top-6 lg:block lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto " + (tocOpen ? "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-[var(--shadow-card)]" : "w-10")} data-testid="knowledge-page-toc">
         {tocOpen ? <>
           <div className={directoryHeaderClassName}>
@@ -152,14 +185,18 @@ function DocumentBody({ document, onOpenDocument, tokenToDocument }: Readonly<{
   );
 }
 
-export function KnowledgeReader({ overview, initialDocument }: KnowledgeReaderProps) {
+export function KnowledgeReader({
+  allowFeishuSourceLinks = false,
+  overview,
+  initialDocument,
+}: KnowledgeReaderProps) {
   const [document, setDocument] = useState(initialDocument);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mobileDirectoryOpen, setMobileDirectoryOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(overview.nodes.filter((node) => node.depth < 2).map((node) => node.id)));
+  const documentDirectoryRef = useRef<HTMLElement>(null);
 
   const tokenToDocument = useMemo(() => {
     const result = new Map(
@@ -175,6 +212,15 @@ export function KnowledgeReader({ overview, initialDocument }: KnowledgeReaderPr
     }
     return result;
   }, [overview.documents, overview.nodes]);
+  const nodeById = useMemo(() => new Map(overview.nodes.map((node) => [node.id, node])), [overview.nodes]);
+  const nodeByDocumentId = useMemo(
+    () => new Map(
+      overview.nodes
+        .filter((node): node is KnowledgeNode & { document_id: string } => Boolean(node.document_id))
+        .map((node) => [node.document_id, node]),
+    ),
+    [overview.nodes],
+  );
   const documentById = useMemo(() => new Map(overview.documents.map((item) => [item.id, item])), [overview.documents]);
   const nodeIds = useMemo(() => new Set(overview.nodes.map((node) => node.id)), [overview.nodes]);
   const childrenByParent = useMemo(() => {
@@ -187,15 +233,40 @@ export function KnowledgeReader({ overview, initialDocument }: KnowledgeReaderPr
     return result;
   }, [overview.nodes]);
   const rootNodes = useMemo(() => overview.nodes.filter((node) => !node.parent_id || !nodeIds.has(node.parent_id)), [nodeIds, overview.nodes]);
+  const followedExpanded = useMemo(
+    () => followedNodeIds(
+      nodeById,
+      nodeByDocumentId,
+      document?.id,
+    ),
+    [document?.id, nodeByDocumentId, nodeById],
+  );
+  const expansionScope = overview.snapshot?.run_id ?? "none";
+  const expansionKey = expansionScope + ":" + (document?.id ?? "none");
+  const [directoryExpansion, setDirectoryExpansion] = useState(() => ({
+    key: expansionKey,
+    nodeIds: followedExpanded,
+  }));
+  const expanded = directoryExpansion.key === expansionKey
+    ? directoryExpansion.nodeIds
+    : followedExpanded;
   const filteredDocuments = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("zh-CN");
     return normalized ? overview.documents.filter((item) => item.title.toLocaleLowerCase("zh-CN").includes(normalized)) : overview.documents;
   }, [overview.documents, query]);
   const toc = useMemo(() => collectToc(document?.blocks ?? []), [document]);
 
+  const followDocumentPath = useCallback((documentId: string) => {
+    setDirectoryExpansion({
+      key: expansionScope + ":" + documentId,
+      nodeIds: followedNodeIds(nodeById, nodeByDocumentId, documentId),
+    });
+  }, [expansionScope, nodeByDocumentId, nodeById]);
+
   const openDocument = useCallback(async (documentId: string, writeHistory = true) => {
     setMobileDirectoryOpen(false);
     if (document?.id === documentId) {
+      followDocumentPath(documentId);
       requestAppShellCollapse();
       if (writeHistory) {
         const url = new URL(window.location.href);
@@ -209,6 +280,7 @@ export function KnowledgeReader({ overview, initialDocument }: KnowledgeReaderPr
     try {
       const next = await apiFetch<KnowledgeDocument>("/knowledge/documents/" + encodeURIComponent(documentId));
       setDocument(next);
+      followDocumentPath(next.id);
       requestAppShellCollapse();
       if (writeHistory) {
         const url = new URL(window.location.href);
@@ -220,29 +292,52 @@ export function KnowledgeReader({ overview, initialDocument }: KnowledgeReaderPr
     } finally {
       setPending(false);
     }
-  }, [document?.id]);
+  }, [document?.id, followDocumentPath]);
 
   useEffect(() => {
     function synchronizeFromHistory() {
       const requested = new URLSearchParams(window.location.search).get("doc");
-      const selected = overview.documents.some((item) => item.id === requested) ? requested : overview.documents[0]?.id;
-      if (selected) void openDocument(selected, false);
+      const selected = requested && overview.documents.some((item) => item.id === requested)
+        ? requested
+        : undefined;
+      if (selected) {
+        void openDocument(selected, false);
+        return;
+      }
+      setMobileDirectoryOpen(false);
+      setPending(false);
+      setError(null);
+      setDocument(null);
+      setDirectoryExpansion({
+        key: expansionScope + ":none",
+        nodeIds: new Set(),
+      });
     }
     window.addEventListener("popstate", synchronizeFromHistory);
     return () => window.removeEventListener("popstate", synchronizeFromHistory);
-  }, [openDocument, overview.documents]);
+  }, [expansionScope, openDocument, overview.documents]);
+
+
+  useEffect(() => {
+    const activeItem = documentDirectoryRef.current?.querySelector<HTMLElement>(
+      '[data-knowledge-document-id][aria-current="page"]',
+    );
+    activeItem?.scrollIntoView?.({ block: "nearest" });
+  }, [document?.id, expanded, query, sidebarOpen]);
 
   function toggleNode(nodeId: string) {
-    setExpanded((current) => {
-      const next = new Set(current);
+    setDirectoryExpansion((current) => {
+      const next = new Set(
+        current.key === expansionKey ? current.nodeIds : followedExpanded,
+      );
       if (next.has(nodeId)) next.delete(nodeId); else next.add(nodeId);
-      return next;
+      return { key: expansionKey, nodeIds: next };
     });
   }
 
   function renderDocumentButton(documentId: string, title: string, depth = 0, onSelect?: () => void) {
     const active = documentId === document?.id;
-    return <button aria-current={active ? "page" : undefined} className={"flex min-w-0 w-full items-start gap-2 rounded-xl border px-3 py-2 text-left text-sm leading-6 transition-all outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] " + (active ? "border-[var(--color-border)] bg-[var(--color-surface-hover)] font-medium text-[var(--color-accent-hover)] shadow-[var(--shadow-card)]" : "border-transparent text-[var(--color-text-secondary)] hover:border-[var(--color-border)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text-primary)]")} key={documentId} onClick={() => { void openDocument(documentId); onSelect?.(); }} style={{ paddingLeft: 8 + Math.min(depth, 5) * 12 }} type="button"><Icon className="mt-1 shrink-0 text-[var(--color-accent)]" name="file" size={15} /><span className="min-w-0 break-words">{title}</span></button>;
+    return <button aria-current={active ? "page" : undefined} className={"flex min-w-0 w-full items-start gap-2 rounded-xl border px-3 py-2 text-left text-sm leading-6 transition-all outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] " + (active ? "border-[var(--color-border)] bg-[var(--color-surface-hover)] font-medium text-[var(--color-accent-hover)] shadow-[var(--shadow-card)]" : "border-transparent text-[var(--color-text-secondary)] hover:border-[var(--color-border)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text-primary)]")} data-knowledge-document-id={documentId} key={documentId} onClick={() => { void openDocument(documentId); onSelect?.(); }} style={{ paddingLeft: 8 + Math.min(depth, 5) * 12 }} type="button"><Icon className="mt-1 shrink-0 text-[var(--color-accent)]" name="file" size={15} /><span className="min-w-0 break-words">{title}</span></button>;
   }
 
   function renderNode(node: KnowledgeNode, onSelect?: () => void): ReactNode {
@@ -252,7 +347,11 @@ export function KnowledgeReader({ overview, initialDocument }: KnowledgeReaderPr
     return <div key={node.id}>
       <div className="flex items-start">
         {children.length > 0 ? <button aria-label={(isExpanded ? "收起" : "展开") + node.title} className="mt-2 grid size-6 shrink-0 place-items-center rounded-md text-[var(--color-text-muted)] transition hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]" onClick={() => toggleNode(node.id)} type="button"><Icon name={isExpanded ? "chevron-down" : "chevron-right"} size={15} /></button> : <span className="w-5 shrink-0" />}
-        {node.document_id && summary ? renderDocumentButton(node.document_id, summary.title, node.depth, onSelect) : <div className="flex min-w-0 items-start gap-2 rounded-xl px-3 py-2 text-sm font-semibold leading-6 text-[var(--color-text-secondary)]" style={{ paddingLeft: 8 + Math.min(node.depth, 5) * 12 }}><Icon className="mt-1 shrink-0 text-[var(--color-accent)]" name="folder" size={15} /><span className="break-words">{node.title}</span></div>}
+        {node.document_id && summary
+          ? renderDocumentButton(node.document_id, summary.title, node.depth, onSelect)
+          : node.node_type === "file"
+            ? <div className="flex min-w-0 flex-1 items-start gap-2 rounded-xl px-3 py-2 text-sm leading-6 text-[var(--color-text-secondary)]" style={{ paddingLeft: 8 + Math.min(node.depth, 5) * 12 }}><Icon className="mt-1 shrink-0 text-[var(--color-accent)]" name="file" size={15} /><div className="min-w-0 flex-1"><p className="break-words font-semibold">{node.title}</p>{formatFileSize(node.file_size) || node.mime_type ? <p className="mt-0.5 break-words text-xs font-normal text-[var(--color-text-muted)]">{[formatFileSize(node.file_size), node.mime_type].filter(Boolean).join(" · ")}</p> : null}</div>{node.asset_id ? <a aria-label={"下载 " + node.title} className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-lg border border-[var(--color-action-border)] px-2 py-1 text-xs font-semibold text-[var(--color-accent)] transition hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-accent-hover)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]" download={node.title} href={assetUrl(node.asset_id)} onClick={onSelect}><Icon name="download" size={14} />下载</a> : <span className="shrink-0 text-xs font-normal text-[var(--color-text-muted)]">暂不可下载</span>}</div>
+            : <div className="flex min-w-0 items-start gap-2 rounded-xl px-3 py-2 text-sm font-semibold leading-6 text-[var(--color-text-secondary)]" style={{ paddingLeft: 8 + Math.min(node.depth, 5) * 12 }}><Icon className="mt-1 shrink-0 text-[var(--color-accent)]" name="folder" size={15} /><span className="break-words">{node.title}</span></div>}
       </div>
       {children.length > 0 && isExpanded ? <div>{children.map((child) => renderNode(child, onSelect))}</div> : null}
     </div>;
@@ -274,10 +373,10 @@ export function KnowledgeReader({ overview, initialDocument }: KnowledgeReaderPr
       {!mobileDirectoryOpen ? <button aria-label="打开目录" className="fixed bottom-4 right-4 z-40 inline-flex min-h-11 items-center gap-2 rounded-xl border border-[var(--color-action-border)] bg-[var(--color-action-fill)] px-4 py-2 text-sm font-semibold text-[var(--color-action-text)] shadow-[var(--shadow-button)] transition hover:bg-[var(--color-action-fill-hover)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] lg:hidden" onClick={() => setMobileDirectoryOpen(true)} title="打开目录" type="button"><Icon name="list" size={17} />目录</button> : null}
       {mobileDirectoryOpen ? <div aria-label="移动端目录" aria-modal="true" className="fixed inset-0 z-50 bg-[var(--color-text-primary)]/25 p-4 backdrop-blur-sm lg:hidden" role="dialog"><div className="mx-auto flex h-full max-w-lg flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-soft)]"><div className="flex min-h-14 items-center justify-between border-b border-[var(--color-border)] px-4"><span className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-[0.16em] text-[var(--color-accent)]"><Icon name="list" size={17} />目录</span><button aria-label="关闭目录" className={directoryIconButtonClassName} onClick={() => setMobileDirectoryOpen(false)} title="关闭目录" type="button"><Icon name="x" size={20} /></button></div><div className="min-h-0 flex-1 overflow-y-auto p-4">{directory(() => setMobileDirectoryOpen(false))}{document && toc.length > 0 ? <div className="mt-8 border-t border-[var(--color-border)] pt-5"><p className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-[var(--color-accent)]">本文目录</p><nav aria-label="移动端本文目录" className="space-y-1">{toc.map((item) => <a className={"block rounded-lg px-2 py-1.5 text-sm leading-6 text-[var(--color-text-secondary)] transition hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-accent)] " + (item.level > 1 ? "pl-5" : "")} href={"#" + item.id} key={item.id} onClick={() => setMobileDirectoryOpen(false)}>{item.label}</a>)}</nav></div> : null}</div></div></div> : null}
       <div className={"grid " + (sidebarOpen ? "gap-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-8" : "gap-4 lg:grid-cols-[40px_minmax(0,1fr)] lg:gap-8")}>
-        <aside className={"hidden lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start " + (sidebarOpen ? "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-[var(--shadow-card)] lg:block" : "w-10 lg:block")} data-testid="knowledge-document-directory">
+        <aside className={"hidden lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start " + (sidebarOpen ? "rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-[var(--shadow-card)] lg:block" : "w-10 lg:block")} data-testid="knowledge-document-directory" ref={documentDirectoryRef}>
           {sidebarOpen ? <><div className={directoryHeaderClassName}><span className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--color-accent)]">文档目录</span><button aria-label="收起文档目录" className={directoryIconButtonClassName} onClick={() => setSidebarOpen(false)} title="收起文档目录" type="button"><Icon name="chevrons-left" /></button></div>{directory(undefined, true)}</> : <button aria-label="展开文档目录" className={directoryIconButtonClassName} onClick={() => setSidebarOpen(true)} title="展开文档目录" type="button"><Icon name="chevrons-right" /></button>}
         </aside>
-        <section className="min-w-0" data-testid="knowledge-document">{error ? <p className="mb-5 border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert" style={{ borderRadius: 0 }}>{error}</p> : null}<span aria-live="polite" className="sr-only" role="status">{pending ? "正在加载文档" : ""}</span>{document ? <><header className="mb-8 border-b border-slate-200 pb-6" style={{ borderRadius: 0 }}><h2 className="text-3xl font-black text-slate-950 sm:text-4xl">{document.title}</h2><a className="mt-3 inline-block break-words text-sm text-[#1687c9] transition hover:text-slate-950" href={document.source_url} rel="noreferrer" target="_blank">在飞书中打开原文 ↗</a></header><DocumentBody document={document} onOpenDocument={(documentId) => { void openDocument(documentId); }} tokenToDocument={tokenToDocument} />{document.blocks.length === 0 ? <p className="py-12 text-center text-sm text-slate-400">这篇文档当前没有可展示的内容。</p> : null}</> : <p className="py-16 text-center text-sm text-slate-400">从目录选择一篇培训文档。</p>}</section>
+        <section className="min-w-0" data-testid="knowledge-document">{error ? <p className="mb-5 border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700" role="alert" style={{ borderRadius: 0 }}>{error}</p> : null}<span aria-live="polite" className="sr-only" role="status">{pending ? "正在加载文档" : ""}</span>{document ? <><header className="mb-8 border-b border-slate-200 pb-6" style={{ borderRadius: 0 }}><h2 className="text-3xl font-black text-slate-950 sm:text-4xl">{document.title}</h2>{allowFeishuSourceLinks ? <a className="mt-3 inline-block break-words text-sm text-[#1687c9] transition hover:text-slate-950" href={document.source_url} rel="noreferrer" target="_blank">在飞书中打开原文 ↗</a> : null}</header><DocumentBody allowFeishuSourceLinks={allowFeishuSourceLinks} document={document} onOpenDocument={(documentId) => { void openDocument(documentId); }} tokenToDocument={tokenToDocument} />{document.blocks.length === 0 ? <p className="py-12 text-center text-sm text-slate-400">这篇文档当前没有可展示的内容。</p> : null}</> : <p className="py-16 text-center text-sm text-slate-400">从目录选择一篇培训文档。</p>}</section>
       </div>
     </article>
   </main>;

@@ -2,7 +2,7 @@ import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 from uuid import UUID, uuid4
 
 import pytest
@@ -119,10 +119,12 @@ class SequentialFeishuClient:
         document_count: int,
         rejected_documents: set[str] | None = None,
         rejected_titles: set[str] | None = None,
+        standalone_file: bool = False,
     ) -> None:
         self.document_count = document_count
         self.rejected_documents = rejected_documents or set()
         self.rejected_titles = rejected_titles or set()
+        self.standalone_file = standalone_file
         self.calls: list[str] = []
 
     async def tenant_token(self) -> str:
@@ -131,7 +133,7 @@ class SequentialFeishuClient:
 
     async def list_nodes(self) -> list[dict[str, object]]:
         self.calls.append("list_nodes")
-        return [
+        nodes: list[dict[str, object]] = [
             {
                 "node_token": f"node-{index}",
                 "obj_token": f"doc-{index}",
@@ -140,6 +142,16 @@ class SequentialFeishuClient:
             }
             for index in range(self.document_count)
         ]
+        if self.standalone_file:
+            nodes.append(
+                {
+                    "node_token": "standalone-file-node",
+                    "obj_token": "standalone-file-token",
+                    "obj_type": "file",
+                    "title": "训练资料.pdf",
+                }
+            )
+        return nodes
 
     async def document_blocks(self, document_id: str) -> list[dict[str, object]]:
         self.calls.append(f"blocks:{document_id}")
@@ -203,7 +215,7 @@ def configured_settings() -> Settings:
 async def test_synchronizer_matches_reference_document_and_asset_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = SequentialFeishuClient(document_count=2)
+    client = SequentialFeishuClient(document_count=2, standalone_file=True)
     monkeypatch.setattr(
         knowledge_service_module,
         "FeishuClient",
@@ -228,8 +240,10 @@ async def test_synchronizer_matches_reference_document_and_asset_order(
         reference: AssetReference,
         *,
         now: datetime,
+        standalone_file: bool = False,
     ) -> KnowledgeAsset:
-        client.calls.append(f"asset:{reference.kind}:{reference.token}")
+        source = "file" if standalone_file else "media"
+        client.calls.append(f"asset:{source}:{reference.kind}:{reference.token}")
         return KnowledgeAsset(
             id=uuid4(),
             external_asset_token=reference.token,
@@ -254,12 +268,13 @@ async def test_synchronizer_matches_reference_document_and_asset_order(
         "list_nodes",
         "blocks:doc-0",
         "title:doc-0",
-        "asset:attachment:file-doc-0",
-        "asset:image:image-doc-0",
+        "asset:media:attachment:file-doc-0",
+        "asset:media:image:image-doc-0",
         "blocks:doc-1",
         "title:doc-1",
-        "asset:attachment:file-doc-1",
-        "asset:image:image-doc-1",
+        "asset:media:attachment:file-doc-1",
+        "asset:media:image:image-doc-1",
+        "asset:file:attachment:standalone-file-token",
     ]
     assert persist.await_args is not None
     persisted_call = persist.await_args
@@ -269,18 +284,21 @@ async def test_synchronizer_matches_reference_document_and_asset_order(
         "接口标题 doc-0",
         "接口标题 doc-1",
     ]
-    assert len(persisted_call.kwargs["new_assets"]) == 4
+    assert len(persisted_call.kwargs["new_assets"]) == 5
+    assert ("standalone-file-token", "attachment") in persisted_call.kwargs["assets"]
+    assert persisted_call.kwargs["raw_nodes"][-1]["obj_type"] == "file"
 
 
 @pytest.mark.asyncio
-async def test_drive_download_waits_350ms_while_whiteboard_bypasses_queue(
+async def test_drive_downloads_wait_350ms_while_whiteboard_bypasses_queue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     object_store = SimpleNamespace(
         import_bytes=AsyncMock(return_value=SimpleNamespace(size_bytes=8, sha256="0" * 64))
     )
     client = SimpleNamespace(
-        download_asset=AsyncMock(return_value=(b"\x89PNG\r\n\x1a\n", "image/png"))
+        download_asset=AsyncMock(return_value=(b"\x89PNG\r\n\x1a\n", "image/png")),
+        download_file=AsyncMock(return_value=(b"%PDF-1.7\nfile", "application/pdf")),
     )
     sleep = AsyncMock()
     monkeypatch.setattr(asyncio, "sleep", sleep)
@@ -301,10 +319,17 @@ async def test_drive_download_waits_350ms_while_whiteboard_bypasses_queue(
         AssetReference(token="board-token", kind="whiteboard", file_name="白板.png"),
         now=now,
     )
+    await synchronizer._prepare_asset(
+        cast(FeishuClient, client),
+        AssetReference(token="standalone-token", kind="attachment", file_name="资料.pdf"),
+        now=now,
+        standalone_file=True,
+    )
 
-    sleep.assert_awaited_once_with(0.35)
+    assert sleep.await_args_list == [call(0.35), call(0.35)]
     assert client.download_asset.await_args_list[0].args == ("image-token", "image")
     assert client.download_asset.await_args_list[1].args == ("board-token", "whiteboard")
+    client.download_file.assert_awaited_once_with("standalone-token")
 
 
 @pytest.mark.asyncio
@@ -337,6 +362,7 @@ async def test_visual_assets_match_promise_all_while_documents_remain_serial(
         reference: AssetReference,
         *,
         now: datetime,
+        standalone_file: bool = False,
     ) -> KnowledgeAsset:
         if reference.kind == "attachment":
             events.append("attachment")

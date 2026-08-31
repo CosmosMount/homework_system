@@ -867,11 +867,14 @@ export type KnowledgeNode = {
   id: string;
   parent_id: string | null;
   document_id: string | null;
+  asset_id: string | null;
   title: string;
-  node_type: "document" | "folder" | "unsupported";
+  node_type: "document" | "folder" | "file" | "unsupported";
   depth: number;
   display_order: number;
   source_url: string | null;
+  file_size: number | null;
+  mime_type: string | null;
 };
 
 export type KnowledgeDocumentSummary = {

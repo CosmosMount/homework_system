@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode, SVGProps } from "react";
 import katex from "katex";
 
@@ -16,6 +16,7 @@ type KnowledgeBlocksProps = Readonly<{
   blocks: KnowledgeBlock[];
   tokenToDocument: ReadonlyMap<string, string>;
   onOpenDocument: (documentId: string) => void;
+  allowFeishuSourceLinks?: boolean;
 }>;
 
 type IconName = "check" | "copy" | "download" | "file";
@@ -67,7 +68,8 @@ function MathFormula({ latex, displayMode = false }: Readonly<{
   return <Tag aria-label="公式解析失败" className={className}>{latex}</Tag>;
 }
 
-function RichText({ segments = [], tokenToDocument, onOpenDocument }: Readonly<{
+function RichText({ allowFeishuSourceLinks, segments = [], tokenToDocument, onOpenDocument }: Readonly<{
+  allowFeishuSourceLinks: boolean;
   segments?: KnowledgeRichSegment[];
   tokenToDocument: ReadonlyMap<string, string>;
   onOpenDocument: (documentId: string) => void;
@@ -81,13 +83,17 @@ function RichText({ segments = [], tokenToDocument, onOpenDocument }: Readonly<{
     if (segment.italic) content = <em>{content}</em>;
     if (segment.underline) content = <u>{content}</u>;
     if (segment.strikethrough) content = <s>{content}</s>;
+    const hrefDocumentToken = feishuDocumentToken(segment.href);
     const documentToken =
-      segment.document_token ?? feishuDocumentToken(segment.href);
+      segment.document_token ??
+      (allowFeishuSourceLinks ? hrefDocumentToken : null);
     const documentId = documentToken
       ? tokenToDocument.get(documentToken)
       : undefined;
     if (documentId) return <a className="text-[#1687c9] underline decoration-[#1687c9]/50 underline-offset-2 transition hover:text-slate-950" href={"?doc=" + encodeURIComponent(documentId)} key={index} onClick={(event) => { event.preventDefault(); onOpenDocument(documentId); }}>{content}</a>;
-    if (segment.href) return <a className="text-[#1687c9] underline decoration-[#1687c9]/50 underline-offset-2 transition hover:text-slate-950" href={segment.href} key={index} rel="noreferrer" target="_blank">{content}</a>;
+    const isFeishuDocumentReference =
+      segment.document_token !== undefined || hrefDocumentToken !== null;
+    if (segment.href && (allowFeishuSourceLinks || !isFeishuDocumentReference)) return <a className="text-[#1687c9] underline decoration-[#1687c9]/50 underline-offset-2 transition hover:text-slate-950" href={segment.href} key={index} rel="noreferrer" target="_blank">{content}</a>;
     return <span key={index}>{content}</span>;
   });
 }
@@ -183,22 +189,67 @@ function formatFileSize(size?: number): string {
   return (size / 1024 / 1024).toFixed(1) + " MB";
 }
 
-function Nested({ block, tokenToDocument, onOpenDocument }: Readonly<{ block: KnowledgeBlock; tokenToDocument: ReadonlyMap<string, string>; onOpenDocument: (documentId: string) => void }>) {
-  return block.children?.length ? <div className="mt-2 border-l border-slate-200 pl-4" style={{ borderRadius: 0 }}><KnowledgeBlocks blocks={block.children} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div> : null;
+function Nested({ allowFeishuSourceLinks, block, tokenToDocument, onOpenDocument }: Readonly<{ allowFeishuSourceLinks: boolean; block: KnowledgeBlock; tokenToDocument: ReadonlyMap<string, string>; onOpenDocument: (documentId: string) => void }>) {
+  return block.children?.length ? <div className="mt-2 border-l border-slate-200 pl-4" style={{ borderRadius: 0 }}><KnowledgeBlocks allowFeishuSourceLinks={allowFeishuSourceLinks} blocks={block.children} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div> : null;
 }
 
 function MediaBlock({ block, inGallery }: Readonly<{ block: KnowledgeBlock; inGallery: boolean }>) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const alt = block.file_name || (block.type === "whiteboard" ? "飞书白板" : "知识库图片");
+  const src = block.asset_id ? assetUrl(block.asset_id) : "";
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const trigger = triggerRef.current;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setPreviewOpen(false);
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        closeButtonRef.current?.focus();
+      }
+    }
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    const frame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      trigger?.focus();
+    };
+  }, [previewOpen]);
+
   if (!block.asset_id) return null;
-  return <figure className={inGallery ? "min-w-0" : "my-8"}>
-    <a href={assetUrl(block.asset_id)} rel="noreferrer" target="_blank"><img alt={block.file_name || (block.type === "whiteboard" ? "飞书白板" : "知识库图片")} className={inGallery ? "h-auto max-h-[520px] w-full border border-slate-200 object-contain" : "h-auto max-h-[720px] w-auto max-w-full border border-slate-200 object-contain"} height={block.height ?? undefined} loading="lazy" src={assetUrl(block.asset_id)} style={{ borderRadius: 4 }} width={block.width ?? undefined} /></a>
-    {block.type === "whiteboard" ? <figcaption className="mt-2 text-sm text-slate-500">飞书白板 · 点击查看原图</figcaption> : null}
-  </figure>;
+
+  return <>
+    <figure className={inGallery ? "min-w-0 flex-[1_1_15rem]" : "my-8"}>
+      <button aria-haspopup="dialog" aria-label={"查看原图：" + alt} className={inGallery ? "block w-full cursor-zoom-in outline-none focus-visible:ring-2 focus-visible:ring-[#1687c9]" : "block max-w-full cursor-zoom-in outline-none focus-visible:ring-2 focus-visible:ring-[#1687c9]"} onClick={() => setPreviewOpen(true)} ref={triggerRef} type="button"><img alt={alt} className={inGallery ? "h-auto max-h-[520px] w-full border border-slate-200 object-contain" : "h-auto max-h-[720px] w-auto max-w-full border border-slate-200 object-contain"} height={block.height ?? undefined} loading="lazy" src={src} style={{ borderRadius: 4 }} width={block.width ?? undefined} /></button>
+      {block.type === "whiteboard" ? <figcaption className="mt-2 text-sm text-slate-500">飞书白板 · 点击查看原图</figcaption> : null}
+    </figure>
+    {previewOpen
+      ? <div aria-label={alt + " 图片预览"} aria-modal="true" className="fixed inset-0 z-[70] flex cursor-zoom-out items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm sm:p-8" onClick={(event) => { if (event.target === event.currentTarget) setPreviewOpen(false); }} role="dialog">
+        <button aria-label="关闭图片预览" className="absolute right-4 top-4 grid size-11 place-items-center rounded-full border border-white/40 bg-slate-950/60 text-2xl text-white outline-none transition hover:bg-slate-950 focus-visible:ring-2 focus-visible:ring-white" onClick={() => setPreviewOpen(false)} ref={closeButtonRef} type="button"><span aria-hidden="true">×</span></button>
+        <img alt={alt + " 原图预览"} className="max-h-[calc(100vh-4rem)] max-w-full cursor-default object-contain shadow-2xl" src={src} />
+      </div>
+      : null}
+  </>;
 }
 
-function AttachmentBlock({ block }: Readonly<{ block: KnowledgeBlock }>) {
-  const href = block.asset_id ? assetUrl(block.asset_id) : block.fallback_url;
+function AttachmentBlock({ allowFeishuSourceLinks, block }: Readonly<{ allowFeishuSourceLinks: boolean; block: KnowledgeBlock }>) {
+  const href = block.asset_id
+    ? assetUrl(block.asset_id)
+    : allowFeishuSourceLinks
+      ? block.fallback_url
+      : undefined;
   const metadata = [formatFileSize(block.file_size), block.mime_type].filter(Boolean).join(" · ");
-  return <div className="my-5 flex min-w-0 items-center gap-3 border border-slate-200 bg-slate-50 p-3 sm:p-4" style={{ borderRadius: 4 }}><span className="grid size-10 shrink-0 place-items-center rounded bg-[#1687c9]/10 text-[#1687c9]"><Icon name="file" size={20} /></span><div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold text-slate-900">{block.file_name || "附件"}</p>{metadata ? <p className="mt-1 break-words text-xs text-slate-500">{metadata}</p> : null}</div>{href ? <a className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded border border-[#1687c9]/45 px-3 py-2 text-sm font-semibold text-[#1687c9] transition hover:border-[#1687c9] hover:bg-[#1687c9]/10 hover:text-slate-950" download={block.asset_id ? block.file_name : undefined} href={href} rel={block.asset_id ? undefined : "noreferrer"} target={block.asset_id ? undefined : "_blank"}>{block.asset_id ? <><Icon name="download" size={16} /><span className="hidden sm:inline">下载</span></> : "在飞书查看"}</a> : null}</div>;
+  return <div className="my-5 flex min-w-0 items-center gap-3 border border-slate-200 bg-slate-50 p-3 sm:p-4" style={{ borderRadius: 4 }}><span className="grid size-10 shrink-0 place-items-center rounded bg-[#1687c9]/10 text-[#1687c9]"><Icon name="file" size={20} /></span><div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold text-slate-900">{block.file_name || "附件"}</p>{metadata ? <p className="mt-1 break-words text-xs text-slate-500">{metadata}</p> : null}</div>{href ? <a className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded border border-[#1687c9]/45 px-3 py-2 text-sm font-semibold text-[#1687c9] transition hover:border-[#1687c9] hover:bg-[#1687c9]/10 hover:text-slate-950" download={block.asset_id ? block.file_name : undefined} href={href} rel={block.asset_id ? undefined : "noreferrer"} target={block.asset_id ? undefined : "_blank"}>{block.asset_id ? <><Icon name="download" size={16} /><span className="hidden sm:inline">下载</span></> : "在飞书查看"}</a> : <span className="shrink-0 text-xs font-medium text-slate-500">暂不可下载</span>}</div>;
 }
 
 function tableCellData(cell: KnowledgeBlock[] | KnowledgeTableCell) {
@@ -211,36 +262,62 @@ function tableCellData(cell: KnowledgeBlock[] | KnowledgeTableCell) {
       };
 }
 
-function Block({ block, tokenToDocument, onOpenDocument }: Readonly<{ block: KnowledgeBlock; tokenToDocument: ReadonlyMap<string, string>; onOpenDocument: (documentId: string) => void }>) {
-  const rich = <RichText onOpenDocument={onOpenDocument} segments={block.segments} tokenToDocument={tokenToDocument} />;
+function isEmptyStructuralBlock(block: KnowledgeBlock): boolean {
+  const segmentsAreEmpty = !(block.segments ?? []).some((segment) =>
+    segment.text.trim().length > 0
+    || Boolean(segment.href)
+    || Boolean(segment.document_token)
+    || segment.equation === true,
+  );
+  const childrenAreEmpty = (block.children ?? []).every(isEmptyStructuralBlock);
+  return (block.type === "paragraph" || block.type === "container")
+    && segmentsAreEmpty
+    && childrenAreEmpty;
+}
+
+function galleryMedia(block: KnowledgeBlock): KnowledgeBlock[] | null {
+  if (block.type === "image" || block.type === "whiteboard") return [block];
+  if (block.type !== "container" || !block.children?.length) return null;
+  const media: KnowledgeBlock[] = [];
+  for (const child of block.children) {
+    if (isEmptyStructuralBlock(child)) continue;
+    const nestedMedia = galleryMedia(child);
+    if (nestedMedia === null) return null;
+    media.push(...nestedMedia);
+  }
+  return media.length > 0 ? media : null;
+}
+
+function Block({ allowFeishuSourceLinks, block, tokenToDocument, onOpenDocument }: Readonly<{ allowFeishuSourceLinks: boolean; block: KnowledgeBlock; tokenToDocument: ReadonlyMap<string, string>; onOpenDocument: (documentId: string) => void }>) {
+  const rich = <RichText allowFeishuSourceLinks={allowFeishuSourceLinks} onOpenDocument={onOpenDocument} segments={block.segments} tokenToDocument={tokenToDocument} />;
   switch (block.type) {
-    case "paragraph": return <div className="my-3 break-words leading-8 text-slate-700"><p>{rich}</p><Nested block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div>;
+    case "paragraph": return <div className="my-3 break-words leading-8 text-slate-700"><p>{rich}</p><Nested allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div>;
     case "heading": return (block.level ?? 1) <= 1 ? <h2 className="scroll-mt-8 break-words pt-8 text-2xl font-bold text-slate-900 sm:text-3xl" id={"kb-" + block.id}>{rich}</h2> : <h3 className="scroll-mt-8 break-words pt-7 text-xl font-bold text-slate-900 sm:text-2xl" id={"kb-" + block.id}>{rich}</h3>;
-    case "todo": return <div className="my-3 flex gap-3 bg-slate-50 px-4 py-3 text-slate-700" style={{ borderRadius: 4 }}><span aria-label={block.done ? "已完成" : "未完成"}>{block.done ? "☑" : "☐"}</span><div className={block.done ? "text-slate-500 line-through" : ""}>{rich}<Nested block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div></div>;
-    case "quote": return <blockquote className="my-5 break-words border-l-2 border-[#1687c9]/80 bg-[#1687c9]/[0.05] px-4 py-3 leading-7 text-slate-700 sm:px-5">{rich}<Nested block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></blockquote>;
+    case "todo": return <div className="my-3 flex gap-3 bg-slate-50 px-4 py-3 text-slate-700" style={{ borderRadius: 4 }}><span aria-label={block.done ? "已完成" : "未完成"}>{block.done ? "☑" : "☐"}</span><div className={block.done ? "text-slate-500 line-through" : ""}>{rich}<Nested allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div></div>;
+    case "quote": return <blockquote className="my-5 break-words border-l-2 border-[#1687c9]/80 bg-[#1687c9]/[0.05] px-4 py-3 leading-7 text-slate-700 sm:px-5">{rich}<Nested allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></blockquote>;
     case "equation": return <MathFormula displayMode latex={(block.segments ?? []).map((segment) => segment.text).join("")} />;
     case "callout": {
       const background = tone(block.background_color ?? block.tone);
       const border = tone(block.border_color);
       const text = tone(block.text_color);
-      return <aside className={`my-6 flex min-w-0 items-start gap-3 border px-4 py-4 sm:gap-4 sm:px-5 ${calloutBackground[background] ?? calloutBackground[7]} ${calloutBorder[border] ?? calloutBorder[7]} ${calloutText[text] ?? calloutText[7]}`} style={{ borderRadius: 4 }}><span aria-hidden="true" className="mt-0.5 shrink-0 text-xl leading-7" title={block.emoji_id}>{emoji(block.emoji_id)}</span><div className="min-w-0 flex-1 space-y-4">{rich}<Nested block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div></aside>;
+      return <aside className={`my-6 flex min-w-0 items-start gap-3 border px-4 py-4 sm:gap-4 sm:px-5 ${calloutBackground[background] ?? calloutBackground[7]} ${calloutBorder[border] ?? calloutBorder[7]} ${calloutText[text] ?? calloutText[7]}`} style={{ borderRadius: 4 }}><span aria-hidden="true" className="mt-0.5 shrink-0 text-xl leading-7" title={block.emoji_id}>{emoji(block.emoji_id)}</span><div className="min-w-0 flex-1 space-y-4">{rich}<Nested allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div></aside>;
     }
     case "code": return <CodeBlock block={block} />;
     case "divider": return <hr className="my-8 border-0 border-t border-slate-200" />;
     case "image":
     case "whiteboard": return <MediaBlock block={block} inGallery={false} />;
-    case "attachment": return <AttachmentBlock block={block} />;
+    case "attachment": return <AttachmentBlock allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} />;
     case "table": return <div className="my-8 max-w-full overflow-x-auto border border-slate-200" style={{ borderRadius: 4 }}><table className="w-full min-w-[640px] border-collapse text-left text-sm"><tbody>{(block.rows ?? []).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => {
       const data = tableCellData(cell);
-      return <td className="whitespace-pre-wrap break-words border border-slate-200 px-3 py-2 align-top leading-6 text-slate-700" colSpan={data.colSpan} key={Array.isArray(cell) ? cellIndex : cell.id} rowSpan={data.rowSpan}><KnowledgeBlocks blocks={data.blocks} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></td>;
+      return <td className="whitespace-pre-wrap break-words border border-slate-200 px-3 py-2 align-top leading-6 text-slate-700" colSpan={data.colSpan} key={Array.isArray(cell) ? cellIndex : cell.id} rowSpan={data.rowSpan}><KnowledgeBlocks allowFeishuSourceLinks={allowFeishuSourceLinks} blocks={data.blocks} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></td>;
     })}</tr>)}</tbody></table></div>;
-    case "container": return <Nested block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} />;
+    case "container": return <Nested allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} />;
     case "bullet":
     case "ordered": return null;
   }
 }
 
-export function KnowledgeBlocks({ blocks, tokenToDocument, onOpenDocument }: KnowledgeBlocksProps) {
+export function KnowledgeBlocks({ allowFeishuSourceLinks = false, blocks, tokenToDocument, onOpenDocument }: KnowledgeBlocksProps) {
   const rendered: ReactNode[] = [];
   for (let index = 0; index < blocks.length; index += 1) {
     const block = blocks[index];
@@ -250,16 +327,37 @@ export function KnowledgeBlocks({ blocks, tokenToDocument, onOpenDocument }: Kno
       while (index < blocks.length && blocks[index].type === type) { items.push(blocks[index]); index += 1; }
       index -= 1;
       const List = type === "bullet" ? "ul" : "ol";
-      rendered.push(<List className={type === "bullet" ? "list-disc space-y-2 pl-6" : "list-decimal space-y-2 pl-6"} key={"list-" + block.id}>{items.map((item) => <li className="break-words leading-7 text-slate-700" key={item.id}><RichText onOpenDocument={onOpenDocument} segments={item.segments} tokenToDocument={tokenToDocument} /><Nested block={item} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></li>)}</List>);
+      rendered.push(<List className={type === "bullet" ? "list-disc space-y-2 pl-6" : "list-decimal space-y-2 pl-6"} key={"list-" + block.id}>{items.map((item) => <li className="break-words leading-7 text-slate-700" key={item.id}><RichText allowFeishuSourceLinks={allowFeishuSourceLinks} onOpenDocument={onOpenDocument} segments={item.segments} tokenToDocument={tokenToDocument} /><Nested allowFeishuSourceLinks={allowFeishuSourceLinks} block={item} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></li>)}</List>);
       continue;
     }
-    if (block.type === "image" || block.type === "whiteboard") {
-      const gallery: KnowledgeBlock[] = [block];
-      while (index + 1 < blocks.length && (blocks[index + 1].type === "image" || blocks[index + 1].type === "whiteboard")) { gallery.push(blocks[index + 1]); index += 1; }
-      rendered.push(gallery.length > 1 ? <div className="my-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" key={"gallery-" + block.id}>{gallery.map((item) => <MediaBlock block={item} inGallery key={item.id} />)}</div> : <MediaBlock block={block} inGallery={false} key={block.id} />);
-      continue;
+    const initialMedia = galleryMedia(block);
+    if (initialMedia !== null) {
+      const gallery = [...initialMedia];
+      let lastGalleryIndex = index;
+      let candidateIndex = index + 1;
+      while (candidateIndex < blocks.length) {
+        while (
+          candidateIndex < blocks.length
+          && isEmptyStructuralBlock(blocks[candidateIndex])
+        ) candidateIndex += 1;
+        if (candidateIndex >= blocks.length) break;
+        const nextMedia = galleryMedia(blocks[candidateIndex]);
+        if (nextMedia === null) break;
+        gallery.push(...nextMedia);
+        lastGalleryIndex = candidateIndex;
+        candidateIndex += 1;
+      }
+      if (gallery.length > 1) {
+        rendered.push(<div className="my-8 flex flex-wrap items-start gap-4" key={"gallery-" + block.id}>{gallery.map((item) => <MediaBlock block={item} inGallery key={item.id} />)}</div>);
+        index = lastGalleryIndex;
+        continue;
+      }
+      if (block.type === "image" || block.type === "whiteboard") {
+        rendered.push(<MediaBlock block={block} inGallery={false} key={block.id} />);
+        continue;
+      }
     }
-    rendered.push(<Block block={block} key={block.id} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} />);
+    rendered.push(<Block allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} key={block.id} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} />);
   }
   return <>{rendered}</>;
 }

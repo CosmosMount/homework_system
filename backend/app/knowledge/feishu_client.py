@@ -338,6 +338,20 @@ class FeishuClient:
             raise KnowledgeSyncError("FEISHU_ASSET_EMPTY", permanent=True)
         return response.body, response.headers.get("content-type")
 
+    async def download_file(self, token: str) -> tuple[bytes, str | None]:
+        safe_token = quote(token, safe="")
+        response = await self._request(
+            method="GET",
+            path=f"/open-apis/drive/v1/files/{safe_token}/download",
+            max_bytes=self._settings.feishu_knowledge_max_asset_bytes,
+            accept=None,
+        )
+        if response.status < 200 or response.status >= 300:
+            raise KnowledgeSyncError("FEISHU_ASSET_UNAVAILABLE", permanent=response.status < 500)
+        if not response.body:
+            raise KnowledgeSyncError("FEISHU_ASSET_EMPTY", permanent=True)
+        return response.body, response.headers.get("content-type")
+
     def source_url(self, node_token: str) -> str:
         configured = self._settings.feishu_wiki_url
         if configured is None:

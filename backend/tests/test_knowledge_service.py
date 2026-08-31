@@ -114,6 +114,67 @@ async def test_overview_keeps_latest_successful_snapshot_when_newer_run_failed()
 
 
 @pytest.mark.asyncio
+async def test_overview_exposes_protected_standalone_file_metadata() -> None:
+    run_id = uuid4()
+    asset_id = uuid4()
+    node_id = uuid4()
+    file_token = "standalone-file-token"
+    repository = SimpleNamespace(
+        latest_succeeded_run=AsyncMock(
+            return_value=cast(
+                KnowledgeSyncRun,
+                SimpleNamespace(
+                    id=run_id,
+                    finished_at=datetime.now(UTC),
+                    source_url="https://pnx.feishu.cn/wiki/",
+                    document_count=1,
+                    asset_count=1,
+                ),
+            )
+        ),
+        list_nodes=AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    id=node_id,
+                    parent_id=None,
+                    asset_id=asset_id,
+                    external_object_token=file_token,
+                    title="训练资料.pdf",
+                    node_type="file",
+                    depth=0,
+                    display_order=0,
+                    source_url="https://pnx.feishu.cn/wiki/file-node",
+                )
+            ]
+        ),
+        list_documents=AsyncMock(return_value=[]),
+        assets_by_external_keys=AsyncMock(
+            return_value={
+                (file_token, "attachment"): SimpleNamespace(
+                    id=asset_id,
+                    size_bytes=2048,
+                    media_type="application/pdf",
+                )
+            }
+        ),
+    )
+    service = KnowledgeService(
+        cast(AsyncSession, AsyncMock(spec=AsyncSession)),
+        Settings(app_env="test"),
+        object_store=cast(MinioObjectStore, RecordingObjectStore()),
+    )
+    service._repo = cast(KnowledgeRepository, repository)
+
+    overview = await service.overview()
+
+    assert overview.nodes[0].node_type == "file"
+    assert overview.nodes[0].asset_id == asset_id
+    assert overview.nodes[0].file_size == 2048
+    assert overview.nodes[0].mime_type == "application/pdf"
+    repository.assets_by_external_keys.assert_awaited_once_with([(file_token, "attachment")])
+
+
+@pytest.mark.asyncio
 async def test_asset_url_only_uses_asset_referenced_by_current_successful_snapshot() -> None:
     current_run_id = uuid4()
     asset_id = uuid4()

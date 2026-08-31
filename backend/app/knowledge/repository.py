@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.knowledge.models import (
@@ -135,19 +135,26 @@ class KnowledgeRepository:
             )
 
     async def current_asset(self, run_id: UUID, asset_id: UUID) -> KnowledgeAsset | None:
-        result: KnowledgeAsset | None = await self._session.scalar(
-            select(KnowledgeAsset)
-            .join(
-                KnowledgeDocumentAsset,
-                KnowledgeDocumentAsset.asset_id == KnowledgeAsset.id,
-            )
+        document_asset_ids = (
+            select(KnowledgeDocumentAsset.asset_id)
             .join(
                 KnowledgeDocument,
                 KnowledgeDocument.id == KnowledgeDocumentAsset.document_id,
             )
+            .where(KnowledgeDocument.sync_run_id == run_id)
+        )
+        node_asset_ids = select(KnowledgeNode.asset_id).where(
+            KnowledgeNode.sync_run_id == run_id,
+            KnowledgeNode.asset_id.is_not(None),
+        )
+        result: KnowledgeAsset | None = await self._session.scalar(
+            select(KnowledgeAsset)
             .where(
                 KnowledgeAsset.id == asset_id,
-                KnowledgeDocument.sync_run_id == run_id,
+                or_(
+                    KnowledgeAsset.id.in_(document_asset_ids),
+                    KnowledgeAsset.id.in_(node_asset_ids),
+                ),
             )
             .limit(1)
         )

@@ -244,6 +244,9 @@ class AssetHeaderTransport(RecordingTransport):
         if "/drive/v1/medias/image-token/download" in url:
             self.requests.append((url, headers, body))
             return HttpResponse(200, {"content-type": "image/png"}, b"image")
+        if "/drive/v1/files/standalone-file-token/download" in url:
+            self.requests.append((url, headers, body))
+            return HttpResponse(200, {"content-type": "application/pdf"}, b"file")
         return super().request(
             method=method,
             url=url,
@@ -260,6 +263,7 @@ async def test_feishu_client_requests_whiteboard_as_png_only() -> None:
 
     await client.download_asset("board-token", "whiteboard")
     await client.download_asset("image-token", "image")
+    file_content, file_type = await client.download_file("standalone-file-token")
 
     board_headers = next(
         headers for url, headers, _ in transport.requests if "/whiteboards/" in url
@@ -267,6 +271,13 @@ async def test_feishu_client_requests_whiteboard_as_png_only() -> None:
     image_headers = next(headers for url, headers, _ in transport.requests if "/medias/" in url)
     assert board_headers["accept"] == "image/png"
     assert "accept" not in image_headers
+    file_request = next(
+        (url, headers) for url, headers, _ in transport.requests if "/drive/v1/files/" in url
+    )
+    assert file_request[0].endswith("/drive/v1/files/standalone-file-token/download")
+    assert "accept" not in file_request[1]
+    assert file_content == b"file"
+    assert file_type == "application/pdf"
 
 
 @pytest.mark.asyncio

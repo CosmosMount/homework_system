@@ -13,7 +13,7 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260831_0017"]
+    assert script.get_heads() == ["20260831_0018"]
 
 
 def test_persistent_login_migration_is_reversible_and_follows_account_deletion() -> None:
@@ -50,6 +50,27 @@ def test_admin_content_deleted_visibility_migration_has_safe_contract() -> None:
     assert source.count('op.drop_column("') >= 2
     assert source.index("op.drop_constraint") < source.index(
         'op.drop_column("assignments", "deleted_at")'
+    )
+
+
+def test_knowledge_directory_file_migration_is_reversible() -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+    migration_path = (
+        backend_root / "migrations" / "versions" / "20260831_0018_knowledge_directory_files.py"
+    )
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260831_0018"' in source
+    assert 'down_revision: str | None = "20260831_0017"' in source
+    assert 'sa.Column("asset_id", postgresql.UUID(as_uuid=True), nullable=True)' in source
+    assert "fk_knowledge_nodes_asset_id_knowledge_assets" in source
+    assert "ix_knowledge_nodes_asset_id" in source
+    assert "node_type IN ('document', 'folder', 'file', 'unsupported')" in source
+    assert "SET node_type = 'file'" in source
+    assert "SET node_type = 'unsupported'" in source
+    assert 'op.drop_column("knowledge_nodes", "asset_id")' in source
+    assert source.index("SET node_type = 'unsupported'") < source.index(
+        'op.drop_column("knowledge_nodes", "asset_id")'
     )
 
 

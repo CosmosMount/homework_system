@@ -15,9 +15,10 @@ RUN addgroup -g 10001 -S appgroup \
     && adduser -S -D -H -u 10001 -G appgroup appuser
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
-COPY alembic.ini ./
-COPY migrations ./migrations
-COPY app ./app
+COPY --chown=appuser:appgroup alembic.ini ./
+COPY --chown=appuser:appgroup migrations ./migrations
+COPY --chown=appuser:appgroup app ./app
+RUN chmod -R a=rX alembic.ini migrations app
 
 USER appuser
 EXPOSE 8000
