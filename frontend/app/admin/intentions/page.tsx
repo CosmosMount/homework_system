@@ -1,10 +1,18 @@
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { IntentionAdminPanel } from "@/components/admin/intention-admin-panel";
 import { AppShell } from "@/components/layout/app-shell";
-import { getAdminIntentions, requireAdmin } from "@/lib/api/server";
+import {
+  getAdminIntentions,
+  getDirections,
+  requireAdmin,
+} from "@/lib/api/server";
 
 export default async function AdminIntentionsPage() {
-  const [admin, surveys] = await Promise.all([requireAdmin(), getAdminIntentions()]);
+  const [admin, surveys, directions] = await Promise.all([
+    requireAdmin(),
+    getAdminIntentions(),
+    getDirections(),
+  ]);
   return (
     <AppShell user={admin}>
       <AdminPageHeader
@@ -12,7 +20,10 @@ export default async function AdminIntentionsPage() {
         eyebrow="ADMIN / QUESTIONNAIRES"
         title="问卷管理"
       />
-      <IntentionAdminPanel initialSurveys={surveys.items} />
+      <IntentionAdminPanel
+        directions={directions}
+        initialSurveys={surveys.items}
+      />
     </AppShell>
   );
 }

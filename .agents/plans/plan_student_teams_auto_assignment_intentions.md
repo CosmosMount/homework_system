@@ -10,6 +10,12 @@
 
 2026-08-28 用户继续要求问卷生成后可以查看并修改且直接部署。本轮沿用该唯一正式计划：新增任意状态管理详情，开放草稿的完整编辑；已开放且可能存在答案的题目结构保持只读，避免历史选择失去含义。实现后执行完整质量门、数据库备份、固定镜像部署和数据不变性验收，不新增迁移、不触发飞书同步。
 
+2026-08-30 用户要求已关闭问卷允许重新开启。本轮继续沿用该领域唯一正式计划：在不开放题目结构编辑、不重置历史回答或累计提交次数的前提下，允许真实管理员执行 `closed → open`；归档仍为终态，重新开启后原开始/结束时间窗口与提交上限继续生效。本轮不新增字段或迁移。
+
+2026-08-30 用户要求问卷支持邮件通知，并确认由管理员手动选择成员发送。本轮继续沿用该领域唯一正式计划：问卷开放后，真实管理员通过既有管理员用户搜索加载激活学生，逐个选择成员并显式发送；服务端重新校验所选账号仍为激活学生，邮件 Outbox 与脱敏审计在同一事务提交，SMTP 故障不影响问卷及回答。
+
+2026-08-30 用户进一步要求可以按技术组选择或向全部成员发送。本轮在原手动成员模式上新增 `direction` 与 `all` 范围：前端从统一方向 API 加载激活技术组，后端按发送瞬间解析对应激活学生，不由浏览器分页枚举 UUID；停用/不存在技术组、空范围均拒绝。三种范围继续共用开放窗口、成员事件键去重、Outbox、脱敏审计和安全邮件模板，无数据库迁移。
+
 ## 目标与决策
 
 - 学生 `/competitions` 只展示当前未归档校内赛公告摘要、我的队伍状态和可加入队伍目录；队伍目录支持名称搜索，只返回仍在成形且未满的公开摘要。
@@ -21,11 +27,18 @@
 - 问卷可配置每人最多提交次数，留空表示不限；每次成功保存当前答案消耗一次，达到上限后服务端拒绝再次提交。管理员名单展示提交人姓名、学号、邮箱、最新答案、累计提交次数和最后提交时间，不向学生公开他人答案。
 - 已有单题调查迁移为只含一个问题的问卷，原选项和回答关系保持不变；原回答修订次数初始化为已提交次数，已有调查默认不限次数，避免升级后阻止原有改答流程。
 - 管理员可读取任意状态问卷的 Markdown 源说明、时间窗口、提交限制和完整题目/选项；仅 `draft` 可携带 revision 原子替换内容，开放、关闭或归档问卷只读。
+- 已关闭问卷可由真实管理员重新开启，随后也可再次关闭；重新开启不修改题目、选项、二维码 token、历史最新答案、累计提交次数、原时间窗口或提交上限。已归档问卷不可重新开启。
+- 问卷开放后，真实管理员可按姓名、学号或学校邮箱搜索激活学生并手动选择 1～100 名成员发送填写提醒；前端不得传入任意邮箱，后端只按用户 UUID 重新校验 `role=student AND status=active` 后读取其已验证学校邮箱。
+- 同一接口同时支持按一个激活技术组和全部激活学生发送；技术组/全部范围只由服务端查询发送时的权威成员集合，不受管理用户分页影响，也不接受前端提交展开后的邮箱或 UUID 列表。
+- 请求范围必须互斥：`manual` 只带 1～100 个不重复成员 UUID，`direction` 只带一个技术组 UUID，`all` 不带成员或技术组；技术组不存在/停用或最终收件人数为 0 时整体拒绝。
+- 同一问卷每次开放周期以问卷当前 revision 和学生 UUID 形成唯一事件键；同一成员重复选择只报告已入队，不重复发送，问卷关闭再重新开启后可在新 revision 下再次手动通知。
+- 邮件只包含收件人称呼、问卷标题和站内 `/intentions/{survey_id}` 填写链接，不包含问卷答案、补充说明、二维码 token、管理员信息或永久资源地址；管理员邮件页继续只返回掩码收件人和安全任务元数据。
 
 ## 影响范围
 
 - `backend/app/competitions/`：队伍公开目录、自动分配服务/接口/Schema。
 - `backend/app/intentions/`：模型、仓储、服务、路由和 Schema。
+- `backend/app/notifications/`：登记问卷邮件任务类型并增加安全的纯文本/HTML 模板，复用既有 Worker、退避、dead 与人工重试。
 - `backend/app/intentions/service.py`：创建时先落库父调查，再写入选项，保持现有事务原子性。
 - `backend/migrations/versions/20260827_0009_intention_surveys.py`：调查、选项、回答及索引，可回滚。
 - `backend/migrations/versions/20260828_0013_intention_questionnaires.py`：新增问题、提交上限和已提交次数字段，迁移现有单题调查与回答；迁移接在工作树现有 `0012` 后保持单一 Alembic head。
@@ -43,6 +56,8 @@
 - 创建回归严格断言 `survey → flush → option → option → commit`；使用真实 PostgreSQL 验证父调查和选项可在同一事务写入，并在冒烟后完整回滚测试数据。
 - 问卷升级测试覆盖多题结构校验、每题单选/多选、缺题/跨题选项拒绝、有限/不限提交次数、并发上限、实名名单仅管理员可读、分题统计和旧调查数据迁移。
 - 问卷查看/编辑测试覆盖四种状态详情、学生与管理员学生视图 403、草稿结构替换、revision 冲突、非草稿拒绝、前端加载/保存刷新和 Markdown 安全显示。
+- 问卷状态回归覆盖 `draft → open → closed → open → closed → archived`、归档后重新开启拒绝、真实管理员与 CSRF 守卫、重新开启按钮和既有二维码/答案/次数不被重置；时间窗口与提交上限继续由既有学生读取和提交校验执行。
+- 问卷邮件回归覆盖仅开放问卷可发送、手动搜索/选择、按激活技术组、全部激活学生、三种范围互斥校验、停用/不存在/空技术组、重复 UUID/非激活手动成员整体拒绝、同开放周期同成员不重复入队、重新开启后可再次通知、事务失败无半成品，以及模板链接/转义/敏感字段边界；自动测试不连接真实 SMTP。
 - 前端测试覆盖动态增删题、提交次数提示/用尽禁用、管理员实名名单及分题统计；运行完整 ESLint、严格 TypeScript 和生产构建。
 - 迁移验证执行 `0012 → 0013 → 0012 → 0013`；降级时把多题选项按题序安全展平为旧单题结构，降级会丢失题目标题和次数限制语义，生产回滚前必须先备份。
 
@@ -88,3 +103,68 @@
 - 后端完整 230 项、Ruff/格式/146 源文件严格 Mypy，前端 20 文件/82 项、ESLint、严格 TypeScript和生产构建均通过；本轮不新增迁移。
 - PostgreSQL 自定义格式备份已校验；Backend/Worker 与 Frontend 以 `questionnaire-edit-20260828` 固定标签部署，镜像分别为 `sha256:06eb68d3…`、`sha256:a5d9264a…`。六服务 healthy，接口守卫、编译标识、数据不变性和知识库不触发同步均验收通过。
 - 部署期间发现补丁回退工具把三个后端源码权限落成 0600，导致首次 Backend 启动出现 `PermissionError`；恢复 0644 后重建同标签并替换服务，最终日志和健康检查正常。误生成且未使用的两个 `dev` 标签已删除。
+
+
+## 2026-08-30 已关闭问卷重新开启实施结果
+
+- 后端状态机现允许 `draft → open → closed`、`closed → open` 和 `closed → archived`；归档终态继续拒绝重新开启。重新开启使用独立 `intention.reopen` 审计并记录 `from_status/to_status`，既有真实管理员、CSRF 和问卷行锁边界不变。
+- 管理员问卷卡片在 `closed` 状态同时显示“重新开启”和“归档问卷”；重新开启后恢复关闭和二维码操作。操作不改问题/选项、二维码 token、历史最新答案、累计提交次数、时间窗口或提交上限。
+- 问卷定向后端/API 34 项和前端 2 文件/10 项通过；完整后端 299 项、Ruff、153 文件格式、120 源文件严格 Mypy，完整前端 25 文件/112 项、ESLint、严格 TypeScript 与 Next.js 生产构建全部通过。
+- 源码实现阶段不新增迁移或依赖，未连接运行数据库/对象存储、未调用运行问卷写接口，也未部署 Docker；后续运行态发布结果见本计划末尾。
+
+## 2026-08-30 已关闭问卷重新开启部署计划
+
+### 范围与保护
+
+- 使用固定标签 `questionnaire-reopen-20260830` 构建当前完整 Backend 与 Frontend；候选必须同时保留已上线的持久登录/IP 转发、用户搜索、队伍/账号/答疑删除、学生知识库链接策略和 KaTeX 能力，只新增问卷 `closed → open`、独立审计与管理端按钮。
+- 本轮没有 Alembic 或 API Schema 变更，不运行 migrate；PostgreSQL、MinIO、卷和网络均不重建，不携带管理员 Session 调用问卷状态接口，不触发飞书同步、上传、认证、删除或邮件写入。
+- 替换前记录六服务健康/镜像/容器 ID、`20260830_0016`、问卷五表与核心安全聚合、最近知识库同步和 Outbox；复核最近加密备份仍可作为短期恢复材料。
+
+### 候选与发布
+
+- 构建镜像后检查 Backend/Frontend 均以非 root `appuser` 运行并通过健康检查；Backend 静态 OpenAPI 保留既有路径，运行源码包含 `closed: {open, archived}` 与 `intention.reopen`；Frontend 产物包含“重新开启”、受保护问卷管理请求及所有既有能力标记。
+- 先用 `--no-deps --force-recreate` 定向替换 Backend/Worker 并等待 healthy，再替换 Frontend/Nginx；PostgreSQL/MinIO 容器 ID 必须保持不变。若任一阶段失败，立即恢复 `knowledge-student-links-20260830` Frontend 与既有 `persistent-login-20260830` Backend/Worker 标签。
+- 发布后检查六服务 healthy、重启 0、五健康入口 200、问卷与管理员页面匿名 307、问卷管理 API 匿名 401；复核运行镜像/产物标记、Alembic 和部署前后数据聚合，日志不得出现权限、连接、事务、外键或未处理异常。
+
+## 2026-08-30 已关闭问卷重新开启部署结果
+
+- 固定标签 `questionnaire-reopen-20260830` 已部署；Backend/Worker 镜像为 `sha256:f613c227e74b67b8c3f1257cb7dca2b2d80b2273168bad13df80ba923331e016`，Frontend 为 `sha256:35bed3d14aef08f213df7b14510c2623af5944d3639a3e2788175944a6d7bb75`，候选与运行应用均为非 root `appuser`。
+- 候选静态 OpenAPI 保持 114 条路径并保留队伍、账号、答疑删除等既有能力；Backend 包含 `closed → open` 与 `intention.reopen`，Frontend 产物同时包含“重新开启”、来源 IP 转发、用户搜索、队伍删除、持久登录、知识库附件鉴权路径和 KaTeX 标记。
+- 按 Backend/Worker、Frontend/Nginx 两阶段定向替换后六服务全部 healthy、重启 0；`/login`、live、ready、worker、`/nginx-health` 为 200，问卷页面匿名为 307，管理和学生问卷 API 匿名为 401。PostgreSQL、MinIO 容器 ID 保持 `bfa750f66ab0…`、`331150f34f37…`，未重建容器、卷或网络。
+- 本轮未运行 migrate，Alembic 保持 `20260830_0016 (head)`。部署前后 `users=158`，问卷五表为 `3/5/21/91/181`，状态为 `archived:2,open:1`，知识库为 `1110/1027`，账号清理 Outbox 为 0，最近同步与同步 Outbox 保持 `succeeded|213|1020`、`sent|1`。
+- 验收未携带认证信息调用真实问卷状态接口，未触发飞书同步或其他业务写入。自 `2026-08-30T12:45:07Z` 起四个应用日志无 Traceback、权限、连接、事务、外键或未处理异常；最近加密备份 `pnx-backup-20260830T045545Z-daily.tar.gpg` 的 0600、5,682,620 字节和 SHA-256 校验仍有效。
+
+## 2026-08-30 问卷按手动成员、技术组或全部学生发送邮件实施结果
+
+- 管理端开放问卷卡片新增互斥范围单选：手动模式复用 `GET /admin/users?status=active&role=student` 搜索并勾选最多 100 人，技术组模式从统一方向接口选择一个激活技术组，全部模式指向发送时全部激活学生；浏览器按范围只提交成员 UUID、技术组 UUID 或 `all` 标识和幂等键。
+- 后端请求 Schema 校验三种范围互斥；Service 在真实管理员、CSRF、问卷行锁与开放窗口边界内处理，Repository 对技术组/全部范围查询发送瞬间的权威激活学生集合，停用/不存在技术组和空范围整体拒绝。三种范围继续以问卷 revision/成员事件键去重，并与 `intention.email_notify` 脱敏审计同事务写 `intention_open_email` Outbox。
+- 邮件纯文本/HTML 只含称呼、标题和站内填写链接，用户内容转义且拒绝外部目标 URL；不包含答案、补充说明、二维码 token 或管理员信息。Worker、8 次退避、dead 管理和人工重试全部复用既有能力。
+- 后端意向/API 契约定向 48 项、完整 315 项、Ruff 及 171 文件格式检查、120 个源文件严格 Mypy 通过；前端问卷定向 12 项、完整 25 文件/115 项、ESLint、严格 TypeScript 和生产构建通过。
+- 本轮无新依赖或数据库迁移，未连接运行 PostgreSQL/MinIO，未调用真实 SMTP、未创建运行态邮件任务，也未构建或部署 Docker。
+
+## 2026-08-30 问卷三种范围邮件部署计划
+
+### 范围与保护
+
+- 使用固定标签 `questionnaire-email-scopes-20260830` 从当前已通过完整质量门的工作树构建 Backend/Worker 与 Frontend；候选必须同时保留已上线的持久登录与来源 IP 转发、管理员用户搜索、队伍/账号/答疑删除、问卷重新开启、学生知识库链接策略和 KaTeX 能力，只增加问卷手动成员/技术组/全部激活学生三种邮件范围。
+- 本功能没有 Alembic 变更，不运行 migrate；PostgreSQL、MinIO、持久卷、网络和数据服务容器均不得重建。发布验收不携带管理员 Session，不调用问卷邮件、同步、认证、删除、上传或其他业务写接口，也不触发真实 SMTP。
+- 发布前复核最近加密备份的归档、外部校验和与权限，并记录六服务健康、运行镜像/容器 ID、Alembic、用户/问卷五表/状态/知识库/账号清理与邮件 Outbox 聚合；保留 `questionnaire-reopen-20260830` 镜像作为无迁移应用回滚目标。
+
+### 候选与发布
+
+- 构建同标签 Backend/Worker 与 Frontend 后，检查两类镜像均以非 root `appuser` 运行并通过候选健康门；静态 OpenAPI 必须包含问卷邮件端点和 `manual/direction/all` 请求枚举，Frontend 产物必须包含三种范围文案及全部既有能力标记。
+- 先用显式 `.env` 与 Compose 文件定向替换 Backend/Worker，等待两者 healthy；再替换 Frontend/Nginx 并等待 healthy。PostgreSQL/MinIO 容器 ID 必须保持不变；任一阶段失败则恢复部署前 Backend/Worker 与 Frontend 镜像并重新验收，不恢复数据库备份。
+- 发布后检查六服务 healthy、重启 0，登录、live、ready、worker、Nginx 健康入口为 200；问卷页面匿名为 307，管理与学生问卷 API 匿名为 401。运行 OpenAPI/编译产物必须含三种范围，Alembic 与部署前后聚合必须一致，部署窗口日志不得出现权限、连接、事务、外键、SMTP 或未处理异常。
+
+### 回滚
+
+- 本轮没有 Schema 或数据迁移；如应用验收失败，将 `.env` 的固定标签恢复为 `questionnaire-reopen-20260830`，按 Backend/Worker、Frontend/Nginx 相同顺序定向替换并重新执行健康与匿名权限检查。不得为应用回滚恢复数据库备份。
+
+## 2026-08-30 问卷三种范围邮件部署结果
+
+- 固定标签 `questionnaire-email-scopes-20260830` 已部署；Backend/Worker 镜像为 `sha256:af1d520399115abad815f84100c5e34c961a29003087d3088eccf54eb7106cbd`，Frontend 为 `sha256:8d4ba40349833834a713a6af4b5ea90c572343dd26e6ab58a9d78aeef75e75fe`，三类应用容器均以非 root `appuser` 运行且重启次数为 0。
+- 候选与运行 OpenAPI 共 115 条路径，问卷邮件请求枚举为 `manual/direction/all`；运行 Frontend 编译产物包含三种范围文案，并保留问卷重新开启、用户搜索、队伍删除、持久登录、来源 IP 转发、知识库附件和 KaTeX 等既有能力标记。
+- 按 Backend/Worker、Frontend/Nginx 两阶段定向替换后六服务全部 healthy；`/login`、live、ready、worker 和 `/nginx-health` 为 200，问卷页面匿名为 307，管理、学生问卷 API 和匿名邮件 POST 均为 401。PostgreSQL/MinIO 容器 ID 保持 `bfa750f66ab0…`、`331150f34f37…`，未重建容器、卷或网络。
+- 本轮未运行 migrate，Alembic 保持 `20260830_0016 (head)`。部署前后 `users=160`，问卷五表为 `3/5/21/92/183`，状态为 `archived:2,open:1`，知识库为 `1110/1027`，最近同步保持 `succeeded|213|1020`；Outbox 聚合一致，未新增 `intention_open_email` 或 `delete_account_object`。
+- 验收未携带管理员 Session/Cookie，匿名邮件 POST 在业务逻辑前返回 401，未触发真实 SMTP、飞书同步、认证、删除、上传或其他业务写入。自 `2026-08-30T14:56:57Z` 起 Backend、Worker、Frontend、Nginx 日志错误关键词匹配均为 0。
+- 最近加密恢复材料 `pnx-backup-20260830T045545Z-daily.tar.gpg` 仍为 5,682,620 字节、0600 且校验有效；新增部署前 PostgreSQL 17 自定义格式快照 `/tmp/pnx-training-before-questionnaire-email-scopes-20260830TbwXIV3Z.dump` 为 6,838,808 字节、0600，SHA-256 为 `4c363a8ccca0b2b0a484960fdb95ff2a55381e1ee91b6af3a2aa98dbbee5f473`，同版本 `pg_restore --list` 共 314 项。

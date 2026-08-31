@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -15,6 +16,7 @@ MAIL_JOB_TYPES = (
     "announcement_email",
     "announcement_update_email",
     "assignment_extension_email",
+    "intention_open_email",
 )
 
 
@@ -78,6 +80,17 @@ class OutboxRepository:
             select(OutboxJob).where(OutboxJob.event_key == event_key)
         )
         return result
+
+    async def existing_event_keys(self, event_keys: Sequence[str]) -> set[str]:
+        if not event_keys:
+            return set()
+        return set(
+            (
+                await self._session.scalars(
+                    select(OutboxJob.event_key).where(OutboxJob.event_key.in_(event_keys))
+                )
+            ).all()
+        )
 
     async def delete_active_by_event_key(self, event_key: str) -> None:
         await self._session.execute(

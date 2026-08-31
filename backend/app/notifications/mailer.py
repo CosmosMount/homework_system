@@ -94,6 +94,26 @@ def render_mail(
         )
         return RenderedMail(recipient=recipient, subject=subject, text=text, html=html)
 
+    if job.job_type == "intention_open_email":
+        title = str(job.payload["title"])
+        target_url = str(job.payload["target_url"])
+        if not target_url.startswith("/intentions/") or "://" in target_url:
+            raise PermanentMailError("INVALID_TARGET_URL")
+        subject_title = " ".join(title.splitlines()).strip()
+        if not subject_title:
+            raise PermanentMailError("MISSING_TITLE")
+        link = f"{base_url}{target_url}"
+        subject = f"PNX Training Hub 问卷填写提醒：{subject_title}"
+        text = (
+            f"{full_name}，你好：\n\n问卷《{title}》现已开放填写。\n\n请登录平台填写问卷：\n{link}"
+        )
+        html = (
+            f"<p>{safe_name}，你好：</p>"
+            f"<p>问卷《{escape(title)}》现已开放填写。</p>"
+            f'<p><a href="{escape(link)}">登录平台填写问卷</a></p>'
+        )
+        return RenderedMail(recipient=recipient, subject=subject, text=text, html=html)
+
     if job.job_type == "assignment_extension_email":
         title = str(job.payload["title"])
         target_url = str(job.payload["target_url"])

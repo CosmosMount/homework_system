@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 IntentionStatus = Literal["draft", "open", "closed", "archived"]
+IntentionEmailRecipientScope = Literal["manual", "direction", "all"]
 
 
 class IntentionOptionInput(BaseModel):
@@ -69,6 +70,37 @@ class IntentionSurveyCreateRequest(BaseModel):
 
 class IntentionSurveyPatchRequest(IntentionSurveyCreateRequest):
     revision: int = Field(ge=1)
+
+
+class IntentionEmailNotificationRequest(BaseModel):
+    recipient_scope: IntentionEmailRecipientScope = "manual"
+    recipient_user_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    direction_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_recipients(self) -> "IntentionEmailNotificationRequest":
+        if len(self.recipient_user_ids) != len(set(self.recipient_user_ids)):
+            raise ValueError("邮件接收成员不得重复")
+        if self.recipient_scope == "manual":
+            if not self.recipient_user_ids:
+                raise ValueError("手动发送必须选择至少一名成员")
+            if self.direction_id is not None:
+                raise ValueError("手动发送不得同时指定技术组")
+        elif self.recipient_scope == "direction":
+            if self.direction_id is None:
+                raise ValueError("按技术组发送必须指定技术组")
+            if self.recipient_user_ids:
+                raise ValueError("按技术组发送不得同时指定成员")
+        elif self.recipient_user_ids or self.direction_id is not None:
+            raise ValueError("全部发送不得同时指定成员或技术组")
+        return self
+
+
+class IntentionEmailNotificationResponse(BaseModel):
+    survey_id: UUID
+    requested_count: int = Field(ge=1)
+    queued_count: int = Field(ge=0)
+    already_queued_count: int = Field(ge=0)
 
 
 class IntentionOptionResponse(BaseModel):

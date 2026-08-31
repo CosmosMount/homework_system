@@ -147,6 +147,29 @@ def test_questionnaire_openapi_exposes_questions_limits_stats_and_admin_roster()
     stats = schema["components"]["schemas"]["IntentionStatsResponse"]
     assert "questions" in stats["required"]
 
+    email_operation = paths["/api/v1/admin/intentions/{survey_id}/email-notifications"]["post"]
+    email_request_schema = email_operation["requestBody"]["content"]["application/json"]["schema"]
+    assert email_request_schema == {
+        "$ref": "#/components/schemas/IntentionEmailNotificationRequest"
+    }
+    assert any(
+        parameter["name"] == "Idempotency-Key"
+        and parameter["in"] == "header"
+        and parameter["required"] is True
+        for parameter in email_operation["parameters"]
+    )
+    email_request = schema["components"]["schemas"]["IntentionEmailNotificationRequest"]
+    assert {"recipient_scope", "recipient_user_ids", "direction_id"} <= set(
+        email_request["properties"]
+    )
+    assert email_request["properties"]["recipient_scope"]["enum"] == [
+        "manual",
+        "direction",
+        "all",
+    ]
+    assert email_request["properties"]["recipient_scope"]["default"] == "manual"
+    assert email_request["properties"]["recipient_user_ids"]["maxItems"] == 100
+
 
 def test_help_request_openapi_exposes_private_public_and_admin_contracts() -> None:
     schema = create_app(Settings(app_env="test")).openapi()

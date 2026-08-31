@@ -746,6 +746,13 @@ export type AdminIntentionSurveyPage = {
   total: number;
 };
 
+export type IntentionEmailNotificationResult = {
+  survey_id: string;
+  requested_count: number;
+  queued_count: number;
+  already_queued_count: number;
+};
+
 export type IntentionStats = {
   survey_id: string;
   total_active_students: number;

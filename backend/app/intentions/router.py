@@ -1,7 +1,7 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 
 from app.auth.dependencies import (
     AdminContextDependency,
@@ -15,6 +15,8 @@ from app.intentions.schemas import (
     AdminIntentionSurvey,
     AdminIntentionSurveyDetail,
     AdminIntentionSurveyPage,
+    IntentionEmailNotificationRequest,
+    IntentionEmailNotificationResponse,
     IntentionQrResponse,
     IntentionResponseRequest,
     IntentionResponseResponse,
@@ -148,6 +150,24 @@ async def generate_intention_qr_token(
     _csrf: CsrfDependency,
 ) -> IntentionQrResponse:
     return await service.qr_token(survey_id, audit_context=_audit_context(request, context))
+
+
+@router.post(
+    "/admin/intentions/{survey_id}/email-notifications",
+    response_model=IntentionEmailNotificationResponse,
+)
+async def send_intention_email_notifications(
+    survey_id: UUID,
+    payload: IntentionEmailNotificationRequest,
+    request: Request,
+    service: IntentionServiceDependency,
+    context: AdminContextDependency,
+    _csrf: CsrfDependency,
+    _idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=200)],
+) -> IntentionEmailNotificationResponse:
+    return await service.send_email_notifications(
+        survey_id, payload, audit_context=_audit_context(request, context)
+    )
 
 
 @router.post("/admin/intentions/{survey_id}/{action}", response_model=AdminIntentionSurvey)

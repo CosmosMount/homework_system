@@ -5,6 +5,7 @@ import { type FormEvent, useState } from "react";
 import QRCode from "qrcode";
 
 import { IntentionAdminDetail } from "@/components/admin/intention-admin-detail";
+import { IntentionEmailNotifier } from "@/components/admin/intention-email-notifier";
 import {
   buttonClassName,
   commandButtonClassName,
@@ -14,6 +15,7 @@ import {
 import { ApiError, apiFetch, csrfFetch } from "@/lib/api/client";
 import type {
   AdminIntentionSurvey,
+  Direction,
   IntentionQr,
   IntentionRoster,
   IntentionStats,
@@ -57,7 +59,11 @@ function errorMessage(error: unknown): string {
 
 export function IntentionAdminPanel({
   initialSurveys,
-}: Readonly<{ initialSurveys: AdminIntentionSurvey[] }>) {
+  directions = [],
+}: Readonly<{
+  initialSurveys: AdminIntentionSurvey[];
+  directions?: Direction[];
+}>) {
   const [surveys, setSurveys] = useState(initialSurveys);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -422,6 +428,16 @@ export function IntentionAdminPanel({
                   <button
                     className={commandButtonClassName}
                     disabled={pending}
+                    onClick={() => transition(survey, "open")}
+                    type="button"
+                  >
+                    重新开启
+                  </button>
+                ) : null}
+                {survey.status === "closed" ? (
+                  <button
+                    className={commandButtonClassName}
+                    disabled={pending}
                     onClick={() => transition(survey, "archived")}
                     type="button"
                   >
@@ -465,6 +481,14 @@ export function IntentionAdminPanel({
                 }
                 survey={survey}
               />
+
+              {survey.status === "open" ? (
+                <IntentionEmailNotifier
+                  directions={directions}
+                  surveyId={survey.id}
+                  surveyTitle={survey.title}
+                />
+              ) : null}
 
               {surveyQr ? (
                 <div className="mt-5 flex flex-col items-start gap-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4 sm:flex-row sm:items-center">

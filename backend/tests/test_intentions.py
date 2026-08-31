@@ -29,6 +29,7 @@ from app.intentions.repository import (
 )
 from app.intentions.schemas import (
     IntentionAnswerRequest,
+    IntentionEmailNotificationRequest,
     IntentionOptionInput,
     IntentionQuestionInput,
     IntentionResponseRequest,
@@ -36,7 +37,10 @@ from app.intentions.schemas import (
     IntentionSurveyPatchRequest,
 )
 from app.intentions.service import IntentionAuditContext, IntentionService
-from app.users.models import User
+from app.notifications.mailer import PermanentMailError, render_mail
+from app.notifications.models import OutboxJob
+from app.notifications.repository import OutboxRepository
+from app.users.models import Direction, User
 
 
 def make_context(role: str = "student", *, student_view: bool = False) -> AuthenticatedContext:
@@ -333,7 +337,7 @@ async def test_admin_update_rejects_non_drafts_and_stale_revisions(
 
 
 @pytest.mark.asyncio
-async def test_questionnaire_status_moves_forward_only() -> None:
+async def test_closed_questionnaire_can_reopen_while_archived_remains_terminal() -> None:
     now = datetime.now(UTC)
     survey = make_survey(now, status="draft")
     service, session = make_service(now)
@@ -353,14 +357,413 @@ async def test_questionnaire_status_moves_forward_only() -> None:
         await service.transition(survey.id, "closed", audit_context=audit_context)
     ).status == "closed"
     assert (
+        await service.transition(survey.id, "open", audit_context=audit_context)
+    ).status == "open"
+    assert survey.public_token_hash == sha256_hexdigest("initial-token")
+    assert (
+        await service.transition(survey.id, "closed", audit_context=audit_context)
+    ).status == "closed"
+    assert (
         await service.transition(survey.id, "archived", audit_context=audit_context)
     ).status == "archived"
 
     with pytest.raises(ApplicationError) as blocked:
         await service.transition(survey.id, "open", audit_context=audit_context)
     assert blocked.value.code == "STATE_CONFLICT"
-    assert session.commit.await_count == 3
+    assert session.commit.await_count == 5
     session.rollback.assert_awaited_once()
+    audit_add = cast(Mock, service._audit.add)
+    assert [item.args[0].action for item in audit_add.call_args_list] == [
+        "intention.open",
+        "intention.closed",
+        "intention.reopen",
+        "intention.closed",
+        "intention.archived",
+    ]
+    assert audit_add.call_args_list[2].args[0].change_summary == {
+        "from_status": "closed",
+        "to_status": "open",
+    }
+
+
+def test_email_notification_request_rejects_duplicate_members() -> None:
+    member_id = uuid4()
+    with pytest.raises(ValidationError):
+        IntentionEmailNotificationRequest(recipient_user_ids=[member_id, member_id])
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"direction_id": uuid4()},
+        {"recipient_scope": "direction"},
+        {"recipient_scope": "direction", "direction_id": uuid4(), "recipient_user_ids": [uuid4()]},
+        {"recipient_scope": "all", "recipient_user_ids": [uuid4()]},
+        {"recipient_scope": "all", "direction_id": uuid4()},
+    ],
+)
+def test_email_notification_request_rejects_incompatible_scope(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        IntentionEmailNotificationRequest.model_validate(payload)
+
+
+def test_email_notification_request_accepts_manual_direction_and_all() -> None:
+    assert (
+        IntentionEmailNotificationRequest(recipient_user_ids=[uuid4()]).recipient_scope == "manual"
+    )
+    assert (
+        IntentionEmailNotificationRequest(
+            recipient_scope="direction", direction_id=uuid4()
+        ).recipient_scope
+        == "direction"
+    )
+    assert IntentionEmailNotificationRequest(recipient_scope="all").recipient_scope == "all"
+
+
+@pytest.mark.asyncio
+async def test_admin_queues_selected_members_once_per_open_revision() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now)
+    first = cast(
+        User,
+        SimpleNamespace(
+            id=uuid4(),
+            email="first@connect.hkust-gz.edu.cn",
+            full_name="第一位学生",
+        ),
+    )
+    second = cast(
+        User,
+        SimpleNamespace(
+            id=uuid4(),
+            email="second@connect.hkust-gz.edu.cn",
+            full_name="第二位学生",
+        ),
+    )
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            active_students_by_ids=AsyncMock(return_value=[first, second]),
+        ),
+    )
+    first_key = service._mail_event_key(survey, first.id)
+    second_key = service._mail_event_key(survey, second.id)
+    outbox_add = Mock()
+    service._outbox = cast(
+        OutboxRepository,
+        SimpleNamespace(
+            existing_event_keys=AsyncMock(return_value={second_key}),
+            add=outbox_add,
+        ),
+    )
+
+    result = await service.send_email_notifications(
+        survey.id,
+        IntentionEmailNotificationRequest(recipient_user_ids=[first.id, second.id]),
+        audit_context=make_audit_context("admin"),
+    )
+
+    assert result.requested_count == 2
+    assert result.queued_count == 1
+    assert result.already_queued_count == 1
+    queued_job = cast(OutboxJob, outbox_add.call_args.args[0])
+    assert queued_job.event_key == first_key
+    assert queued_job.job_type == "intention_open_email"
+    assert queued_job.payload == {
+        "recipient": first.email,
+        "full_name": first.full_name,
+        "survey_id": str(survey.id),
+        "title": survey.title,
+        "target_url": f"/intentions/{survey.id}",
+    }
+    previous_key = service._mail_event_key(survey, first.id)
+    survey.revision += 1
+    assert service._mail_event_key(survey, first.id) != previous_key
+    assert second_key != queued_job.event_key
+    session.commit.assert_awaited_once()
+    audit = cast(Mock, service._audit.add).call_args.args[0]
+    assert audit.action == "intention.email_notify"
+    assert audit.change_summary == {
+        "recipient_scope": "manual",
+        "requested_count": 2,
+        "queued_count": 1,
+        "already_queued_count": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_admin_queues_active_students_in_selected_direction() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now)
+    direction_id = uuid4()
+    direction = cast(
+        Direction,
+        SimpleNamespace(id=direction_id, is_active=True),
+    )
+    member = cast(
+        User,
+        SimpleNamespace(
+            id=uuid4(),
+            email="direction@connect.hkust-gz.edu.cn",
+            full_name="技术组学生",
+        ),
+    )
+    service, session = make_service(now)
+    active_direction = AsyncMock(return_value=direction)
+    active_scope = AsyncMock(return_value=[member])
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            active_direction=active_direction,
+            active_students_for_email_scope=active_scope,
+        ),
+    )
+    outbox_add = Mock()
+    service._outbox = cast(
+        OutboxRepository,
+        SimpleNamespace(
+            existing_event_keys=AsyncMock(return_value=set()),
+            add=outbox_add,
+        ),
+    )
+
+    result = await service.send_email_notifications(
+        survey.id,
+        IntentionEmailNotificationRequest(
+            recipient_scope="direction",
+            direction_id=direction_id,
+        ),
+        audit_context=make_audit_context("admin"),
+    )
+
+    assert result.requested_count == 1
+    assert result.queued_count == 1
+    active_direction.assert_awaited_once_with(direction_id)
+    active_scope.assert_awaited_once_with(direction_id=direction_id)
+    assert outbox_add.call_count == 1
+    session.commit.assert_awaited_once()
+    audit = cast(Mock, service._audit.add).call_args.args[0]
+    assert audit.change_summary == {
+        "recipient_scope": "direction",
+        "direction_id": str(direction_id),
+        "requested_count": 1,
+        "queued_count": 1,
+        "already_queued_count": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_admin_queues_all_active_students_from_authoritative_scope() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now)
+    members = [
+        cast(
+            User,
+            SimpleNamespace(
+                id=uuid4(),
+                email=f"all-{index}@connect.hkust-gz.edu.cn",
+                full_name=f"全部学生 {index}",
+            ),
+        )
+        for index in range(2)
+    ]
+    service, session = make_service(now)
+    active_scope = AsyncMock(return_value=members)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            active_students_for_email_scope=active_scope,
+        ),
+    )
+    outbox_add = Mock()
+    service._outbox = cast(
+        OutboxRepository,
+        SimpleNamespace(
+            existing_event_keys=AsyncMock(return_value=set()),
+            add=outbox_add,
+        ),
+    )
+
+    result = await service.send_email_notifications(
+        survey.id,
+        IntentionEmailNotificationRequest(recipient_scope="all"),
+        audit_context=make_audit_context("admin"),
+    )
+
+    assert result.requested_count == 2
+    assert result.queued_count == 2
+    active_scope.assert_awaited_once_with(direction_id=None)
+    assert outbox_add.call_count == 2
+    session.commit.assert_awaited_once()
+    audit = cast(Mock, service._audit.add).call_args.args[0]
+    assert audit.change_summary == {
+        "recipient_scope": "all",
+        "requested_count": 2,
+        "queued_count": 2,
+        "already_queued_count": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_questionnaire_email_rejects_inactive_direction_or_empty_scope() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now)
+    direction_id = uuid4()
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            active_direction=AsyncMock(return_value=None),
+        ),
+    )
+
+    with pytest.raises(ApplicationError) as invalid_direction:
+        await service.send_email_notifications(
+            survey.id,
+            IntentionEmailNotificationRequest(
+                recipient_scope="direction",
+                direction_id=direction_id,
+            ),
+            audit_context=make_audit_context("admin"),
+        )
+    assert invalid_direction.value.code == "INVALID_INTENTION_EMAIL_DIRECTION"
+
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            active_students_for_email_scope=AsyncMock(return_value=[]),
+        ),
+    )
+    with pytest.raises(ApplicationError) as empty_scope:
+        await service.send_email_notifications(
+            survey.id,
+            IntentionEmailNotificationRequest(recipient_scope="all"),
+            audit_context=make_audit_context("admin"),
+        )
+    assert empty_scope.value.code == "NO_INTENTION_EMAIL_RECIPIENTS"
+    assert session.rollback.await_count == 2
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_questionnaire_email_rejects_non_active_selected_member() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now)
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            active_students_by_ids=AsyncMock(return_value=[]),
+        ),
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.send_email_notifications(
+            survey.id,
+            IntentionEmailNotificationRequest(recipient_user_ids=[uuid4()]),
+            audit_context=make_audit_context("admin"),
+        )
+
+    assert blocked.value.code == "INVALID_INTENTION_EMAIL_RECIPIENTS"
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_questionnaire_email_rejects_closed_or_outside_window() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, status="closed")
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(get_survey=AsyncMock(return_value=survey)),
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.send_email_notifications(
+            survey.id,
+            IntentionEmailNotificationRequest(recipient_user_ids=[uuid4()]),
+            audit_context=make_audit_context("admin"),
+        )
+
+    assert blocked.value.code == "INTENTION_CLOSED"
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+def test_questionnaire_email_template_contains_only_safe_fill_link() -> None:
+    now = datetime.now(UTC)
+    survey_id = uuid4()
+    job = OutboxJob(
+        id=uuid4(),
+        job_type="intention_open_email",
+        event_key=f"intention:{survey_id}:open:3:email:{uuid4()}",
+        payload={
+            "recipient": "student@connect.hkust-gz.edu.cn",
+            "full_name": "测试同学",
+            "survey_id": str(survey_id),
+            "title": "方向 <script>问卷",
+            "target_url": f"/intentions/{survey_id}",
+        },
+        secret_payload_ciphertext=None,
+        status="pending",
+        available_at=now,
+        attempt_count=0,
+        max_attempts=8,
+        locked_by=None,
+        locked_at=None,
+        last_error_code=None,
+        last_error_summary=None,
+        created_at=now,
+        sent_at=None,
+    )
+
+    rendered = render_mail(job, {}, app_base_url="https://training.example.edu/")
+
+    assert rendered.recipient == "student@connect.hkust-gz.edu.cn"
+    assert f"https://training.example.edu/intentions/{survey_id}" in rendered.text
+    assert "<script>" not in rendered.html
+    assert "&lt;script&gt;" in rendered.html
+    assert "token=" not in rendered.text
+
+
+def test_questionnaire_email_template_rejects_external_target_url() -> None:
+    now = datetime.now(UTC)
+    job = OutboxJob(
+        id=uuid4(),
+        job_type="intention_open_email",
+        event_key=f"intention:{uuid4()}:open:1:email:{uuid4()}",
+        payload={
+            "recipient": "student@connect.hkust-gz.edu.cn",
+            "full_name": "测试同学",
+            "title": "方向问卷",
+            "target_url": "https://evil.invalid/intentions/fake",
+        },
+        secret_payload_ciphertext=None,
+        status="pending",
+        available_at=now,
+        attempt_count=0,
+        max_attempts=8,
+        locked_by=None,
+        locked_at=None,
+        last_error_code=None,
+        last_error_summary=None,
+        created_at=now,
+        sent_at=None,
+    )
+
+    with pytest.raises(PermanentMailError):
+        render_mail(job, {}, app_base_url="https://training.example.edu")
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ import { IntentionForm } from "@/components/intentions/intention-form";
 import type {
   AdminIntentionSurvey,
   AdminIntentionSurveyDetail,
+  Direction,
   IntentionSurvey,
 } from "@/lib/api/types";
 
@@ -88,6 +89,18 @@ function adminSurvey(
     max_submissions: 2,
     created_at: "2026-08-27T00:00:00Z",
     updated_at: "2026-08-27T00:00:00Z",
+    revision: 1,
+    ...overrides,
+  };
+}
+
+function direction(overrides: Partial<Direction> = {}): Direction {
+  return {
+    id: "direction-1",
+    code: "robotics",
+    name: "机器人组",
+    description: null,
+    is_active: true,
     revision: 1,
     ...overrides,
   };
@@ -296,6 +309,174 @@ describe("administrator questionnaire panel", () => {
     expect(
       screen.queryByRole("button", { name: "生成二维码" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("reopens a closed questionnaire without exposing archive as reversible", async () => {
+    const closed = adminSurvey({ status: "closed", revision: 3 });
+    const reopened = adminSurvey({ status: "open", revision: 4 });
+    csrfFetchMock.mockResolvedValueOnce(reopened);
+    render(<IntentionAdminPanel initialSurveys={[closed]} />);
+
+    expect(
+      screen.getByRole("button", { name: "归档问卷" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重新开启" }));
+
+    await screen.findByText("问卷状态已更新为“开放中”。");
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/admin/intentions/survey-1/open",
+      { method: "POST" },
+    );
+    expect(
+      screen.getByRole("button", { name: "关闭问卷" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "生成二维码" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "重新开启" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("searches active students and sends email only to selected members", async () => {
+    apiFetchMock.mockResolvedValue({
+      page: 1,
+      page_size: 20,
+      total: 1,
+      items: [
+        {
+          id: "student-1",
+          email: "student@connect.hkust-gz.edu.cn",
+          full_name: "测试学生",
+          student_number: "20260001",
+          role: "student",
+          status: "active",
+          team_id: null,
+          team_name: null,
+          created_at: "2026-08-27T00:00:00Z",
+        },
+      ],
+    });
+    csrfFetchMock.mockResolvedValue({
+      survey_id: "survey-1",
+      requested_count: 1,
+      queued_count: 1,
+      already_queued_count: 0,
+    });
+    render(
+      <IntentionAdminPanel initialSurveys={[adminSurvey({ status: "open" })]} />,
+    );
+
+    const sendButton = screen.getByRole("button", {
+      name: "向已选成员发送邮件",
+    });
+    expect(sendButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("搜索成员"), {
+      target: { value: "测试学生" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "搜索成员" }));
+
+    const student = await screen.findByLabelText(/测试学生/);
+    fireEvent.click(student);
+    fireEvent.click(sendButton);
+
+    await screen.findByText("已为 1 名成员创建邮件任务。");
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      "/admin/users?page=1&page_size=20&status=active&role=student&search=%E6%B5%8B%E8%AF%95%E5%AD%A6%E7%94%9F",
+    );
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/admin/intentions/survey-1/email-notifications",
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": expect.any(String) },
+        body: JSON.stringify({
+          recipient_scope: "manual",
+          recipient_user_ids: ["student-1"],
+        }),
+      },
+    );
+  });
+
+  it("sends email to one active technical direction", async () => {
+    csrfFetchMock.mockResolvedValue({
+      survey_id: "survey-1",
+      requested_count: 3,
+      queued_count: 3,
+      already_queued_count: 0,
+    });
+    render(
+      <IntentionAdminPanel
+        directions={[
+          direction(),
+          direction({
+            id: "direction-inactive",
+            code: "inactive",
+            name: "停用技术组",
+            is_active: false,
+          }),
+        ]}
+        initialSurveys={[adminSurvey({ status: "open" })]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("radio", { name: "按技术组" }));
+    expect(
+      screen.queryByRole("option", { name: "停用技术组" }),
+    ).not.toBeInTheDocument();
+    const sendButton = screen.getByRole("button", {
+      name: "向该技术组发送邮件",
+    });
+    expect(sendButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("选择技术组"), {
+      target: { value: "direction-1" },
+    });
+    fireEvent.click(sendButton);
+
+    await screen.findByText("已为 3 名成员创建邮件任务。");
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/admin/intentions/survey-1/email-notifications",
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": expect.any(String) },
+        body: JSON.stringify({
+          recipient_scope: "direction",
+          direction_id: "direction-1",
+        }),
+      },
+    );
+  });
+
+  it("sends email to all active students", async () => {
+    csrfFetchMock.mockResolvedValue({
+      survey_id: "survey-1",
+      requested_count: 158,
+      queued_count: 157,
+      already_queued_count: 1,
+    });
+    render(
+      <IntentionAdminPanel initialSurveys={[adminSurvey({ status: "open" })]} />,
+    );
+
+    fireEvent.click(screen.getByRole("radio", { name: "全部激活学生" }));
+    const sendButton = screen.getByRole("button", {
+      name: "向全部激活学生发送邮件",
+    });
+    expect(sendButton).toBeEnabled();
+    fireEvent.click(sendButton);
+
+    await screen.findByText(
+      "已新增 157 封邮件任务；1 名成员本次开放周期已入队，未重复发送。",
+    );
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/admin/intentions/survey-1/email-notifications",
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": expect.any(String) },
+        body: JSON.stringify({ recipient_scope: "all" }),
+      },
+    );
   });
 
   it("shows per-question aggregate statistics", async () => {

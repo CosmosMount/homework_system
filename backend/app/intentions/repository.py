@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -11,7 +12,7 @@ from app.intentions.models import (
     IntentionResponseOption,
     IntentionSurvey,
 )
-from app.users.models import User
+from app.users.models import Direction, User
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +205,31 @@ class IntentionRepository:
             )
             or 0
         )
+
+    async def active_students_by_ids(self, user_ids: Sequence[UUID]) -> list[User]:
+        if not user_ids:
+            return []
+        return list(
+            (
+                await self._session.scalars(
+                    select(User)
+                    .where(User.id.in_(user_ids), User.role == "student", User.status == "active")
+                    .order_by(User.id)
+                )
+            ).all()
+        )
+
+    async def active_direction(self, direction_id: UUID) -> Direction | None:
+        result: Direction | None = await self._session.scalar(
+            select(Direction).where(Direction.id == direction_id, Direction.is_active.is_(True))
+        )
+        return result
+
+    async def active_students_for_email_scope(self, *, direction_id: UUID | None) -> list[User]:
+        statement = select(User).where(User.role == "student", User.status == "active")
+        if direction_id is not None:
+            statement = statement.where(User.direction_id == direction_id)
+        return list((await self._session.scalars(statement.order_by(User.id))).all())
 
     async def option_counts(self, survey_id: UUID) -> list[SurveyOptionCount]:
         rows = (

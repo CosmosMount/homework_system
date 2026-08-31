@@ -29,6 +29,8 @@ from app.intentions.schemas import (
     AdminIntentionSurveyDetail,
     AdminIntentionSurveyPage,
     IntentionAnswerResponse,
+    IntentionEmailNotificationRequest,
+    IntentionEmailNotificationResponse,
     IntentionOptionResponse,
     IntentionQrResponse,
     IntentionQuestionInput,
@@ -48,6 +50,9 @@ from app.intentions.schemas import (
     IntentionSurveyPatchRequest,
     IntentionSurveySummary,
 )
+from app.notifications.models import OutboxJob
+from app.notifications.repository import OutboxRepository
+from app.users.models import User
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +75,7 @@ class IntentionService:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._repo = IntentionRepository(session)
         self._audit = AuditRepository(session)
+        self._outbox = OutboxRepository(session)
 
     @staticmethod
     def _not_found() -> ApplicationError:
@@ -499,6 +505,42 @@ class IntentionService:
         await self._session.commit()
         return await self.admin_detail(survey_id, context=audit_context.actor)
 
+    @staticmethod
+    def _mail_event_key(survey: IntentionSurvey, user_id: UUID) -> str:
+        return f"intention:{survey.id}:open:{survey.revision}:email:{user_id}"
+
+    @classmethod
+    def _mail_job(
+        cls,
+        *,
+        survey: IntentionSurvey,
+        user: User,
+        now: datetime,
+    ) -> OutboxJob:
+        return OutboxJob(
+            id=uuid7(),
+            job_type="intention_open_email",
+            event_key=cls._mail_event_key(survey, user.id),
+            payload={
+                "recipient": user.email,
+                "full_name": user.full_name,
+                "survey_id": str(survey.id),
+                "title": survey.title,
+                "target_url": f"/intentions/{survey.id}",
+            },
+            secret_payload_ciphertext=None,
+            status="pending",
+            available_at=now,
+            attempt_count=0,
+            max_attempts=8,
+            locked_by=None,
+            locked_at=None,
+            last_error_code=None,
+            last_error_summary=None,
+            created_at=now,
+            sent_at=None,
+        )
+
     async def transition(
         self,
         survey_id: UUID,
@@ -511,21 +553,120 @@ class IntentionService:
         if survey is None:
             await self._session.rollback()
             raise self._not_found()
-        allowed = {"draft": {"open"}, "open": {"closed"}, "closed": {"archived"}}
+        allowed = {
+            "draft": {"open"},
+            "open": {"closed"},
+            "closed": {"open", "archived"},
+        }
         if target not in allowed.get(survey.status, set()):
             await self._session.rollback()
-            raise self._conflict("STATE_CONFLICT", "问卷状态不能逆序变更。")
+            raise self._conflict("STATE_CONFLICT", "问卷状态不允许执行该变更。")
+        previous_status = survey.status
         survey.status = target
         survey.updated_by = audit_context.actor.user.id
         survey.updated_at = self._clock()
         survey.revision += 1
+        action = (
+            "intention.reopen"
+            if previous_status == "closed" and target == "open"
+            else "intention." + target
+        )
         self._add_audit(
-            audit_context, action="intention." + target, target_id=survey.id, now=survey.updated_at
+            audit_context,
+            action=action,
+            target_id=survey.id,
+            now=survey.updated_at,
+            change_summary={"from_status": previous_status, "to_status": target},
         )
         await self._session.commit()
         records = await self._repo.list_surveys()
         record = next(item for item in records if item.survey.id == survey_id)
         return cast(AdminIntentionSurvey, self._summary(record, student=False))
+
+    async def send_email_notifications(
+        self,
+        survey_id: UUID,
+        payload: IntentionEmailNotificationRequest,
+        *,
+        audit_context: IntentionAuditContext,
+    ) -> IntentionEmailNotificationResponse:
+        self._require_admin(audit_context.actor)
+        survey = await self._repo.get_survey(survey_id, for_update=True)
+        now = self._clock()
+        if survey is None:
+            await self._session.rollback()
+            raise self._not_found()
+        if not self._is_open(survey, now):
+            await self._session.rollback()
+            raise self._conflict(
+                "INTENTION_CLOSED",
+                "当前问卷未开放或不在填写时间内，不能发送邮件通知。",
+            )
+
+        direction_id: UUID | None = None
+        if payload.recipient_scope == "manual":
+            recipients = await self._repo.active_students_by_ids(payload.recipient_user_ids)
+            requested_ids = set(payload.recipient_user_ids)
+            if {user.id for user in recipients} != requested_ids:
+                await self._session.rollback()
+                raise ApplicationError(
+                    status_code=400,
+                    code="INVALID_INTENTION_EMAIL_RECIPIENTS",
+                    message="所选成员中包含非激活学生，请刷新成员列表后重试。",
+                )
+        else:
+            direction_id = payload.direction_id
+            if payload.recipient_scope == "direction":
+                assert direction_id is not None
+                if await self._repo.active_direction(direction_id) is None:
+                    await self._session.rollback()
+                    raise ApplicationError(
+                        status_code=400,
+                        code="INVALID_INTENTION_EMAIL_DIRECTION",
+                        message="所选技术组不存在或已停用，请刷新后重试。",
+                    )
+            recipients = await self._repo.active_students_for_email_scope(direction_id=direction_id)
+            if not recipients:
+                await self._session.rollback()
+                raise ApplicationError(
+                    status_code=400,
+                    code="NO_INTENTION_EMAIL_RECIPIENTS",
+                    message="当前发送范围内没有激活学生。",
+                )
+
+        event_keys = {user.id: self._mail_event_key(survey, user.id) for user in recipients}
+        existing = await self._outbox.existing_event_keys(list(event_keys.values()))
+        queued_count = 0
+        for user in recipients:
+            event_key = event_keys[user.id]
+            if event_key in existing:
+                continue
+            self._outbox.add(self._mail_job(survey=survey, user=user, now=now))
+            queued_count += 1
+
+        already_queued_count = len(recipients) - queued_count
+        change_summary: dict[str, object] = {
+            "recipient_scope": payload.recipient_scope,
+            "requested_count": len(recipients),
+            "queued_count": queued_count,
+            "already_queued_count": already_queued_count,
+        }
+        if direction_id is not None:
+            change_summary["direction_id"] = str(direction_id)
+        self._add_audit(
+            audit_context,
+            action="intention.email_notify",
+            target_id=survey.id,
+            now=now,
+            change_summary=change_summary,
+        )
+        await self._session.commit()
+        return IntentionEmailNotificationResponse(
+            survey_id=survey.id,
+            requested_count=len(recipients),
+            queued_count=queued_count,
+            already_queued_count=already_queued_count,
+        )
 
     async def stats(
         self, survey_id: UUID, *, context: AuthenticatedContext
