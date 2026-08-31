@@ -86,18 +86,19 @@
 
 | 方法与路径 | 请求/响应 | 需求 |
 | --- | --- | --- |
-| `POST /auth/login` | `{identifier,password}` → `{user}` 并设置 Session Cookie；暂时兼容旧 `{email,password}` 请求 | AUTH-004、AUTH-006、AUTH-009 |
+| `POST /auth/login` | `{identifier,password,remember_me=false}` → `{user}` 并设置 Session/CSRF Cookie；暂时兼容旧 `{email,password}` 请求 | AUTH-004、AUTH-006、AUTH-009、AUTH-013 |
 | `POST /auth/logout` | 撤销当前 Session，返回 204 | AUTH-006 |
 | `DELETE /auth/account` | `{current_password,confirmation_email}`；重新认证并永久删除本人账号/个人数据，成功清 Session 与 CSRF Cookie，返回 204 | AUTH-012 |
 | `GET /auth/me` | 当前用户、可空技术方向、真实角色、状态和当前 Session 的 `student_view` 标记；届次字段仅为历史兼容 | AUTH-004、AUTH-007 |
 | `GET /auth/csrf` | `{csrf_token}` 并刷新 CSRF Cookie | NFR-002 |
-| `GET /auth/sessions` | 当前用户的 Session 列表 | AUTH-006 |
+| `GET /auth/sessions` | 当前用户的 Session 列表，包含 `remembered`、IP 网段与到期时间，不含 token 或精确 IP | AUTH-006、AUTH-013 |
 | `DELETE /auth/sessions/{session_id}` | 撤销指定本人 Session | AUTH-006 |
-| `GET /auth/admin/sessions` | 管理员查看当前所有活跃登录会话的脱敏用户与设备摘要 | AUTH-007、AUTH-008、NFR-006 |
+| `GET /auth/admin/sessions` | 管理员查看当前所有活跃登录会话的脱敏用户、`remembered` 与设备摘要 | AUTH-007～AUTH-008、AUTH-013、NFR-006 |
 | `POST /auth/student-view` | 当前真实角色为 `admin` 时把当前 Session 标记为学生视图，返回 `user` 且 `student_view: true` | AUTH-011 |
 | `DELETE /auth/student-view` | 清除当前 Session 的学生视图标记，返回 `user` 且 `student_view: false` | AUTH-011 |
 
 `identifier` 可以是 Connect 邮箱前缀用户名或完整邮箱；用户名先补全为当前 Connect 域名，完整邮箱按原域名规范化，因此旧域名存量账号仍须输入完整邮箱。用户名和对应 Connect 完整邮箱映射到同一账号及同一邮箱限流维度。兼容字段 `email` 只用于旧客户端请求解析，新 OpenAPI 契约和前端统一使用 `identifier`。
+`remember_me` 是可选布尔值，省略时为 `false`。普通登录返回无 `Max-Age/Expires` 的浏览器会话 Cookie，服务端仍使用管理员 4 小时/学生 12 小时空闲及 14 天绝对期；`true` 时 Session 与 CSRF Cookie 的 `Max-Age` 为不超过 30 天，Session 记录的空闲/绝对期限同样不超过 30 天，并保存由原始 Session token 与可信精确来源 IP 计算的 64 位 HMAC。后续请求 IP 绑定不匹配时撤销 Session 并返回 `401 AUTHENTICATION_REQUIRED`；仅有相同 IP 而无 Cookie 仍返回 401。成功响应、日志、会话列表与 OpenAPI 均不返回密码、Session token、绑定 HMAC 或精确 IP。
 `DELETE /auth/account` 只接受当前有效账号本人；`confirmation_email` 去除首尾空白并规范化后必须与当前账号完全一致，错误密码返回 `401 INVALID_CREDENTIALS`，邮箱不一致返回带 `confirmation_email/ACCOUNT_EMAIL_MISMATCH` 的 `400 VALIDATION_ERROR`，最后一名激活管理员返回 `409 STATE_CONFLICT`。成功前不会清 Cookie；数据库事务失败时账号保持，成功后不返回删除计数、邮箱或对象信息。备份确认不由普通用户填写，但页面必须披露不可撤销和备份保留期边界。
 
 
@@ -143,11 +144,11 @@
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /admin/announcements` | 按状态、受众、日期搜索全部通知 | NEWS-001～NEWS-007 |
+| `GET /admin/announcements` | 按状态、受众、日期搜索未删除通知；手工归档仍返回，已删除归档不返回 | NEWS-001～NEWS-007、NEWS-009 |
 | `POST /admin/announcements` | 创建草稿 | NEWS-001～NEWS-003 |
-| `GET /admin/announcements/{id}` | 读取草稿和预计受众数 | NEWS-002 |
+| `GET /admin/announcements/{id}` | 读取未删除通知、预计受众数和手工归档留存记录；已删除归档统一 404 | NEWS-002、NEWS-009 |
 | `PATCH /admin/announcements/{id}` | 按 `revision` 修改内容、受众、计划和附件 | NEWS-001～NEWS-004、NEWS-007 |
-| `DELETE /admin/announcements/{id}` | 未发布通知取消活动定时任务并物理删除；已发布通知归档删除；返回 204 | NEWS-003、NEWS-009、NFR-006 |
+| `DELETE /admin/announcements/{id}` | 未发布通知取消活动定时任务并物理删除；已发布或手工归档通知归档标记删除；返回 204 | NEWS-003、NEWS-009、NFR-006 |
 | `POST /admin/announcements/{id}/publish` | 立即发布或确认定时计划 | NEWS-003、NEWS-005～NEWS-006 |
 | `POST /admin/announcements/{id}/archive` | 归档 | NEWS-003 |
 | `POST /admin/announcements/{id}/send-update` | 为当前受众创建一次更新提醒 Outbox | NEWS-007、MAIL-002～MAIL-005 |
@@ -177,7 +178,7 @@
 
 创建时不传 `revision`。产品端受众必须满足：`all_students=true` 时其他集合为空；否则至少选择一个技术方向。`match=intersection` 表示同时满足所选方向。请求中的 `cohort_ids` 仅为历史客户端/资源兼容字段，新建页面始终发送空数组。
 
-删除接口幂等处理已归档通知。物理删除只适用于 `draft/scheduled`，并解除 `announcement_files` 绑定；文件对象不在请求中同步删除，继续由孤立对象 Worker 处理。`published` 删除复用归档状态、把未读公告提醒标为已读并保留提醒/邮件历史，学生随后读取统一 404。
+删除接口以独立删除标记区分手工归档和已删除归档。物理删除只适用于 `draft/scheduled`，并解除 `announcement_files` 绑定；文件对象不在请求中同步删除，继续由孤立对象 Worker 处理。`published` 删除转为归档并写删除标记，手工 `archived` 首次 DELETE 补写标记；常规管理列表/详情只返回未删除内容，重复 DELETE 对已有标记幂等 204。归档删除把未读公告提醒标为已读并保留提醒/邮件历史，学生随后读取统一 404。
 
 ## 作业接口
 
@@ -208,11 +209,11 @@
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /admin/assignments` | 搜索全部作业及提交统计 | HW-005 |
+| `GET /admin/assignments` | 搜索未删除作业及提交统计；手工归档仍返回，已删除归档不返回 | HW-005、HW-008 |
 | `POST /admin/assignments` | 创建草稿 | HW-001～HW-003 |
-| `GET /admin/assignments/{id}` | 读取配置、受众预估/快照和统计 | HW-002、HW-005 |
+| `GET /admin/assignments/{id}` | 读取未删除作业配置、受众预估/快照和统计；已删除归档统一 404 | HW-002、HW-005、HW-008 |
 | `PATCH /admin/assignments/{id}` | 修改允许字段 | HW-007 |
-| `DELETE /admin/assignments/{id}` | 草稿取消活动定时任务并物理删除；已发布/已关闭作业归档删除；返回 204 | HW-003、HW-008、NFR-006 |
+| `DELETE /admin/assignments/{id}` | 草稿取消活动定时任务并物理删除；已发布、已关闭或手工归档作业归档标记删除；返回 204 | HW-003、HW-008、NFR-006 |
 | `POST /admin/assignments/{id}/publish` | 固化受众快照并发布 | HW-002～HW-003 |
 | `POST /admin/assignments/{id}/close` | 提前关闭 | HW-003 |
 | `POST /admin/assignments/{id}/archive` | 归档 | HW-003 |
@@ -224,7 +225,7 @@
 
 作业草稿主体包含 `title`、`description_markdown`、`training_url`、`submission_instructions`、`audience`、`allowed_extensions`、`max_total_bytes`、`publish_at`、`deadline` 和 `revision`。`max_total_bytes` 最大为 2147483648。
 
-作业删除对已归档资源幂等。物理删除只适用于尚无学生生命周期的 `draft`；`published/closed` 删除必须转为 `archived`，不得删除固定受众、提交、版本、评语、优秀标记和附件。学生列表、详情、优秀作业读取以及优秀附件重新签名均排除归档作业；提交所有者的历史版本仍按不可变记录保留。
+作业删除以独立删除标记区分手工归档和已删除归档。物理删除只适用于尚无学生生命周期的 `draft`；`published/closed` 删除必须转为 `archived` 并写删除标记，手工 `archived` 首次 DELETE 补写标记；常规管理列表/详情只返回未删除内容，重复 DELETE 对已有标记幂等 204。归档删除不得删除固定受众、提交、版本、评语、优秀标记和附件；学生列表、详情、优秀作业读取以及优秀附件重新签名均排除归档作业，提交所有者的历史版本仍按不可变记录保留。
 
 ## 通用提交与评语接口
 
@@ -324,12 +325,15 @@
 | `GET /admin/intentions/{survey_id}` | 返回任意状态问卷的管理摘要、revision、完整问题与选项，不含个人回答 | INT-001～INT-002 |
 | `POST /admin/intentions` | 使用 `{title,description_markdown,questions,max_submissions?,starts_at?,ends_at?}` 创建 `draft` 多题问卷并清洗 Markdown；`max_submissions=null` 表示不限 | INT-001～INT-003 |
 | `PATCH /admin/intentions/{survey_id}` | 按 `revision` 原子替换 `draft` 的标题、说明、题目、提交上限和时间窗口，成功返回刷新后的完整问卷；非草稿或 revision 冲突返回 409 | INT-001～INT-003 |
-| `POST /admin/intentions/{survey_id}/{action}` | `action` 为 `open`、`closed` 或 `archived`，按顺序开放、关闭或归档问卷 | INT-002 |
+| `POST /admin/intentions/{survey_id}/{action}` | `action` 为 `open`、`closed` 或 `archived`；`open` 可用于首次开放 `draft` 或重新开启 `closed`，`closed` 关闭当前开放问卷，`archived` 只归档已关闭问卷 | INT-002 |
 | `GET /admin/intentions/{survey_id}/stats` | 返回有效学生数、提交人数/比例和每道题各选项人数/比例 | INT-005 |
 | `GET /admin/intentions/{survey_id}/responses` | 返回实名提交名单：身份、最新分题答案、补充说明、累计提交次数和最后提交时间 | INT-005 |
 | `POST /admin/intentions/{survey_id}/qr-token` | 轮换二维码 token 并返回 `{survey_id,token,fill_url,generated_at}` | INT-006 |
+| `POST /admin/intentions/{survey_id}/email-notifications` | 必填 `Idempotency-Key`；请求为 `{recipient_scope:"manual",recipient_user_ids:[uuid,...]}`、`{recipient_scope:"direction",direction_id:uuid}` 或 `{recipient_scope:"all"}`，返回 `{survey_id,requested_count,queued_count,already_queued_count}` | INT-007、MAIL-001～MAIL-005 |
 
-状态只能 `draft → open → closed → archived`。管理详情和修改接口必须使用真实管理员依赖，学生和管理员学生视图均返回 403；详情不含个人答案。统计接口不含个人信息；实名名单接口同样只允许真实管理员，名单只返回当前最新答案，不返回被覆盖的历史内容。二维码 token 使用高熵随机值，数据库只保存 SHA-256；每次生成使旧 token 失效，`closed`/`archived` 问卷拒绝生成，填写地址仍由 Session 登录保护。
+状态允许 `draft → open → closed`、`closed → open` 和 `closed → archived`；`archived` 为终态，其他状态组合返回 `409 STATE_CONFLICT`。重新开启只改变状态、更新者、更新时间和 revision，保留内容、既有回答/累计次数、二维码 token、时间窗口和提交上限，并写 `intention.reopen` 脱敏审计。管理详情和修改接口必须使用真实管理员依赖，学生和管理员学生视图均返回 403；详情不含个人答案。统计接口不含个人信息；实名名单接口同样只允许真实管理员，名单只返回当前最新答案，不返回被覆盖的历史内容。二维码 token 使用高熵随机值，数据库只保存 SHA-256；每次生成使旧 token 失效，`closed`/`archived` 问卷拒绝生成，填写地址仍由 Session 登录保护；关闭前已有 token 在重新开启且原时间窗口有效时可继续定位问卷。
+
+邮件端点只允许真实管理员并要求 CSRF，三种范围互斥：`manual` 要求 1～100 个不重复成员 UUID 且不得带技术组，`direction` 只允许一个技术组 UUID，`all` 不得带成员或技术组。请求不得包含邮箱；手动模式由服务端整体重新校验全部账号仍为已验证激活学生，任一无效返回 `400 INVALID_INTENTION_EMAIL_RECIPIENTS`；技术组模式由服务端复核技术组当前激活，否则返回 `400 INVALID_INTENTION_EMAIL_DIRECTION`；技术组或全部模式由服务端解析发送瞬间的权威激活学生集合，集合为空返回 `400 NO_INTENTION_EMAIL_RECIPIENTS`，以上错误均不写部分任务。问卷不是当前可填写的 `open` 状态时返回 `409 INTENTION_CLOSED`。同一 revision 下同一成员的既有事件返回 `already_queued_count` 而不重复入队；关闭后重新开启 revision 增加，可由管理员再次显式选择发送。
 
 ## 优秀作业接口
 
@@ -435,13 +439,15 @@
 
 | 方法与路径 | 行为 | 权限/需求 |
 | --- | --- | --- |
-| `GET /knowledge` | 返回最新成功快照元数据、目录节点和文档摘要；无快照返回 `snapshot:null` 与空数组 | 登录，KB-001～KB-002、KB-005 |
+| `GET /knowledge` | 返回最新成功快照元数据、目录节点和文档摘要；目录节点含 `document/folder/file/unsupported` 类型以及可空 `asset_id/file_size/mime_type`，无快照返回 `snapshot:null` 与空数组 | 登录，KB-001～KB-002、KB-005～KB-007 |
 | `GET /knowledge/documents/{document_id}` | 只在最新成功快照中按内部 UUID 返回标题、原文 URL、同步时间和结构化块 | 登录，KB-002～KB-003、KB-005 |
-| `GET /knowledge/assets/{asset_id}/content` | 验证资源被最新成功快照引用后，图片/白板跳转短时 inline URL，附件跳转 attachment URL | 登录，KB-006～KB-008 |
+| `GET /knowledge/assets/{asset_id}/content` | 验证资源被最新成功快照的文档资源关联或独立文件节点引用后，图片/白板跳转短时 inline URL，正文附件和目录文件跳转 attachment URL | 登录，KB-006～KB-008 |
 | `GET /admin/knowledge` | 返回 `configured`、学生当前快照和最近运行的脱敏状态 | 真实管理员，KB-004～KB-005、KB-008 |
 | `POST /admin/knowledge/sync` | CSRF 校验后创建同步运行、审计和 Outbox，返回 `202 {run}` | 真实管理员，KB-004～KB-005 |
 
-目录和文档响应不返回飞书 app secret、tenant token、MinIO 对象键或飞书错误正文。文档既有结构化块 JSON 可包含 `type=equation` 的独立公式块，以及富文本 segment 的 `equation=true` 行内公式标记；LaTeX 只作为文本内容返回，不接受 HTML。媒体路径只接受内部 UUID，不接受对象键或任意 URL。
+目录和文档响应不返回飞书 app secret、tenant token、MinIO 对象键或飞书错误正文。目录独立文件只返回内部资源 UUID、安全标题、大小和媒体类型，不返回永久地址。文档既有结构化块 JSON 可包含 `type=equation` 的独立公式块，以及富文本 segment 的 `equation=true` 行内公式标记；LaTeX 只作为文本内容返回，不接受 HTML。媒体路径只接受内部 UUID，不接受对象键或任意 URL。
+
+`source_url` 与块内既有 `fallback_url` 继续作为快照来源/兼容元数据返回，API Schema 不因本次页面策略变化；真实学生和管理员学生视图不得把它们渲染为飞书原文或附件失败回退链接。成功本地化附件及富文本内嵌文件仍通过 `GET /knowledge/assets/{asset_id}/content` 授权下载。
 
 稳定错误：未配置为 `503 KNOWLEDGE_SYNC_NOT_CONFIGURED`；已有进行中运行为 `409 KNOWLEDGE_SYNC_IN_PROGRESS`；文档或媒体不属于当前快照统一为 `404 RESOURCE_NOT_FOUND`；MinIO 签名失败为 `503 DEPENDENCY_UNAVAILABLE`。管理员学生视图调用管理接口返回 `403 FORBIDDEN`。
 

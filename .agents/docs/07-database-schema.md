@@ -96,12 +96,13 @@ erDiagram
 
 ### `sessions`
 
-`id`, `user_id`, `token_hash`, `csrf_secret_hash`, `created_at`, `last_seen_at`, `idle_expires_at`, `absolute_expires_at`, `revoked_at`, `student_view`, `ip_prefix`, `user_agent_summary`。
+`id`, `user_id`, `token_hash`, `csrf_secret_hash`, `created_at`, `last_seen_at`, `idle_expires_at`, `absolute_expires_at`, `revoked_at`, `student_view`, `ip_binding_hash`, `ip_prefix`, `user_agent_summary`。
 
 - `token_hash` 唯一；只存随机 Session 令牌的哈希。
 - 读取使用 `token_hash` 索引，并过滤未撤销和未过期记录。
 - 用户禁用、密码重置和角色敏感变更时批量撤销。
 - `student_view` 为非空布尔值，默认 `false`，只表示当前 Session 的临时有效角色，不修改 `users.role`；管理员切换开关时写入 `audit_logs`。真实角色变更必须撤销该用户全部 Session，因此降级后不能由本人恢复管理员视图。
+- `ip_binding_hash` 可空且固定为 64 位十六进制 HMAC：`NULL` 表示普通或迁移前历史会话，非空表示用户主动选择的持久会话。HMAC 以原始高熵 Session token 为 key、以规范化精确来源 IP 为消息；数据库只保留摘要和既有 `/24` 或 `/64` 展示网段，不保存精确 IP。它不建用户/IP 查询索引，也不能作为独立身份凭证。
 
 ### `one_time_tokens`
 
@@ -123,12 +124,12 @@ erDiagram
 
 ### `announcements`
 
-`id`, `title`, `summary`, `body_markdown`, `body_html`, `status`, `all_students`, `audience_match`, `publish_at`, `published_at`, `pinned_until`, `send_email`, `created_by`, `updated_by`, `archived_at`, `created_at`, `updated_at`, `revision`。
+`id`, `title`, `summary`, `body_markdown`, `body_html`, `status`, `all_students`, `audience_match`, `publish_at`, `published_at`, `pinned_until`, `send_email`, `created_by`, `updated_by`, `archived_at`, `deleted_at`, `created_at`, `updated_at`, `revision`。
 
 - `body_html` 是经统一策略清洗后的缓存。
 - `all_students=true` 时不得存在届次/方向关联。新建产品流程只写方向关联；历史届次关联继续保留。
 - `scheduled` 必须有未来 `publish_at`；`published` 必须有 `published_at`。
-- 管理员删除 `draft/scheduled` 时可物理删除本行并依赖纯关联外键级联；删除 `published` 时只转为 `archived`，学生读取排除该状态且审计保留。
+- 管理员删除 `draft/scheduled` 时可物理删除本行并依赖纯关联外键级联；删除 `published` 时转为 `archived` 并写 `deleted_at`，手工归档保持空值直至再次删除。约束保证 `deleted_at IS NULL OR status='archived'`；普通详情与管理列表只读取空值行。
 
 ### `announcement_cohorts`、`announcement_directions`
 
@@ -166,12 +167,12 @@ erDiagram
 
 ### `assignments`
 
-`id`, `title`, `description_markdown`, `description_html`, `training_url`, `submission_instructions`, `status`, `all_students`, `audience_match`, `allowed_extensions`, `max_total_bytes`, `publish_at`, `published_at`, `deadline`, `created_by`, `updated_by`, `closed_at`, `archived_at`, `created_at`, `updated_at`, `revision`。
+`id`, `title`, `description_markdown`, `description_html`, `training_url`, `submission_instructions`, `status`, `all_students`, `audience_match`, `allowed_extensions`, `max_total_bytes`, `publish_at`, `published_at`, `deadline`, `created_by`, `updated_by`, `closed_at`, `archived_at`, `deleted_at`, `created_at`, `updated_at`, `revision`。
 
 - `allowed_extensions` 存规范化小写数组，并由服务层保证是全局白名单子集。
 - `max_total_bytes` 满足 `1 <= value <= 2147483648`。
 - `deadline > publish_at`。
-- 管理员删除 `draft` 时可物理删除本行；`published/closed` 删除只转为 `archived`。学生查询排除 `archived`，关联提交与版本继续受 `RESTRICT` 和不可变规则保护。
+- 管理员删除 `draft` 时可物理删除本行；`published/closed` 删除转为 `archived` 并写 `deleted_at`，手工归档保持空值直至再次删除。约束保证 `deleted_at IS NULL OR status='archived'`；普通详情与管理列表只读取空值行，关联提交与版本继续受 `RESTRICT` 和不可变规则保护。
 
 ### `assignment_cohorts`、`assignment_directions`
 
@@ -242,7 +243,7 @@ erDiagram
 
 `id`, `title`, `description_markdown`, `description_html`, `status`, `max_submissions`, `starts_at`, `ends_at`, `public_token_hash`, `created_by`, `updated_by`, `created_at`, `updated_at`, `revision`。
 
-- `status` 只允许 `draft`、`open`、`closed`、`archived`，Service 只允许顺序推进。
+- `status` 只允许 `draft`、`open`、`closed`、`archived`；Service 允许 `draft → open → closed`、`closed → open` 和 `closed → archived`，归档为终态。重新开启只更新问卷根记录的状态、操作者、时间与 revision，不修改问题、选项、回答、提交次数或 token，因此无需新增字段或迁移。
 - 标题去除首尾空白后长度为 1～200；开始和结束时间同时存在时必须 `starts_at < ends_at`。
 - `description_html` 由统一安全 Markdown 渲染器生成；`public_token_hash` 是唯一 64 位 SHA-256 十六进制值，不保存二维码明文 token。
 - `max_submissions` 为 1～100 的正整数或 `NULL`（不限次数）；索引 `(status, starts_at, ends_at)` 支持学生开放问卷查询。
@@ -381,6 +382,7 @@ CHECK (
 - `secret_payload_ciphertext` 可空，只用于保存经独立 Outbox 密钥认证加密的投递秘密；不得通过管理 API、日志或审计返回。
 - 领取索引 `(status, available_at)`；Worker 使用 `FOR UPDATE SKIP LOCKED`。
 - 邮件管理 API 只查询 `job_type` 为邮件的记录并对接收方脱敏。
+- 问卷范围邮件复用本表，手动成员、技术组和全部激活学生最终都按单个收件学生创建 `job_type=intention_open_email` 任务，事件键为 `intention:{survey_id}:open:{revision}:email:{user_id}`；普通载荷只保存已验证收件地址、称呼、问卷标题和站内相对路径，不保存范围、技术组、答案、补充说明、二维码 token 或管理员身份。范围只用于发送事务中的权威查询与脱敏审计，本功能不新增字段、表、索引或 Alembic 迁移。
 - 删除未发布通知/作业时，只删除同一资源仍处于 `pending/processing/retry` 的定时发布任务；已发送邮件任务和其他业务历史不删除。资源行锁与 Worker 的资源行锁共同解决删除/发布竞态。
 - 账号擦除为每个个人对象创建 `delete_account_object`：普通 `payload` 暂存服务端对象键，multipart ID 只存认证密文，邮件管理 API 不查询该类型。Worker 成功后清空两种载荷；失败摘要不得含对象键/上传 ID。目标账号的历史邮件任务按当前/历史用户事件键和令牌 ID 锁定，收件人、姓名与密文秘密清空，活动任务转 `dead/USER_DELETED`。
 
@@ -421,7 +423,7 @@ CHECK (
 | HW | `assignments`, 受众配置与快照, `assignment_extensions` |
 | COMP、TEAM | `competitions`, `competition_registrations`, `teams`, `team_members`；`competition_tasks` 仅保留历史兼容数据 |
 | SUB | `submissions`, `submission_versions`, `version_files`, `feedback` |
-| INT | `intention_surveys`, `intention_questions`, `intention_options`, `intention_responses`, `intention_response_options` |
+| INT | `intention_surveys`, `intention_questions`, `intention_options`, `intention_responses`, `intention_response_options`, `outbox_jobs` |
 | HELP | `help_requests`, `student_notifications`, `audit_logs` |
 | SHOW | `assignment_excellent_submissions`、作业与版本外键、源附件删除保护 |
 | FILE | `files`, `upload_sessions`, `upload_parts` |
@@ -442,9 +444,12 @@ CHECK (
 10. 问卷升级迁移 `20260828_0013` 接在账号活跃度 `0012` 后：为每份旧调查创建 ID 等于原调查 ID 的兼容问题，把旧选项迁到 `question_id`，以原回答 revision 初始化 `submission_count`，旧调查 `max_submissions=NULL` 保持不限。downgrade 按题序展平选项并保留选择关系，但旧结构无法保留问题标题和次数限制语义，生产降级前必须备份；验证 `0012 → 0013 → 0012 → 0013`。
 11. 反馈答疑迁移 `20260828_0014` 接在 `0013` 后，只创建 `help_requests` 表、检查约束、外键和查询索引，不回填或修改现有业务数据。downgrade 删除整张表并丢失已产生的工单与答复，生产降级前必须备份；验证 `0013 → 0014 → 0013 → 0014` 并保持单一 head。
 12. 已解答问题公开读取仅改变查询和响应，不改变 `0014` 表结构，不新增 Alembic revision；应用回滚不需要数据库降级。
-13. 管理员删除通知/作业复用既有 `archived` 状态、关联表 `CASCADE`、提交外键 `RESTRICT` 和孤立文件清理，不改变表、枚举、约束或索引；本轮不新增 Alembic revision，应用回滚不需要数据库降级。
+13. 管理员删除通知/作业的原始版本复用既有 `archived` 状态、关联表 `CASCADE`、提交外键 `RESTRICT` 和孤立文件清理；该版本无法区分手工归档与已删除归档，现由第 17 项迁移修订。
 14. 账号擦除迁移 `20260829_0015` 接在 `0014` 后：把明确个人数据引用改为 `CASCADE`，把平台/团队共享操作者改为可空 `SET NULL`，调整取消资格、人数豁免和反馈答复检查，并用事务级 `pnx.account_erasure` 标记收窄正式版本级联许可。尚未删除账号且没有产生新空值时可降级；一旦执行擦除，优先前滚修复，恢复账号与个人对象必须使用删除前 PostgreSQL/MinIO 同点备份。生产验证必须在隔离副本执行 `0014 → 0015 → 0014 → 0015`，不得用当前运行库做开发测试。
 15. 管理员删除队伍复用 `teams.status='dissolved'`、`team_members.left_at`、既有 `team_members.team_id ON DELETE CASCADE` 和 `submissions.owner_team_id` 引用，不新增字段、枚举、约束、索引或 Alembic revision。无历史提交的物理删除和有历史提交的保留壳均由应用事务处理；应用回滚不要求数据库降级，但不能恢复已经物理删除的无提交队伍。
+16. 持久登录迁移 `20260830_0016` 接在 `0015` 后，只为 `sessions` 增加可空 `VARCHAR(64) ip_binding_hash`；不回填、不撤销历史 Session，也不修改用户、密码哈希、到期时间或安全事件。downgrade 只删除该列，可完成 `0015 → 0016 → 0015 → 0016`；若已产生持久会话，应用回滚前应评估旧版本不再校验 IP 绑定的安全放宽并优先前滚修复。
+17. 管理端删除可见性迁移 `20260831_0017` 接在 `0016` 后，为 `announcements/assignments` 增加可空 `TIMESTAMPTZ deleted_at` 与“非空必须归档”检查；从成功的 archive 模式删除审计回填历史标记。downgrade 先删约束再删列，会丢失两种归档意图的结构化区分；可执行 `0016 → 0017 → 0016 → 0017`，生产回滚应优先前滚修复。
+18. 知识库目录独立文件迁移 `20260831_0018` 接在 `0017` 后，扩展 `knowledge_nodes.node_type` 检查以允许 `file`，增加可空 `asset_id → knowledge_assets.id` 的 `RESTRICT` 外键与索引，并把历史 `object_type=file` 节点标为 `file`；历史节点资源关联仍为空。downgrade 先把 `file` 节点转回 `unsupported`，再删除索引、外键和列并恢复旧检查，因此无需预删快照；降级会丢失节点资源关联，重新前滚后须由真实管理员再次成功同步。MinIO 对象不随 downgrade 删除。
 
 ## 飞书知识库快照
 
@@ -454,7 +459,7 @@ CHECK (
 
 ### `knowledge_nodes` 与 `knowledge_documents`
 
-- 节点按 `sync_run_id` 保存父节点、飞书节点/对象标识、类型、标题、深度、顺序和安全原文 URL；同一运行的节点 token 唯一。
+- 节点按 `sync_run_id` 保存父节点、飞书节点/对象标识、`document/folder/file/unsupported` 类型、标题、深度、顺序和安全原文 URL；同一运行的节点 token 唯一。`file` 节点可以通过可空 `asset_id` 关联 `knowledge_assets`，失败或历史快照保持空值，文件内容仍不进入 PostgreSQL。
 - 文档一对一关联节点，按运行保存外部文档标识、标题、原文 URL、规范化块 `JSONB` 和顺序；同一运行的文档标识唯一。公式继续使用既有 JSONB：独立公式为 `type=equation`，行内公式由 segment 的 `equation=true` 标记，不新增列或表。
 - 失败运行可保留诊断状态，但从不被学生读取；同一运行重试前级联清空部分节点/文档再重建。
 - 对齐参考同步后，只有目录遍历和全部目标 Docx 的 blocks、标题及引用均完成的运行才能标为 `succeeded`；目录子树或单篇正文不得被静默跳过并形成新的部分成功快照。
@@ -462,8 +467,8 @@ CHECK (
 ### `knowledge_assets` 与 `knowledge_document_assets`
 
 - 媒体全局按 `(external_asset_token, asset_kind)` 复用，保存服务端对象键、安全文件名、媒体类型、大小、SHA-256、可选宽高和最后发现时间；文件内容只在 MinIO。
-- 文档媒体关联记录 `usage_type` 与顺序。资源 API 必须通过“最新成功运行 → 文档 → 关联 → 媒体”联查授权。
+- 文档媒体关联记录 `usage_type` 与顺序。资源 API 必须通过“最新成功运行 → 文档 → 关联 → 媒体”或“最新成功运行 → 独立文件节点 → 媒体”之一联查授权；旧快照、无引用资源和仅存在全局媒体记录的 UUID 均不得下载。
 
 迁移 `20260827_0011` 创建上述五表、外键、检查、唯一和查询索引；downgrade 逆序删除关联、文档、媒体、节点和运行表，不删除 MinIO 对象，避免数据库回滚造成不可恢复文件丢失。
 
-参考仓库对齐、首次上线前台初始化和 ADR-041 公式解析不改变上述表、约束或迁移，本轮不新增数据库迁移；旧成功快照只有在管理员重新同步并成功后才会自然替换。
+参考仓库对齐、首次上线前台初始化和 ADR-041 公式解析仍不改变文档 JSONB；目录独立文件由 `20260831_0018` 定向扩展节点类型和资源关联。旧成功快照不会原地获得目录文件资源，只有上线迁移后由真实管理员手动触发的新同步成功，才会自然替换并提供下载。

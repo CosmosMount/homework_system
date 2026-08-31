@@ -6,6 +6,7 @@
 - 用户角色只有学生和管理员；新账号使用 `@connect.hkust-gz.edu.cn` 注册，邮箱前缀派生为用户名，激活后可用用户名或完整邮箱登录。空系统首个完成验证的账号成为受最后管理员保护的管理员；历史数据库若用户表恰好一行且该账号已验证并处于 `active`，部署迁移或下次登录会把它持久化为管理员。其余账号直接激活为学生，不经过人工审核或强制初始分组。
 - 注册、密码重置和管理员命令行创建账号统一使用 8～128 个 Unicode 字符密码策略；继续使用 Argon2id，并拒绝常见密码及与邮箱、学号高度相似的值。
 - 应用层持久认证失败窗口只用于无效登录：按规范化邮箱 5 次、来源 IP 30 次统计 10 分钟，返回 `Retry-After: 600`；已验证 `active` 账号的正确密码先完成 Argon2id 校验并直接登录。注册、验证邮件重发和密码重置申请只记录安全分析事件，不读取历史事件形成持久等待；Nginx 瞬时入口限流继续保留。
+- 登录默认使用浏览器会话 Cookie，服务端保持管理员 4 小时、学生 12 小时空闲与 14 天绝对期限；用户可主动选择最长 30 天的“记住登录状态”。系统不保存密码，持久 Session 必须同时持有高熵 Cookie 并匹配登录时精确来源 IP 的 HMAC；数据库不存精确 IP，相同 IP 不能单独认证。
 - 现有官网与飞书培训知识库继续独立维护；本系统允许真实管理员手动触发飞书开放 API，将结构化正文和受控媒体同步为只读快照供登录用户阅读，但不编辑或写回飞书，不修改或依赖现有官网运行时，学生请求不实时访问飞书。
 - 培训作业默认可向全体学生投放，也可按管理员维护的技术方向定向投放；届次设置已从产品入口移除，历史受众字段仅作兼容；个人提交作业，校内赛由团队队长提交。
 - 作业发布时生成初始固定受众；后续普通学生首次激活时加入当时仍开放且匹配的作业，之后修改方向不重算历史归属。
@@ -245,3 +246,119 @@
 - 六服务 healthy、重启 0；登录与四健康端点 200，管理员用户页匿名 307、用户 API 匿名 401。Backend、Worker、Frontend、Nginx 错误关键词聚合均为 0。
 - 纠正发布未运行 migrate，PostgreSQL/MinIO 容器和数据卷未重建；数据库保持既有 `20260829_0015` 基线。最近队伍发布前数据库备份的 0600、SHA-256 与 PostgreSQL 17 目录已重新校验。
 - 验收未使用管理员 Session/Cookie、未读取用户列表、未调用删除、同步、上传、认证或其他业务写接口。Docker socket 临时 ACL 与本机 `/tmp` 备份持久化风险仍待部署方收尾。
+
+## 2026-08-30 持久登录与同源 IP 绑定源码候选基线
+
+- 登录页、API 与 Session 服务已实现默认关闭的 `remember_me`：普通登录为浏览器会话 Cookie；主动记住时 Session/CSRF Cookie、空闲期和绝对期最长 30 天，并在个人/管理员会话列表显示 `remembered`。
+- 持久会话以原始 Session token 为 HMAC key 绑定 Nginx 覆盖转发头后的规范化精确来源 IP；数据库仅保存 64 位 `ip_binding_hash` 和既有网段摘要。不同 IP 会立即撤销，相同 IP 无 Cookie 仍为 401，不存在 IP-only 用户查询或认证路径。
+- 新迁移 `20260830_0016` 只为 `sessions` 增加可空列，历史 Session 保持 `NULL`。后端定向 70 项、完整 299 项、Ruff、171 文件格式、153 源文件严格 Mypy，以及前端 23 文件/105 项 Vitest、ESLint、严格 TypeScript 和生产构建均通过。
+- 本候选没有连接、迁移或修改当前 PostgreSQL/MinIO，没有构建或部署 Docker。运行应用继续为 `team-user-search-20260830`，数据库继续为 `20260829_0015`；部署前必须应用 `0016`，产生持久会话后回滚旧应用会停止绑定校验，应优先前滚。
+
+## 2026-08-30 持久登录与同源 IP 绑定部署后基线
+
+- 当前固定标签为 `persistent-login-20260830`；Backend/Worker 镜像 ID 为 `sha256:6851f9892b16bfb6f2b4436dceba8b58b93651163882226770fc5339b91e6dc3`，Frontend 为 `sha256:96544dc22467f4ba4b74d236d9474bc1bfeb50b133c89cb695aa9cc3bf72424b`，应用均为 `appuser`。
+- 生产 Alembic 为 `20260830_0016 (head)`；`sessions.ip_binding_hash` 是可空 `varchar(64)`，历史 Session 保持 NULL。隔离 `0015 ↔ 0016` 往返和生产 `0015 → 0016` 均通过，`alembic check` 无漂移。
+- 六服务 healthy、重启 0；登录和四健康端点 200，匿名会话管理页/API 为 307/401。运行 OpenAPI 共 114 条路径，`remember_me` 默认 false，Session `remembered` 为 boolean。
+- 部署前 OpenPGP 每日备份 `pnx-backup-20260830T045545Z-daily` 为 5,682,620 字节，完整 PostgreSQL dump 为 5,578,815 字节；外层/内部校验和 299 项目录通过，MinIO 2,885 个对象无本次 payload 或删除变化。
+- 生产全表行数聚合哈希迁移前后均为 `6a44c75dea0d9e822c8ea06169f8c76d6a529a249ad1e33644dad20d53274c05`；PostgreSQL/MinIO 容器与卷未重建，隔离和 migrate 临时资源已清理。
+- 验收未使用真实账号、Session 或 Cookie，也未调用登录、删除、同步、上传或其他业务写接口；六服务新验收窗口无异常日志。
+- 旧 `team-user-search-20260830` 镜像保留，但旧 Backend 会忽略 IP 绑定列；产生持久会话后应用回滚前应先撤销绑定 Session，正常处置优先前滚。
+- 加密归档与临时 GPG 私钥仍同机位于 `/tmp`，必须迁移并分离保存；Docker socket `user:pnx:rw-` ACL 因交互式 sudo 密码要求尚未撤销。
+
+## 2026-08-30 持久登录跳转热修复后基线
+
+- 当前固定标签为 `persistent-login-ip-forwarding-20260830`；Frontend 镜像 ID 为 `sha256:77dbfdec8659b82308eb159f2e48cdb2cb217974731eb4e080d4b83ffda90734`，Backend/Worker 继续运行既有 `sha256:6851f9892b16bfb6f2b4436dceba8b58b93651163882226770fc5339b91e6dc3`，应用均为 `appuser`。
+- Next.js Server Component 直连 Backend 时会同时转发当前 Cookie 与 Nginx 覆盖清洗的单值来源 IP；缺失时不伪造。Nginx 继续覆盖客户端 `X-Forwarded-For`，Frontend 不发布宿主端口。
+- 六服务 healthy、重启 0；五健康入口 200，匿名会话页/API 为 307/401。生产 Alembic 保持 `20260830_0016 (head)`，本轮未迁移，PostgreSQL/MinIO 容器与卷未重建。
+- Frontend 完整 24 文件/107 项 Vitest、ESLint、严格 TypeScript、主机及镜像内生产构建通过；隔离假 Backend 与运行编译产物验证可信来源 IP 透传，新日志窗口无异常。
+- 已被旧错误路径撤销的持久 Session 不会自动恢复，用户需重新勾选登录一次。`/tmp` 备份/私钥和 Docker socket ACL 遗留风险不变。
+
+## 2026-08-30 学生知识库飞书入口关闭部署基线
+
+- `/knowledge` 已按有效视图区分来源链接：真实学生和管理员学生视图不显示标题原文入口、未映射飞书文档链接或附件失败回退；真实管理员普通视图保留排障入口。
+- 当前成功快照内显式文档 mention 继续站内切换；已本地化块附件和富文本内嵌文件继续通过 `/api/v1/knowledge/assets/{id}/content` 鉴权下载，失败附件在学生侧显示“暂不可下载”。
+- 新增 ADR-046，更新 KB-002、KB-003、KB-005、KB-007、KB-008 相关页面/API/安全/测试说明；同步层既有来源与回退元数据保持兼容。
+- 部署时发现 `/knowledge` 鉴权与其他受保护读取并发导致匿名登录回跳竞速，已调整为先执行 `requireUser("/knowledge")`，并新增鉴权前不得发起其他读取的回归。
+- 最终知识库定向 2 文件/12 项、完整前端 25 文件/111 项 Vitest、ESLint、严格 TypeScript 和镜像内 Next.js 生产构建通过。
+- 当前固定标签为 `knowledge-student-links-20260830`，Frontend 镜像为 `sha256:a67211cda8d65afeb34bbdde630609cd7c50aff974cc99ddbb9f6852ac26c652`；只替换 Frontend 并刷新 Nginx。Backend/Worker、PostgreSQL、MinIO 容器未替换，Alembic 保持 `20260830_0016 (head)`。
+- 部署前后聚合保持 `users=158|knowledge_documents=1110|knowledge_assets=1027|account_cleanup=0`，最近同步保持 `succeeded|213|1020`、Outbox 保持 `sent|1`；未运行 migrate、未触发飞书同步或业务写入。
+
+
+## 2026-08-30 问卷重新开启源码候选基线
+
+- 真实管理员可把 `closed` 问卷重新开启并再次关闭；关闭卡片同时保留归档入口，`archived` 仍为终态。学生和管理员学生视图没有状态管理权限。
+- 重新开启保留问题/选项、二维码 token、历史最新答案、累计提交次数、原时间窗口和提交上限；学生读取/提交继续同时校验 `open`、时间窗口与剩余次数。审计使用 `intention.reopen` 并只记录来源/目标状态。
+- 本轮复用现有状态列与 `POST /admin/intentions/{survey_id}/open`，不新增 API Schema、数据库字段、Alembic 迁移或依赖。
+- 问卷定向后端/API 34 项、前端 2 文件/10 项，完整后端 299 项、Ruff、153 文件格式、120 源文件严格 Mypy，完整前端 25 文件/112 项、ESLint、严格 TypeScript 和生产构建均通过。
+- 源码候选阶段未连接或修改运行 PostgreSQL/MinIO，也未调用运行问卷状态接口；后续运行态部署结果如下。
+
+## 2026-08-30 问卷重新开启部署后基线
+
+- 当前固定标签为 `questionnaire-reopen-20260830`；Backend/Worker 镜像为 `sha256:f613c227e74b67b8c3f1257cb7dca2b2d80b2273168bad13df80ba923331e016`，Frontend 为 `sha256:35bed3d14aef08f213df7b14510c2623af5944d3639a3e2788175944a6d7bb75`，应用均以 `appuser` 运行。
+- 六服务 healthy、重启 0，五个健康入口为 200；问卷页面匿名为 307，问卷管理与学生 API 匿名为 401。运行 Backend/Frontend 标记确认重新开启能力及持久登录、来源 IP 转发、用户搜索、删除、知识库附件和 KaTeX 等既有能力同时存在。
+- 未运行 migrate，Alembic 保持 `20260830_0016 (head)`；PostgreSQL/MinIO 容器 ID 为 `bfa750f66ab0…`、`331150f34f37…`，未重建容器、卷或网络。
+- 部署前后 `users=158`，问卷五表 `3/5/21/91/181`、状态 `archived:2,open:1`，知识库 `1110/1027`、账号清理 Outbox `0`、最近同步 `succeeded|213|1020` 与同步 Outbox `sent|1` 均不变。
+- 验收未携带认证信息调用真实问卷写接口，未触发飞书同步或其他业务写入；部署窗口四个应用服务日志无异常。最新 5,682,620 字节加密备份的 0600 与 SHA-256 校验仍有效，`/tmp` 与 Docker socket ACL 遗留风险不变。
+
+## 2026-08-30 问卷三种范围邮件源码基线（未部署）
+
+- 当前工作树已实现真实管理员在开放填写窗口内选择手动成员、一个激活技术组或全部激活学生发送问卷邮件。技术组/全部范围由后端在发送时查询权威激活学生，三种范围同一 revision/成员只入队一次，重新开启后可再次显式发送；邮件只含称呼、标题和站内链接。
+- 功能复用既有 `outbox_jobs`、Worker、8 次退避、dead 列表和人工重试，无新依赖或迁移；运行环境仍保持上一节 `questionnaire-reopen-20260830` 部署基线，本轮没有调用真实 SMTP 或写入运行数据库。
+- 后端意向/API 契约定向 48 项、完整 315 项、Ruff 及 171 文件格式检查、120 个源文件严格 Mypy 通过；前端问卷定向 12 项、完整 25 文件/115 项、ESLint、严格 TypeScript 和生产构建通过。
+
+## 2026-08-30 问卷三种范围邮件部署后基线
+
+- 当前固定标签为 `questionnaire-email-scopes-20260830`；Backend/Worker 镜像为 `sha256:af1d520399115abad815f84100c5e34c961a29003087d3088eccf54eb7106cbd`，Frontend 为 `sha256:8d4ba40349833834a713a6af4b5ea90c572343dd26e6ab58a9d78aeef75e75fe`，应用均以 `appuser` 运行。
+- 六服务 healthy、重启 0，五个健康入口为 200；问卷页面匿名为 307，管理/学生问卷 API 与匿名邮件 POST 为 401。运行 OpenAPI 为 115 条路径且 `recipient_scope` 枚举为 `manual/direction/all`，Frontend 产物包含三范围及全部既有能力标记。
+- 未运行 migrate，Alembic 保持 `20260830_0016 (head)`；PostgreSQL/MinIO 容器 ID 仍为 `bfa750f66ab0…`、`331150f34f37…`，未重建容器、卷或网络。
+- 部署前后 `users=160`、问卷五表 `3/5/21/92/183`、状态 `archived:2,open:1`、知识库 `1110/1027`、最近同步 `succeeded|213|1020` 和 Outbox 聚合均不变；`intention_open_email` 与 `delete_account_object` 均为 0。
+- 验收未携带管理员登录态或调用真实业务写接口，未触发 SMTP/飞书；自 `2026-08-30T14:56:57Z` 起四个应用容器错误关键词匹配为 0。最近加密备份与新增 6,838,808 字节 PostgreSQL 17 快照均已校验；同机 `/tmp` 恢复材料和 Docker socket ACL 遗留风险不变。
+
+## 2026-08-31 管理端删除可见性源码候选基线（未部署）
+
+- 通知/作业已用 `deleted_at` 区分手工归档和已删除归档：常规管理列表/详情排除删除标记，手工归档仍可读取并继续删除；已发布删除与手工归档首次删除均写脱敏审计，重复 DELETE 幂等。
+- 新迁移 `20260831_0017` 从成功 archive 模式删除审计回填历史通知/作业，约束删除标记只能用于 `archived`；提醒、邮件、受众快照、提交、不可变版本、评语、优秀标记、附件与审计继续保留。
+- 通知归档页只显示“删除通知”，删除成功返回管理列表；作业归档删除入口保持。完整后端 320 项、Ruff/格式、严格 Mypy，以及完整前端 25 文件/116 项、ESLint、严格 TypeScript 和生产构建通过。
+- 独立 PostgreSQL 的 `0016 → 0017 → 0016 → 0017` 往返与历史回填区分通过，临时容器已清理。源码阶段未连接或修改生产 PostgreSQL/MinIO、未调用真实 DELETE；后续部署结果如下。
+
+## 2026-08-31 管理端删除可见性部署后基线
+
+- 当前固定标签为 `admin-content-visibility-20260831`；Backend/Worker 镜像为 `sha256:589290276cd2ab01b283dc227e3effffe9548df4235a8965fa2c2f3c97145772`，Frontend 为 `sha256:8d5ea4a60f04cbf7be44b22b438a1a5c60aef40a0ebf37cf6786ceec2fca116b`，应用均以 `appuser` 运行。
+- 生产 Alembic 为 `20260831_0017 (head)`；两表可空 `deleted_at` 与“非空必须归档”检查有效。生产历史内容删除审计为 0，故两条归档通知和一条归档作业仍保持手工归档语义、可进入管理详情继续删除。
+- 六服务 healthy、重启 0；登录及正式健康入口为 200，管理页面匿名 307、管理 API 和虚假 UUID DELETE 匿名 401。运行 OpenAPI 115 条路径，删除过滤/幂等和 Frontend 新旧能力标记齐全。
+- PostgreSQL/MinIO 容器 ID 与卷未变化；核心业务聚合保持一致。问卷窗口内有正常外部提交及成功审计，部署未携带认证信息调用真实 DELETE 或其他业务写接口；四个新应用容器严重错误关键词为 0。
+- 部署前加密备份 `pnx-backup-20260831T054111Z-daily` 为 99,897,873 字节、0600，SHA-256 `06f7a4657cf53cabdb7c18fe59d1b16974b0d9ad8a31aa0701afc8fa1b1f525b`，PostgreSQL 17 目录和 MinIO 摘要校验通过。备份/私钥同机 `/tmp` 与 Docker socket ACL 仍待部署方收口。
+
+## 2026-08-31 培训知识库阅读与目录文件源码基线（未部署）
+
+- ADR-049 部分替代 ADR-034 的目录树内部状态：无当前文档时仅展示根层条目且根文件夹保持收起，显式进入文档后祖先链自动展开并滚动定位，切换后旧自动路径收缩，历史返回首页后恢复根层收起视图；目录栏整体开合、系统主导航成功折叠、右侧本文目录 sticky 高亮和移动端目录不变。
+- 飞书目录 `obj_type=file` 独立文件通过 `knowledge_nodes.asset_id` 复用既有附件校验、MinIO 与 `/knowledge/assets/{id}/content`；授权同时接受最新成功快照的文档资源关联和独立文件节点关联，失败节点不生成飞书下载链接。
+- 图片点击在当前页可访问模态预览，连续图片按容器宽度自动并排/换行；没有新增依赖。
+- 源码 Alembic head 为 `20260831_0018`，生产仍为 `20260831_0017`。旧成功快照不会原地获得独立文件资源；部署迁移后须由真实管理员手动成功同步。downgrade 会把 `file` 转回 `unsupported`、删除节点资源关联但保留 MinIO 对象。
+- 完整后端 322 项、Ruff、173 文件格式、153 源文件严格 Mypy，完整前端 25 文件/118 项、ESLint、严格 TypeScript和 Next.js 生产构建通过；未连接运行 PostgreSQL/MinIO，未迁移、同步或部署。
+
+## 2026-08-31 培训知识库阅读与目录文件部署后基线
+
+- 当前固定标签为 `knowledge-directory-media-20260831`；Backend/Worker 镜像为 `sha256:77f58286fe7434a970d9656f8a5801ce470af628745e992f513dffb69cb2796f`，Frontend 为 `sha256:f523e338e44c0788fb61c1f8378f73940f1bdc00d907a8a1ef770dfbe3883e65`，应用均以 `appuser` 运行。Backend 源码/迁移在镜像内为只读可遍历，常驻用户和备份宿主降权 UID 均可导入。
+- 生产 Alembic 为 `20260831_0018 (head)`；112 个历史 `unsupported:file` 节点已转为 `file:file`，目前 `asset_id` 全为空，可空 UUID 列、资源外键和索引有效。旧应用不识别 `file`，回滚必须先受控降级到 `0017`，不能只换旧镜像。
+- 六服务 healthy、重启 0；登录和四个健康入口、Frontend 内部健康均为 200。知识库页面匿名为 307 且保留 `next=/knowledge`，目录 API 和虚假资源下载匿名为 401；PostgreSQL/MinIO 容器与卷未重建。
+- 运行 Frontend 产物包含目录活动项跟随、图片页内浮层/关闭、不可下载状态、缩放光标与 `flex-wrap`；运行 Backend OpenAPI 为 115 条路径并包含 `file` 和受保护资源下载。
+- 迁移前后全表行数哈希均为 `65b142a35e7e3a73dc49743a8978943d4910544312bde9951c0b3148ff4a585f`；知识库文档/资源/节点保持 1327/1064/1603，Outbox `dead/pending/sent=23/1/400`，部署未使用真实登录态、未触发飞书同步或其他业务写入，四个应用容器严重错误关键词为 0。
+- 部署前加密备份 `pnx-backup-20260831T073443Z-daily` 为 99,901,190 字节、0600、SHA-256 `a337e786920638b30224317155f76029f69afd25717df61b26e705d3167c3a00`；完整解密、内部校验、PostgreSQL 17 的 314 项目录和 MinIO 摘要通过。
+- 目录文件下载仍需真实管理员在 `/admin/knowledge` 手动完成一次成功同步；失败同步不覆盖旧快照。备份/临时私钥同机 `/tmp` 与 Docker socket `user:pnx:rw-` ACL 仍待部署方迁移和交互撤销。
+
+## 2026-08-31 知识库默认根层视图前端热修基线
+
+- 无有效 `?doc` 的知识库首页不再自动读取第一篇文档，正文显示选文档空状态，目录只展示根层条目且所有根文件夹保持收起；显式打开文档时只展开祖先链并滚动定位，切换后旧路径收缩，历史返回首页后清空正文并恢复根层收起视图。
+- 页面/组件定向 16 项与完整前端 25 文件/120 项 Vitest、ESLint、严格 TypeScript、主机及镜像内生产构建通过；镜像依赖审计 0 漏洞，隔离候选以 `appuser` 运行且 `/health=200`。
+- 当前固定标签为 `knowledge-root-view-20260831`。Frontend 镜像为 `sha256:9a76b96ca85d67a0364cf939fd5528bbfb42b6d4633d143b75a61ad2443b811f`；Backend/Worker 继续运行 `sha256:77f58286fe7434a970d9656f8a5801ce470af628745e992f513dffb69cb2796f`，同名 Backend 标签只作别名。仅 Frontend/Nginx 被替换，Backend、Worker、PostgreSQL、MinIO 容器 ID 保持不变。
+- 六服务 healthy、重启 0，登录和五个健康入口为 200；知识库页面/API/虚假资源下载匿名为 307/401/401，Alembic 保持 `20260831_0018 (head)`。本热修无数据迁移、飞书同步或业务写入，目录独立文件下载、图片页内浮层和连续图片自适应布局不变。
+- 最近加密备份 `pnx-backup-20260831T073443Z-daily` 的 0600、99,901,190 字节和 SHA-256 `a337e786920638b30224317155f76029f69afd25717df61b26e705d3167c3a00` 已再次复核；同机 `/tmp` 恢复材料与 Docker socket 临时 ACL 风险仍待部署方收口。
+
+## 2026-08-31 知识库目录文件端点与图片序列修复部署后基线
+
+- 当前固定标签为 `knowledge-file-gallery-fix-20260831`；Backend/Worker 镜像为 `sha256:2b1c9079e5dc9f2079acdb063cd7a0e2d88c52c68be045a346f180054d692141`，Frontend 为 `sha256:a5ad5927756819aeedbe4931b4921a60831d11fcaced9ea9530ded90f04446d3`，应用以 `appuser` 运行。
+- 飞书正文图片/附件继续走 Drive `medias`，目录 `obj_type=file` 改为 Drive `files`；两者仍进入同一 350 ms 节流、安全检测、MinIO 与受保护授权链路。画廊跨空段落和纯媒体容器分组，可见内容仍是边界。
+- 六服务 healthy、重启 0，登录与五个健康入口为 200，知识库页面/API/虚假资源下载匿名为 307/401/401；Alembic 保持 `20260831_0018 (head)`，PostgreSQL/MinIO 容器和卷未重建。
+- 部署前后聚合为 `users/runs/nodes/documents/assets/outbox=169/12/1836/1544/1064/430`。当前最新成功快照仍为旧代码生成的 217 篇/1,057 资源，16 个文件节点全部无关联；必须由真实管理员再手动成功同步完成最终验收。
+- 新备份 `pnx-backup-20260831T102419Z-daily` 为 101,156,599 字节、0600、SHA-256 `e3a7ddf3ca640f8d825c3d763a0db938b3264fca21fced5894c216d8da8a1468`，外层/解密/内部/PostgreSQL 17 恢复目录验证通过。同机 `/tmp` 恢复材料与 Docker socket `user:pnx:rw-` ACL 风险不变。

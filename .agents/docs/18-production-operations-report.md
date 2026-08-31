@@ -562,3 +562,185 @@
 - 当前没有更早的单一镜像同时包含两项功能：回滚到 `team-delete-20260830` 会再次失去用户搜索，回滚到 `admin-user-search-20260829` 会失去队伍删除。应优先前滚修正 `team-user-search-20260830`，数据库无需降级。
 - 后续从运行镜像制作隔离候选时，必须把所有已上线但尚未进入 Git HEAD 的能力列为显式保留清单，并对关键运行 chunk 做构建后断言；仅以“排除共享工作树其他任务”为边界会造成已上线能力回退。
 - Docker socket 临时 ACL 与 `/tmp` 备份持久化风险未改变；全部 Docker 收尾后仍需交互式 sudo 撤销 ACL，并把备份迁移到受控独立介质。
+
+## 2026-08-30 持久登录与同源 IP 绑定部署
+
+### 候选、备份与权限修复
+
+- 源码质量门为 Backend 定向 70 项、完整 299 项、Ruff、171 文件格式和 153 源文件严格 Mypy，以及 Frontend 23 文件/105 项、ESLint、严格 TypeScript 与 Next.js 生产构建，均通过。
+- 部署前加密每日备份 `pnx-backup-20260830T045545Z-daily` 为 5,682,620 字节，内含 5,578,815 字节 PostgreSQL 17 自定义 dump；外层 SHA-256、完整解密、内部校验、Manifest 与 299 项 `pg_restore --list` 均通过。MinIO 仍为 2,885 个对象，本次增量 payload 与删除数均为 0，周基线为 `pnx-backup-20260829T122839Z-weekly`。
+- 首个 Backend 候选因宿主机 umask 使本次新增 Python 文件为 0600，非 root `appuser` 无法读取，健康门在接触生产库前阻断。`backend/Dockerfile` 随后为 `alembic.ini`、`migrations` 和 `app` 使用 `--chown=appuser:appgroup`，重建后 UID 10001 可导入应用并读取迁移；这是镜像权限修复，不改变运行权限边界。
+
+### 隔离往返与生产迁移
+
+- 从上述备份恢复到全新临时 PostgreSQL 17 容器、独立网络和独立卷，完成 `20260829_0015 → 20260830_0016 → 20260829_0015 → 20260830_0016`。升级字段两次均为 `varchar(64)|YES`，降级后字段数为 0，`alembic check` 无模型漂移。
+- 隔离业务表行数聚合 SHA-256 前后均为 `6a44c75dea0d9e822c8ea06169f8c76d6a529a249ad1e33644dad20d53274c05`。生产迁移前后同一聚合哈希也保持一致；生产最终为 `20260830_0016 (head)`，新增列为可空 `varchar(64)`，未回填或撤销历史 Session。
+- `.env` 固定为 `persistent-login-20260830`。先定向替换 Backend/Worker 并等待 healthy，再替换 Frontend/Nginx；PostgreSQL 与 MinIO 容器 ID 保持部署前的 `bfa750f66ab0…`、`331150f34f37…`，容器和数据卷均未重建。一次性 migrate、隔离容器、网络、卷和明文临时目录已清理。
+
+### 运行验收与安全边界
+
+- Backend/Worker 镜像为 `sha256:6851f9892b16bfb6f2b4436dceba8b58b93651163882226770fc5339b91e6dc3`，Frontend 为 `sha256:96544dc22467f4ba4b74d236d9474bc1bfeb50b133c89cb695aa9cc3bf72424b`；应用容器均为 `appuser`。六服务 healthy、重启 0，登录页、三个 API 健康端点和 `/nginx-health` 均为 200。
+- `/admin/sessions` 无 Cookie 为 307 `/login`，`/api/v1/auth/me` 无 Cookie 为 401，登录页包含“记住登录状态”。新 Backend 运行 OpenAPI 共 114 条路径，`remember_me` 默认 false 且为 boolean，Session `remembered` 为 boolean；Alembic 无漂移，登录页保留 nonce CSP。
+- 新验收窗口六服务无 Traceback、事务中止、权限拒绝、连接拒绝或外键异常。本轮未使用真实账号、Session 或 Cookie，未调用登录、删除、同步、上传、邮件或其他业务写接口。
+
+### 回滚与剩余风险
+
+- 旧 `team-user-search-20260830` Backend/Frontend 镜像继续保留。数据库新增列向后兼容，但旧 Backend 不校验 IP 绑定；产生持久会话后如需应用回滚，应先撤销 `ip_binding_hash IS NOT NULL` 的 Session，故障修复优先前滚。数据库降级只删除该列，也应在无持久会话或完成撤销后执行。
+- 加密归档、校验材料和临时 GPG 私钥环仍同宿主机位于 `/tmp/pnx-account-deployment-backups` 与 `/tmp/pnx-account-deployment-gnupg`，仅适合作为短期材料；必须迁移到受控独立介质，并把归档与解密材料分离保存。
+- Docker socket 仍有 `user:pnx:rw-` 临时 ACL。普通 `setfacl -x` 被拒绝，`sudo -n` 要求密码；部署方仍需交互执行 `sudo setfacl -x u:pnx /var/run/docker.sock`，再复核只剩基础 ACL 且为 `root:docker 0660`。
+
+## 2026-08-30 持久登录跳转回归热修复
+
+### 根因与安全边界
+
+- 浏览器登录 POST 经 Nginx 直达 Backend，记住会话绑定 Nginx 覆盖后的真实来源 IP；登录跳转后的 Next.js Server Component 从 Frontend 容器直连 Backend，旧客户端只转发 Cookie，Backend 因看到容器 IP 而立即撤销 Session。
+- Frontend 服务端 API Client 现继续透传 Nginx 已清洗的单值 `X-Forwarded-For`；缺失时不补造。Nginx 的覆盖规则不变，Frontend 仍不发布宿主端口，因此客户端不能借此选择绑定 IP。
+
+### 候选验证与定向部署
+
+- Frontend 定向 2 文件/11 项、完整 24 文件/107 项 Vitest、ESLint、严格 TypeScript、主机与 Docker 镜像内生产构建通过。隔离假 Backend 日志确认 `/auth/me`、`/dashboard` 均收到 `xff=198.51.100.42 cookie=yes`；临时容器和网络已清理。
+- `.env` 固定为 `APP_IMAGE_TAG=persistent-login-ip-forwarding-20260830`。Frontend 镜像为 `sha256:77dbfdec8659b82308eb159f2e48cdb2cb217974731eb4e080d4b83ffda90734`；Backend 热修复标签仍指向既有 `sha256:6851f9892b16bfb6f2b4436dceba8b58b93651163882226770fc5339b91e6dc3`。
+- 只定向替换 Frontend/Nginx；Backend/Worker 未替换，PostgreSQL/MinIO 容器与卷未重建，未运行 migrate，Alembic 保持 `20260830_0016 (head)`。
+
+### 运行验收与遗留事项
+
+- 六服务 healthy、重启 0；`/login`、live、ready、worker、`/nginx-health` 为 200，`/admin/sessions` 匿名为 307，`/api/v1/auth/me` 匿名为 401。运行 Frontend 编译产物含 `x-forwarded-for`，新日志窗口无 Traceback、权限、连接、事务或外键异常。
+- 回归期间被错误来源 IP 校验撤销的 Session 不会自动恢复，用户必须重新勾选登录一次。备份/临时私钥同机 `/tmp` 和 Docker socket `user:pnx:rw-` ACL 风险不变，仍需部署方迁移材料并交互撤销 ACL。
+
+## 2026-08-30 学生知识库飞书原文入口关闭部署
+
+### 候选验证与部署修正
+
+- 本次只发布 Frontend：真实学生与管理员学生视图关闭标题原文、未映射飞书文档和附件失败回退入口；当前快照内部文档跳转与 `/api/v1/knowledge/assets/{id}/content` 鉴权下载保持可用，真实管理员普通视图仍保留排障入口。
+- 首个候选通过静态策略、既有已上线能力、非 root 和健康检查；运行验收发现 `/knowledge` 把 `requireUser()` 与其他受保护读取放在同一 `Promise.all` 中，匿名请求存在错误响应抢先于目标登录重定向的竞速。现改为先执行 `requireUser("/knowledge")` 再读取目录、文档和通知，并新增 Server Component 回归。
+- 最终定向 2 文件/12 项、完整前端 25 文件/111 项 Vitest、ESLint、严格 TypeScript 和镜像内 Next.js 生产构建全部通过。最终候选 `sha256:a67211cda8d65afeb34bbdde630609cd7c50aff974cc99ddbb9f6852ac26c652` 以 `appuser` 运行、健康检查通过，匿名 `/knowledge` 稳定返回 307 到 `/login?next=%2Fknowledge`。
+
+### 定向替换与数据边界
+
+- `.env` 固定为 `APP_IMAGE_TAG=knowledge-student-links-20260830`；Backend 镜像只增加同标签别名，实际仍为 `sha256:6851f989…`。只定向替换 Frontend 并刷新 Nginx，Backend、Worker、PostgreSQL、MinIO 容器未替换，数据卷和网络未重建。
+- Frontend/Nginx 最终健康等待成功；运行产物同时包含学生链接策略、受保护附件路径、来源 IP 转发、管理员用户搜索、队伍删除、持久登录和 KaTeX 标记。候选完整公开端点验收通过；最终替换后的补充并行复核因自动审批服务 429 限流未执行，但最终 Frontend 与 Nginx 的健康等待均已通过。
+- Alembic 保持 `20260830_0016 (head)`。部署前后数据聚合均为 `users=158`、`knowledge_documents=1110`、`knowledge_assets=1027`、`account_cleanup=0`；最近知识库同步保持 `succeeded|213|1020`，同步 Outbox 保持 `sent|1`。本轮未运行 migrate、未触发飞书同步、未携带登录态调用业务接口，也未写入 PostgreSQL 或 MinIO。
+
+### 回滚与剩余风险
+
+- 如需应用回滚，只需将标签恢复为 `persistent-login-ip-forwarding-20260830` 并定向替换 Frontend/Nginx；本次无 Schema 或数据变化，不需要 Alembic 或对象存储回滚。
+- `/tmp` 中备份/临时私钥与 Docker socket `user:pnx:rw-` ACL 风险不变；仍需部署方将恢复材料迁移至受控独立介质，并交互执行 `sudo setfacl -x u:pnx /var/run/docker.sock` 后复核 `root:docker 0660`。
+
+## 2026-08-30 已关闭问卷重新开启部署
+
+### 候选与发布
+
+- 发布固定标签为 `questionnaire-reopen-20260830`。Backend/Worker 镜像 ID 为 `sha256:f613c227e74b67b8c3f1257cb7dca2b2d80b2273168bad13df80ba923331e016`，Frontend 为 `sha256:35bed3d14aef08f213df7b14510c2623af5944d3639a3e2788175944a6d7bb75`；候选和运行容器均以 `appuser` 运行。
+- Backend 静态 OpenAPI 保持 114 条路径，并同时包含 `closed → open`、`intention.reopen`、队伍/账号/答疑删除和持久登录；Frontend 编译产物同时包含“重新开启”、来源 IP 转发、用户搜索、队伍删除、持久登录、知识库附件鉴权路径和 KaTeX 标记。
+- 先定向替换 Backend/Worker 并等待 healthy，再替换 Frontend/Nginx。PostgreSQL 与 MinIO 容器 ID 保持 `bfa750f66ab0…`、`331150f34f37…`，未重建容器、卷或网络；两个临时候选容器已在验收后删除，固定镜像保留。
+
+### 运行验收与数据边界
+
+- 六服务 healthy、重启 0；`/login`、live、ready、worker、`/nginx-health` 均为 200。`/admin/intentions`、`/intentions` 匿名为 307 `/login`，`/knowledge` 匿名为 307 `/login?next=%2Fknowledge`，问卷管理和学生 API 匿名为 401。
+- 本轮不运行 migrate，Alembic 保持 `20260830_0016 (head)`。部署前后数据完全一致：`users=158`；问卷、问题、选项、回答、选择关系为 `3/5/21/91/181`，状态为 `archived:2,open:1`；知识库文档/媒体为 `1110/1027`；账号清理 Outbox 为 0；最近同步与同步 Outbox 为 `succeeded|213|1020`、`sent|1`。
+- 验收未携带管理员 Session/Cookie 调用真实问卷状态接口，也未触发飞书同步、删除、上传、认证、邮件或其他业务写入。自 `2026-08-30T12:45:07Z` 起 Backend、Worker、Frontend、Nginx 日志无 Traceback、权限、连接、事务、外键或未处理异常。
+
+### 备份、回滚与剩余风险
+
+- 最近加密恢复材料 `/tmp/pnx-account-deployment-backups/pnx-backup-20260830T045545Z-daily.tar.gpg` 为 5,682,620 字节、0600，SHA-256 校验通过。本轮无 Schema 和数据变化，应用回滚只需恢复上一组 Backend/Worker 与 Frontend 固定镜像并定向替换服务，不需要 Alembic 或 MinIO 回滚。
+- 备份与临时私钥仍位于同机 `/tmp`，Docker socket 仍有 `user:pnx:rw-` 临时 ACL；部署方仍需迁移并分离保存恢复材料，交互撤销 ACL 后复核 `root:docker 0660`。
+
+## 2026-08-30 问卷三种范围邮件部署
+
+### 候选、备份与发布
+
+- 完整质量门为后端定向 48 项、完整 315 项、Ruff、171 个 Python 文件格式检查、120 个源文件严格 Mypy，以及前端定向 12 项、完整 25 文件/115 项 Vitest、ESLint、严格 TypeScript和 Next.js 生产构建，均通过；测试未连接真实 SMTP。
+- 固定标签为 `questionnaire-email-scopes-20260830`。Backend/Worker 候选与运行镜像均为 `sha256:af1d520399115abad815f84100c5e34c961a29003087d3088eccf54eb7106cbd`，Frontend 为 `sha256:8d4ba40349833834a713a6af4b5ea90c572343dd26e6ab58a9d78aeef75e75fe`；应用均以 `appuser` 运行并通过候选健康检查。
+- 最近 OpenPGP 每日备份 `pnx-backup-20260830T045545Z-daily.tar.gpg` 仍为 5,682,620 字节、0600 且校验有效；另生成部署前 PostgreSQL 17 自定义格式快照 `/tmp/pnx-training-before-questionnaire-email-scopes-20260830TbwXIV3Z.dump`，为 6,838,808 字节、0600，SHA-256 `4c363a8ccca0b2b0a484960fdb95ff2a55381e1ee91b6af3a2aa98dbbee5f473`，同版本 `pg_restore --list` 共 314 项。
+- 先替换 Backend/Worker 并等待 healthy，再替换 Frontend/Nginx。PostgreSQL、MinIO 容器 ID 保持 `bfa750f66ab0…`、`331150f34f37…`，未重建容器、卷或网络；本轮没有迁移，未运行 migrate。
+
+### 运行验收与数据边界
+
+- 六服务 healthy、重启 0；`/login`、live、ready、worker、`/nginx-health` 均为 200，`/admin/intentions` 与 `/intentions` 匿名为 307，管理/学生问卷 API 及匿名邮件 POST 为 401。
+- 运行 OpenAPI 共 115 条路径，邮件请求 `recipient_scope` 枚举为 `manual/direction/all`；运行 Frontend 编译产物包含“手动选择成员”“按技术组”“全部激活学生”，并保留重新开启、来源 IP 转发、用户搜索、队伍删除、持久登录、知识库附件和 KaTeX 等能力。
+- Alembic 保持 `20260830_0016 (head)`。部署前后数据完全一致：`users=160`；问卷、问题、选项、回答、选择关系为 `3/5/21/92/183`，状态为 `archived:2,open:1`；知识库文档/媒体为 `1110/1027`；最近同步为 `succeeded|213|1020`。Outbox 聚合没有变化，未新增 `intention_open_email` 或 `delete_account_object`。
+- 验收未携带管理员 Session/Cookie，匿名邮件 POST 在鉴权处返回 401；没有触发真实 SMTP、飞书同步、认证、删除、上传或其他业务写入。自 `2026-08-30T14:56:57Z` 起 Backend、Worker、Frontend、Nginx 日志错误关键词匹配均为 0。
+
+### 回滚与剩余风险
+
+- 本轮无 Schema 或数据变化。若需要应用回滚，将固定标签恢复为 `questionnaire-reopen-20260830`，按 Backend/Worker、Frontend/Nginx 相同顺序定向替换并重新验收；不需要也不得为应用回滚恢复 PostgreSQL 或 MinIO。
+- 加密备份、部署前快照及临时 GPG 私钥仍位于同机 `/tmp`，只适合作为短期恢复材料；Docker socket 临时 `user:pnx:rw-` ACL 风险不变，仍需部署方迁移并分离保存恢复材料、交互撤销 ACL 后复核 `root:docker 0660`。
+
+## 2026-08-31 管理端删除可见性部署
+
+### 备份、候选与迁移
+
+- 部署前每日备份 `pnx-backup-20260831T054111Z-daily` 已 OpenPGP 加密，归档 99,897,873 字节、0600，SHA-256 `06f7a4657cf53cabdb7c18fe59d1b16974b0d9ad8a31aa0701afc8fa1b1f525b`。内部校验通过，数据库 dump 8,157,669 字节且 PostgreSQL 17 `pg_restore --list` 为 314 项；MinIO 清单为 2,939 个对象/2,130,171,406 字节，本次增量 54 个/92,006,811 字节、删除 0。
+- 固定标签 `admin-content-visibility-20260831` 无缓存构建并完成静态及隔离健康验证。Backend/Worker 镜像为 `sha256:589290276cd2ab01b283dc227e3effffe9548df4235a8965fa2c2f3c97145772`，Frontend 为 `sha256:8d5ea4a60f04cbf7be44b22b438a1a5c60aef40a0ebf37cf6786ceec2fca116b`；均为非 root `appuser`，OpenAPI 115 条路径且两个 DELETE 返回 204。
+- 生产从 `20260830_0016` 事务性升级到 `20260831_0017`。两张表的 `deleted_at TIMESTAMPTZ` 和 `ck_*_deleted_requires_archived` 约束均存在；生产没有成功的 archive 模式内容删除审计，因此回填为 0，两条归档通知与一条归档作业继续作为手工归档留存记录。
+
+### 两阶段替换与运行验收
+
+- `.env` 固定到新标签后，先替换 Backend/Worker 并等待 healthy，再替换 Frontend/Nginx。PostgreSQL、MinIO 容器 ID 保持 `bfa750f66ab0…`、`331150f34f37…`，未重建容器、卷或网络；六服务最终 healthy、重启 0。
+- `/login`、`/health/live`、`/health/ready`、`/health/worker`、`/nginx-health` 和 Frontend 容器内部 `/health` 为 200；通知/作业管理页面匿名为 307，管理列表 API 与虚假 UUID DELETE 匿名为 401。运行镜像确认 OpenAPI、删除过滤、重复幂等和前端“学生和管理页面隐藏”文案。
+- 迁移前后用户 167、通知 2、作业 1、受众 117、提交/版本 1/2、提醒 3、文件 0、知识库文档/媒体 1327/1064，以及 Outbox `dead/pending/sent=23/1/400` 均一致；通知/作业删除标记均为 0。问卷五表从 `4/6/27/182/361` 变为 `4/6/27/183/364`，窗口内存在两条成功的外部问卷提交审计。
+- 部署和验收未携带真实 Session/Cookie，未调用真实内容 DELETE、问卷写入、飞书同步、SMTP、上传或其他业务写接口。Backend、Worker、Frontend、Nginx 整个新容器生命周期严重错误关键词计数均为 0。
+
+### 回滚、清理与遗留风险
+
+- 临时候选容器和备份兼容镜像已删除；固定候选、上一版固定镜像、加密备份与状态清单保留。若尚未产生 `deleted_at`，可按受控流程恢复上一版应用并降级；一旦产生删除标记，降级会丢失手工归档/删除归档区分，应优先前滚修复，不得只回滚应用。
+- 加密归档与临时 GPG 私钥仍同机位于 `/tmp`，必须迁往受控独立介质并分离保存。Docker socket 的 `user:pnx:rw-` ACL 撤销因 `sudo` 需要交互式密码未生效；部署方需执行 `sudo setfacl -x u:pnx /var/run/docker.sock`，再以 `getfacl -cp /var/run/docker.sock` 确认命名 ACL 已消失。
+
+## 2026-08-31 培训知识库目录跟随、目录文件下载与图片阅读部署
+
+### 候选与部署前备份
+
+- 旧 Backend 镜像中的部分源码为 0600，备份脚本以宿主降权 UID 启动对象导出时在读取 `security.py` 前失败；两次失败均发生在对象导出/归档前，没有修改 PostgreSQL 或 MinIO。`backend/Dockerfile` 现把非秘密源码、迁移和 Alembic 配置设为 0444/0555，只读但允许 `appuser` 与备份降权 UID 导入，不以 root 绕过权限。
+- 固定标签 `knowledge-directory-media-20260831` 无缓存构建并完成隔离验证。Backend/Worker 镜像为 `sha256:77f58286fe7434a970d9656f8a5801ce470af628745e992f513dffb69cb2796f`，Frontend 为 `sha256:f523e338e44c0788fb61c1f8378f73940f1bdc00d907a8a1ef770dfbe3883e65`；均以 `appuser` 运行，Backend 为单一 `0018` head、OpenAPI 115 条路径，Frontend 隔离 `/health` 为 200。
+- 使用修复候选生成 OpenPGP 每日备份 `pnx-backup-20260831T073443Z-daily`：归档 99,901,190 字节、0600、SHA-256 `a337e786920638b30224317155f76029f69afd25717df61b26e705d3167c3a00`。完整解密、内部逐文件校验和 PostgreSQL 17 的 314 项 `pg_restore --list` 均通过；数据库 dump 8,160,511 字节，MinIO 清单 2,939 个对象/2,130,171,406 字节，相对周基线增量 54 个/92,006,811 字节、删除 0。
+
+### 迁移、两阶段替换与运行验收
+
+- `.env` 保持 0600 并固定 `APP_IMAGE_TAG=knowledge-directory-media-20260831`。生产事务性应用 `20260831_0018`：112 个历史 `unsupported:file` 节点转为 `file:file`，全部保持 `asset_id=NULL`；可空 UUID 列、`knowledge_assets` 外键和索引均存在。
+- 先替换 Backend/Worker 并等待 healthy，再替换 Frontend/Nginx。PostgreSQL/MinIO 容器 ID 保持 `bfa750f66ab0…`、`331150f34f37…`，未重建容器、卷或网络；六服务 healthy、重启 0，生产 Alembic 为 `20260831_0018 (head)`。
+- `/login`、live、ready、worker、`/nginx-health` 与 Frontend 内部 `/health` 为 200；`/knowledge` 匿名为 307 到保留 `next` 的登录页，知识库目录 API 与虚假资源下载匿名均为 401。运行 Frontend 产物包含 `scrollIntoView`、图片预览关闭、不可下载状态、缩放光标和 `flex-wrap`；Backend 运行 OpenAPI 包含 `file` 与受保护资源路径。
+- 迁移前后全表行数哈希均为 `65b142a35e7e3a73dc49743a8978943d4910544312bde9951c0b3148ff4a585f`；用户 167、通知 2、作业 1、文件 0、提交/版本 1/2、知识库文档/资源/节点 1327/1064/1603、Outbox `dead/pending/sent=23/1/400` 均不变。四个应用容器严重错误关键词为 0，一次性容器为 0；部署未携带真实 Session/Cookie，也未触发飞书同步或其他业务写入。
+
+### 回滚与遗留事项
+
+- 旧应用不识别 `node_type=file`，不能只回滚镜像。若必须回退，优先前滚修复；受控回退应先保留新 Backend 执行 `alembic downgrade 20260831_0017`，确认目录文件节点转回 `unsupported` 并删除资源关联列后，再恢复 `admin-content-visibility-20260831` 镜像并按同序替换。若已成功同步，降级会断开节点资源关联但不删除 MinIO 对象，不得用部署前备份覆盖窗口内真实数据。
+- 历史 112 个文件节点当前没有资源关联，只有真实管理员在 `/admin/knowledge` 手动触发一次新的成功同步后才会出现下载按钮；失败同步继续不覆盖最近成功快照，本次部署没有冒充管理员触发同步。
+- 新归档、周基线、状态清单和临时 GPG 私钥仍同机位于 `/tmp`，只适合作为短期恢复材料，必须迁往受控独立介质并分离保存。Docker socket 仍有 `user:pnx:rw-` 临时 ACL，部署方需交互撤销并复核为基础 `root:docker 0660`。
+
+## 2026-08-31 知识库默认根层视图 Frontend 定向热修
+
+### 候选与发布保护
+
+- 本次只修正无有效 `?doc` 时的页面选文档与目录自动展开状态，不修改 Backend、API、迁移、同步器、MinIO 或数据库。定向 2 文件/16 项、完整前端 25 文件/120 项 Vitest、ESLint、严格 TypeScript 和主机生产构建通过。
+- Frontend 固定标签 `knowledge-root-view-20260831` 以 `--no-cache` 构建，镜像 ID 为 `sha256:9a76b96ca85d67a0364cf939fd5528bbfb42b6d4633d143b75a61ad2443b811f`；镜像内生产构建、`npm ci` 0 漏洞审计、非 root `appuser`、只读隔离容器和 `/health=200` 均通过。Backend 同名标签只指向当前 `sha256:77f58286fe7434a970d9656f8a5801ce470af628745e992f513dffb69cb2796f`，不替换运行容器。
+- 已再次复核 `/tmp/pnx-account-deployment-backups/pnx-backup-20260831T073443Z-daily.tar.gpg` 为 0600、99,901,190 字节，SHA-256 `a337e786920638b30224317155f76029f69afd25717df61b26e705d3167c3a00` 与完整验证记录一致。
+
+### 定向替换与运行验收
+
+- `.env` 固定为 `APP_IMAGE_TAG=knowledge-root-view-20260831`，仅以 `--no-deps --force-recreate` 替换 Frontend/Nginx。Backend、Worker、PostgreSQL、MinIO 容器 ID 分别保持 `44b69e5302fc…`、`af4151cd0f81…`、`bfa750f66ab0…`、`331150f34f37…`，没有重建容器、卷或网络。
+- 六服务 healthy、重启次数 0；`/login`、live、ready、worker、`/nginx-health` 和 Frontend 内部 `/health` 均为 200，`/knowledge` 匿名为 307 到 `/login?next=%2Fknowledge`，目录 API 和虚假资源下载匿名为 401。运行 Frontend 产物包含选文档空状态与 `scrollIntoView`，新 Frontend/Nginx 日志及同窗口 Backend/Worker 日志无异常。
+- Alembic 保持 `20260831_0018 (head)`；本次没有运行 migrate、使用真实登录态、触发飞书同步或调用业务写接口。应用回滚只需把标签恢复为 `knowledge-directory-media-20260831` 并定向替换 Frontend/Nginx，不需要数据库降级或 MinIO 回滚。
+
+### 遗留事项
+
+- 目录独立文件下载仍需真实管理员手动完成一次成功同步；本次未代替管理员执行。加密备份与临时 GPG 私钥仍同机位于 `/tmp`，Docker socket 的 `user:pnx:rw-` 临时 ACL 仍需部署方迁移/分离恢复材料并交互撤销。
+
+## 2026-08-31 知识库目录文件端点与图片序列修复部署
+
+### 证据、备份与候选
+
+- 生产只读诊断确认 17:04（Asia/Shanghai）最新同步为 `succeeded/217/1057`，Outbox `sent/1`；最新快照 16 个 `file` 节点全部 `asset_id=NULL`。同一令牌访问 `medias` 被飞书拒绝，访问 `files` 进入真实文件响应，确认是远端端点选择错误。
+- 后端定向 31 项、完整 322 项、Ruff/格式、受影响 4 文件严格 Mypy；前端定向 2 文件/17 项、完整 25 文件/121 项、ESLint、严格 TypeScript、主机与镜像生产构建均通过。
+- 新 OpenPGP 每日备份 `pnx-backup-20260831T102419Z-daily` 为 101,156,599 字节、0600，SHA-256 `e3a7ddf3ca640f8d825c3d763a0db938b3264fca21fced5894c216d8da8a1468`；外层 SHA-256、完整解密、内部逐文件校验和 PostgreSQL 17 的 316 行恢复目录检查通过。对象库存 2,939 个/2,130,171,406 字节，增量负载 54 个/92,006,811 字节、删除 0。
+- 固定候选 `knowledge-file-gallery-fix-20260831` 无缓存构建；Backend/Worker 镜像为 `sha256:2b1c9079e5dc9f2079acdb063cd7a0e2d88c52c68be045a346f180054d692141`，Frontend 为 `sha256:a5ad5927756819aeedbe4931b4921a60831d11fcaced9ea9530ded90f04446d3`。两者均为 `appuser`，Backend 单一 `0018` head及运行源码断言通过，Frontend 只读无网络隔离健康与画廊编译标记通过。
+
+### 两阶段替换与运行验收
+
+- `.env` 固定为新标签；先用 `--no-deps --force-recreate --wait` 替换 Backend/Worker，确认正确 `files` 端点和三项健康，再替换 Frontend/Nginx。PostgreSQL/MinIO 容器 ID 保持 `bfa750f66ab0…`、`331150f34f37…`，未重建容器、卷或网络。
+- 六服务 healthy、重启 0；`/login`、live、ready、worker、`/nginx-health`、Frontend 内部健康均为 200，知识库页面/API/虚假资源下载匿名为 307/401/401。运行 Frontend 产物包含 `flex-wrap`，部署窗口四个应用服务严重错误关键词为 0。
+- 本轮不运行 migrate，Alembic 保持 `20260831_0018 (head)`。部署前后 `users/runs/nodes/documents/assets/outbox=169/12/1836/1544/1064/430`，当前运行仍为 `succeeded/217/1057` 且目录文件 `16/0`，确认部署没有改写业务快照。
+
+### 最终验收边界与遗留事项
+
+- 旧成功快照不会原地改写。只有真实管理员在新版本 `/admin/knowledge` 再手动触发一次成功同步，16 个目录文件才会通过 `files` 端点本地化并获得节点资源关联；失败运行继续不得替换当前 217 篇成功快照。本部署未冒充管理员触发同步。
+- 应用回滚可恢复上一组 `knowledge-directory-media-20260831` Backend/Worker 与 `knowledge-root-view-20260831` Frontend，并按同序定向替换；本轮无 Schema 或数据变化，不需要数据库/MinIO 回滚。加密归档与临时 GPG 私钥仍同机位于 `/tmp`，Docker socket 命名 ACL 仍需部署方交互撤销。

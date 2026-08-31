@@ -83,6 +83,8 @@ PostgreSQL 不加入 `app_net`。`data_net` 的 internal 属性不会阻断 Work
 
 - Nginx 生成或传递 `X-Request-ID`，覆盖不合法的外部值。
 - `X-Forwarded-Proto`、`Host` 和真实 IP 只信任受控代理链。
+- 开发与生产 Nginx 都必须用 `proxy_set_header X-Forwarded-For $remote_addr` 覆盖客户端自带转发头，Backend 不得直接暴露；持久 Session 的精确 IP HMAC 只能使用该可信值。若增加上游负载均衡，必须先明确可信代理链并重新验证伪造转发头不能改变绑定来源。
+- Next.js Server Component 直连内部 Backend 时必须继续透传上述 Nginx 已覆盖的单值 `X-Forwarded-For` 与当前请求 Cookie；Frontend 不得发布宿主端口，缺失可信来源头时不得用容器地址或其他值补造。
 - `/api/v1` 默认请求体限制 2 MiB；文件数据只走 `/storage/`。
 - `/storage/` 单请求限制为 17 MiB，覆盖 16 MiB 分片及协议开销。
 - MinIO 预签名基于内部 `minio:9000` 生成；Nginx 去除 `/storage` 前缀时必须把上游 `Host` 固定恢复为 `minio:9000`，否则 SigV4 返回 `SignatureDoesNotMatch`。
@@ -112,6 +114,7 @@ minio
 - `depends_on` 的健康条件只用于启动顺序，应用本身必须对依赖暂不可用执行有限重试。
 - 镜像使用固定版本或 digest，不使用生产 `latest`。
 - 容器以非 root 用户运行，根文件系统尽量只读，只挂载必要目录。
+- 后端镜像中的非秘密应用源码、迁移和 Alembic 配置必须不可写但可读/可遍历；除常驻 `appuser` 外，还要允许备份脚本以宿主降权 UID 启动一次性对象导出进程，不得靠 root 绕过源码权限。
 - 设置 CPU、内存和日志轮换限制，防止单服务耗尽宿主机。
 
 ## 环境变量
@@ -221,6 +224,7 @@ minio
 5. 应用故障时回退镜像；数据库使用迁移的前滚修复或已测试降级。禁止在未评估数据写入后直接恢复旧数据库备份。
 
 对于破坏性结构变化，采用展开/收缩发布：先兼容旧字段，再迁移数据和应用，最后在后续版本删除旧字段。
+`20260830_0016` 只增加可空 Session IP 绑定列，可先迁移数据库再发布应用。若已创建持久会话，回滚旧应用会停止校验该列并形成安全放宽；应优先前滚修复，必须回滚时先评估并撤销 `ip_binding_hash IS NOT NULL` 的活动会话，再决定是否降级删除该列。
 
 ## 容量基线
 
