@@ -99,6 +99,10 @@ Set-Location backend
 
 登录页位于 `http://127.0.0.1:3000/login`，后端存活接口位于 `http://127.0.0.1:8000/api/v1/health/live`。未启动 PostgreSQL 时 `/api/v1/health/ready` 应安全返回 503 `DEPENDENCY_UNAVAILABLE`；Worker、MinIO、Nginx 和真实迁移不属于裸预览范围。
 
+## 许可证
+
+本项目采用 [MIT License](LICENSE)，版权归 HKUST(GZ) RoboMaster PNX Team 所有。
+
 ## 权威文档
 
 1. [项目总览](.agents/docs/00-project-overview.md)
