@@ -52,6 +52,10 @@ class Assignment(TimestampRevisionMixin, Base):
             "status <> 'archived' OR archived_at IS NOT NULL",
             name="archived_at_present",
         ),
+        CheckConstraint(
+            "deleted_at IS NULL OR status = 'archived'",
+            name="deleted_requires_archived",
+        ),
         Index("ix_assignments_status_publish_at", "status", "publish_at"),
         Index("ix_assignments_status_deadline", "status", "deadline"),
     )
@@ -87,6 +91,7 @@ class Assignment(TimestampRevisionMixin, Base):
     )
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AssignmentCohort(Base):

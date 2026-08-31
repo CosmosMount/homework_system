@@ -51,6 +51,7 @@ def make_assignment(
         closed_at=closed_at,
         archived_at=None,
         created_at=now,
+        deleted_at=None,
         updated_at=now,
         revision=1,
     )
@@ -325,6 +326,37 @@ async def test_student_assignment_queries_exclude_archived_resources() -> None:
 
 
 @pytest.mark.asyncio
+async def test_repository_hides_deleted_assignments_from_regular_reads() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    repository = AssignmentRepository(cast(AsyncSession, session))
+    assignment_id = uuid4()
+
+    await repository.get_by_id(assignment_id)
+    detail_sql = str(session.scalar.await_args.args[0])
+    assert "assignments.deleted_at IS NULL" in detail_sql
+
+    session.scalar.reset_mock()
+    await repository.get_by_id(assignment_id, include_deleted=True)
+    delete_sql = str(session.scalar.await_args.args[0])
+    assert "assignments.deleted_at IS NULL" not in delete_sql
+
+    rows = Mock()
+    rows.all.return_value = []
+    session.scalar.return_value = 0
+    session.scalars.return_value = rows
+    await repository.list_admin(
+        page=1,
+        page_size=20,
+        status=None,
+        query=None,
+    )
+    count_sql = str(session.scalar.await_args.args[0])
+    items_sql = str(session.scalars.await_args.args[0])
+    assert "assignments.deleted_at IS NULL" in count_sql
+    assert "assignments.deleted_at IS NULL" in items_sql
+
+
+@pytest.mark.asyncio
 async def test_remove_draft_assignment_deletes_record_and_active_schedule() -> None:
     session = AsyncMock(spec=AsyncSession)
     service = AssignmentService(cast(AsyncSession, session))
@@ -390,6 +422,7 @@ async def test_remove_published_assignment_archives_and_hides_excellent_work_fro
     )
 
     assert assignment.status == "archived"
+    assert assignment.deleted_at == assignment.archived_at
     repository.delete.assert_not_awaited()
     session.commit.assert_awaited_once()
 
@@ -407,7 +440,7 @@ async def test_remove_published_assignment_archives_and_hides_excellent_work_fro
 
 
 @pytest.mark.asyncio
-async def test_remove_archived_assignment_is_idempotent() -> None:
+async def test_remove_manually_archived_assignment_sets_deleted_marker() -> None:
     session = AsyncMock(spec=AsyncSession)
     service = AssignmentService(cast(AsyncSession, session))
     assignment = make_assignment(
@@ -420,10 +453,52 @@ async def test_remove_archived_assignment_is_idempotent() -> None:
         get_by_id=AsyncMock(return_value=assignment),
         delete=AsyncMock(),
     )
-    outbox = SimpleNamespace(delete_active_by_event_key=AsyncMock())
     audit_repository = Mock()
     service._assignments = cast(AssignmentRepository, repository)
-    service._outbox = cast(OutboxRepository, outbox)
+    service._audit = audit_repository
+
+    await service.remove(
+        assignment.id,
+        audit=AssignmentAuditContext(
+            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+            request_id="archived-delete-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    repository.get_by_id.assert_awaited_once_with(
+        assignment.id, for_update=True, include_deleted=True
+    )
+    repository.delete.assert_not_awaited()
+    assert assignment.deleted_at is not None
+    assert assignment.updated_by == admin.id
+    assert assignment.revision == 2
+    audit = audit_repository.add.call_args.args[0]
+    assert audit.action == "assignment.delete"
+    assert audit.change_summary == {
+        "previous_status": "archived",
+        "deletion_mode": "archive",
+    }
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_remove_deleted_assignment_is_idempotent() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    service = AssignmentService(cast(AsyncSession, session))
+    assignment = make_assignment(
+        status="archived",
+        deadline=datetime.now(UTC) + timedelta(days=1),
+    )
+    assignment.archived_at = datetime.now(UTC)
+    assignment.deleted_at = assignment.archived_at
+    admin = cast(User, SimpleNamespace(id=uuid4()))
+    repository = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=assignment),
+        delete=AsyncMock(),
+    )
+    audit_repository = Mock()
+    service._assignments = cast(AssignmentRepository, repository)
     service._audit = audit_repository
 
     await service.remove(
@@ -435,8 +510,9 @@ async def test_remove_archived_assignment_is_idempotent() -> None:
         ),
     )
 
-    repository.get_by_id.assert_awaited_once_with(assignment.id, for_update=True)
+    repository.get_by_id.assert_awaited_once_with(
+        assignment.id, for_update=True, include_deleted=True
+    )
     repository.delete.assert_not_awaited()
-    outbox.delete_active_by_event_key.assert_not_awaited()
     audit_repository.add.assert_not_called()
     session.commit.assert_awaited_once()

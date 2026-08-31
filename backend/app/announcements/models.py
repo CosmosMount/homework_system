@@ -43,6 +43,10 @@ class Announcement(TimestampRevisionMixin, Base):
             "status <> 'archived' OR archived_at IS NOT NULL",
             name="archived_at_present",
         ),
+        CheckConstraint(
+            "deleted_at IS NULL OR status = 'archived'",
+            name="deleted_requires_archived",
+        ),
         Index("ix_announcements_status_published_at", "status", "published_at"),
         Index("ix_announcements_status_publish_at", "status", "publish_at"),
     )
@@ -74,6 +78,7 @@ class Announcement(TimestampRevisionMixin, Base):
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AnnouncementCohort(Base):

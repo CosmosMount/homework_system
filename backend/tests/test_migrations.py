@@ -13,7 +13,7 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260830_0016"]
+    assert script.get_heads() == ["20260831_0017"]
 
 
 def test_persistent_login_migration_is_reversible_and_follows_account_deletion() -> None:
@@ -27,6 +27,30 @@ def test_persistent_login_migration_is_reversible_and_follows_account_deletion()
     assert 'down_revision: str | None = "20260829_0015"' in source
     assert 'sa.Column("ip_binding_hash", sa.String(length=64), nullable=True)' in source
     assert 'op.drop_column("sessions", "ip_binding_hash")' in source
+
+
+def test_admin_content_deleted_visibility_migration_has_safe_contract() -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+    migration_path = (
+        backend_root
+        / "migrations"
+        / "versions"
+        / "20260831_0017_admin_content_deleted_visibility.py"
+    )
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260831_0017"' in source
+    assert 'down_revision: str | None = "20260830_0016"' in source
+    assert source.count('sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True)') == 2
+    assert "announcement.delete" in source
+    assert "assignment.delete" in source
+    assert "MIN(created_at) AS deleted_at" in source
+    assert "change_summary ->> 'deletion_mode' = 'archive'" in source
+    assert source.count('"deleted_requires_archived"') == 4
+    assert source.count('op.drop_column("') >= 2
+    assert source.index("op.drop_constraint") < source.index(
+        'op.drop_column("assignments", "deleted_at")'
+    )
 
 
 def test_account_activity_migration_has_reversible_static_contract() -> None:

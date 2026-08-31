@@ -73,8 +73,11 @@ class AssignmentRepository:
         assignment_id: UUID,
         *,
         for_update: bool = False,
+        include_deleted: bool = False,
     ) -> Assignment | None:
         statement = select(Assignment).where(Assignment.id == assignment_id)
+        if not include_deleted:
+            statement = statement.where(Assignment.deleted_at.is_(None))
         if for_update:
             statement = statement.with_for_update()
         result: Assignment | None = await self._session.scalar(statement)
@@ -418,7 +421,7 @@ class AssignmentRepository:
         status: str | None,
         query: str | None,
     ) -> tuple[list[Assignment], int]:
-        filters: list[ColumnElement[bool]] = []
+        filters: list[ColumnElement[bool]] = [Assignment.deleted_at.is_(None)]
         if status is not None:
             filters.append(Assignment.status == status)
         if query:

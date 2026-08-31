@@ -187,9 +187,9 @@ export function AnnouncementEditor({
       return;
     }
     const prompt =
-      announcement.status === "published"
-        ? "确认删除通知？通知会立即从学生列表和详情隐藏，历史提醒与审计记录继续保留。"
-        : "确认永久删除这条未发布通知？定时发布会取消，已绑定附件将进入孤立文件清理流程。";
+      announcement.status === "draft" || announcement.status === "scheduled"
+        ? "确认永久删除这条未发布通知？定时发布会取消，已绑定附件将进入孤立文件清理流程。"
+        : "确认删除通知？通知会立即从学生和管理页面隐藏，历史提醒与审计记录继续保留。";
     if (!window.confirm(prompt)) return;
     setPending(true);
     setMessage(null);
@@ -419,8 +419,9 @@ export function AnnouncementEditor({
           </section>
         ) : null}
 
-        {editable ? (
-          <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap gap-3">
+          {editable ? (
+            <>
             <button className={buttonClassName} disabled={pending} type="submit">
               {pending ? "处理中…" : "保存草稿"}
             </button>
@@ -442,6 +443,8 @@ export function AnnouncementEditor({
                 保存并发送更新提醒
               </button>
             ) : null}
+            </>
+          ) : null}
             {announcement ? (
               <button
                 className="min-h-11 border border-[var(--color-danger)] px-5 text-[var(--color-danger)] disabled:opacity-55"
@@ -453,7 +456,6 @@ export function AnnouncementEditor({
               </button>
             ) : null}
           </div>
-        ) : null}
       </form>
 
       <aside className="space-y-5">

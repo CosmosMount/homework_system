@@ -197,9 +197,44 @@ describe("announcement UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "删除通知" }));
 
     await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledOnce());
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("学生列表和详情隐藏"));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("学生和管理页面隐藏"));
     expect(csrfFetchMock).toHaveBeenCalledWith(
       "/admin/announcements/announcement-1",
+      { method: "DELETE" },
+    );
+    expect(replaceMock).toHaveBeenCalledWith("/admin/announcements");
+  });
+  it("allows a manually archived announcement to be deleted", async () => {
+    const archived: AnnouncementAdmin = {
+      ...announcement("announcement-archived", "已归档通知", "archived"),
+      published_at: "2026-08-24T00:00:00Z",
+      archived_at: "2026-08-25T00:00:00Z",
+    };
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    csrfFetchMock.mockResolvedValue(undefined);
+
+    render(
+      <AnnouncementEditor
+        directions={[]}
+        initialAnnouncement={archived}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "删除通知" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存草稿" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "保存并立即发布" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "保存并发送更新提醒" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "删除通知" }));
+
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledOnce());
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("学生和管理页面隐藏"));
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/admin/announcements/announcement-archived",
       { method: "DELETE" },
     );
     expect(replaceMock).toHaveBeenCalledWith("/admin/announcements");

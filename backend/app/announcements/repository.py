@@ -30,8 +30,11 @@ class AnnouncementRepository:
         announcement_id: UUID,
         *,
         for_update: bool = False,
+        include_deleted: bool = False,
     ) -> Announcement | None:
         statement = select(Announcement).where(Announcement.id == announcement_id)
+        if not include_deleted:
+            statement = statement.where(Announcement.deleted_at.is_(None))
         if for_update:
             statement = statement.with_for_update()
         result: Announcement | None = await self._session.scalar(statement)
@@ -222,7 +225,7 @@ class AnnouncementRepository:
         status: str | None,
         query: str | None,
     ) -> tuple[list[Announcement], int]:
-        filters: list[ColumnElement[bool]] = []
+        filters: list[ColumnElement[bool]] = [Announcement.deleted_at.is_(None)]
         if status is not None:
             filters.append(Announcement.status == status)
         if query:

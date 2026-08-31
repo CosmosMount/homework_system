@@ -52,6 +52,7 @@ def make_announcement(
         updated_by=actor_id,
         archived_at=None,
         created_at=now,
+        deleted_at=None,
         updated_at=now,
         revision=1,
     )
@@ -425,6 +426,37 @@ async def test_archive_refreshes_server_updated_fields_after_commit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_repository_hides_deleted_announcements_from_regular_reads() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    repository = AnnouncementRepository(cast(AsyncSession, session))
+    announcement_id = uuid4()
+
+    await repository.get_by_id(announcement_id)
+    detail_sql = str(session.scalar.await_args.args[0])
+    assert "announcements.deleted_at IS NULL" in detail_sql
+
+    session.scalar.reset_mock()
+    await repository.get_by_id(announcement_id, include_deleted=True)
+    delete_sql = str(session.scalar.await_args.args[0])
+    assert "announcements.deleted_at IS NULL" not in delete_sql
+
+    rows = Mock()
+    rows.all.return_value = []
+    session.scalar.return_value = 0
+    session.scalars.return_value = rows
+    await repository.list_for_admin(
+        page=1,
+        page_size=20,
+        status=None,
+        query=None,
+    )
+    count_sql = str(session.scalar.await_args.args[0])
+    items_sql = str(session.scalars.await_args.args[0])
+    assert "announcements.deleted_at IS NULL" in count_sql
+    assert "announcements.deleted_at IS NULL" in items_sql
+
+
+@pytest.mark.asyncio
 async def test_remove_draft_deletes_record_and_active_schedule_in_one_commit() -> None:
     session = AsyncMock(spec=AsyncSession)
     service = AnnouncementService(cast(AsyncSession, session))
@@ -452,7 +484,9 @@ async def test_remove_draft_deletes_record_and_active_schedule_in_one_commit() -
         ),
     )
 
-    repository.get_by_id.assert_awaited_once_with(announcement.id, for_update=True)
+    repository.get_by_id.assert_awaited_once_with(
+        announcement.id, for_update=True, include_deleted=True
+    )
     outbox.delete_active_by_event_key.assert_awaited_once_with(
         f"announcement:{announcement.id}:publish"
     )
@@ -494,6 +528,7 @@ async def test_remove_published_archives_and_student_detail_becomes_not_found() 
     )
 
     assert announcement.status == "archived"
+    assert announcement.deleted_at == announcement.archived_at
     assert unread[0].read_at == announcement.archived_at
     repository.delete.assert_not_awaited()
     session.commit.assert_awaited_once()
@@ -507,7 +542,7 @@ async def test_remove_published_archives_and_student_detail_becomes_not_found() 
 
 
 @pytest.mark.asyncio
-async def test_remove_archived_announcement_is_idempotent() -> None:
+async def test_remove_manually_archived_announcement_sets_deleted_marker() -> None:
     session = AsyncMock(spec=AsyncSession)
     service = AnnouncementService(cast(AsyncSession, session))
     announcement = make_announcement(all_students=True)
@@ -519,10 +554,51 @@ async def test_remove_archived_announcement_is_idempotent() -> None:
         get_by_id=AsyncMock(return_value=announcement),
         delete=AsyncMock(),
     )
-    outbox = SimpleNamespace(delete_active_by_event_key=AsyncMock())
     audit_repository = Mock()
     service._announcements = cast(AnnouncementRepository, repository)
-    service._outbox = cast(OutboxRepository, outbox)
+    service._audit = audit_repository
+
+    await service.remove(
+        announcement.id,
+        audit=AnnouncementAuditContext(
+            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+            request_id="archived-delete-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    repository.get_by_id.assert_awaited_once_with(
+        announcement.id, for_update=True, include_deleted=True
+    )
+    repository.delete.assert_not_awaited()
+    assert announcement.deleted_at is not None
+    assert announcement.updated_by == admin.id
+    assert announcement.revision == 2
+    audit = audit_repository.add.call_args.args[0]
+    assert audit.action == "announcement.delete"
+    assert audit.change_summary == {
+        "previous_status": "archived",
+        "deletion_mode": "archive",
+    }
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_remove_deleted_announcement_is_idempotent() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    service = AnnouncementService(cast(AsyncSession, session))
+    announcement = make_announcement(all_students=True)
+    announcement.status = "archived"
+    announcement.archived_at = datetime.now(UTC)
+    announcement.deleted_at = announcement.archived_at
+    admin = make_student(cohort_id=None, direction_id=None)
+    admin.role = "admin"
+    repository = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=announcement),
+        delete=AsyncMock(),
+    )
+    audit_repository = Mock()
+    service._announcements = cast(AnnouncementRepository, repository)
     service._audit = audit_repository
 
     await service.remove(
@@ -534,8 +610,9 @@ async def test_remove_archived_announcement_is_idempotent() -> None:
         ),
     )
 
-    repository.get_by_id.assert_awaited_once_with(announcement.id, for_update=True)
+    repository.get_by_id.assert_awaited_once_with(
+        announcement.id, for_update=True, include_deleted=True
+    )
     repository.delete.assert_not_awaited()
-    outbox.delete_active_by_event_key.assert_not_awaited()
     audit_repository.add.assert_not_called()
     session.commit.assert_awaited_once()

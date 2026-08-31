@@ -617,6 +617,8 @@ class AssignmentService:
         now = self._clock()
         assignment.status = "archived"
         assignment.archived_at = now
+        if deletion_mode is not None:
+            assignment.deleted_at = now
         assignment.closed_at = assignment.closed_at or now
         assignment.updated_by = audit.actor.user.id
         assignment.revision += 1
@@ -664,14 +666,35 @@ class AssignmentService:
         *,
         audit: AssignmentAuditContext,
     ) -> None:
-        assignment = await self._assignments.get_by_id(assignment_id, for_update=True)
+        assignment = await self._assignments.get_by_id(
+            assignment_id,
+            for_update=True,
+            include_deleted=True,
+        )
         if assignment is None:
             await self._session.rollback()
             raise self._not_found()
-        if assignment.status == "archived":
+        if assignment.deleted_at is not None:
             await self._session.commit()
             return
-        if assignment.status == "draft":
+        if assignment.status == "archived":
+            now = self._clock()
+            assignment.deleted_at = now
+            assignment.updated_by = audit.actor.user.id
+            assignment.revision += 1
+            self._add_audit(
+                actor_user_id=audit.actor.user.id,
+                action="assignment.delete",
+                assignment_id=assignment.id,
+                request_id=audit.request_id,
+                ip_prefix=audit.ip_prefix,
+                change_summary={
+                    "previous_status": "archived",
+                    "deletion_mode": "archive",
+                },
+                now=now,
+            )
+        elif assignment.status == "draft":
             now = self._clock()
             await self._outbox.delete_active_by_event_key(f"assignment:{assignment.id}:publish")
             await self._assignments.delete(assignment)

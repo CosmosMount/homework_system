@@ -657,6 +657,8 @@ class AnnouncementService:
         now = self._clock()
         announcement.status = "archived"
         announcement.archived_at = now
+        if deletion_mode is not None:
+            announcement.deleted_at = now
         announcement.updated_by = audit.actor.user.id
         announcement.revision += 1
         unread_notifications = await self._notifications.unread_for_target(
@@ -716,14 +718,32 @@ class AnnouncementService:
         announcement = await self._announcements.get_by_id(
             announcement_id,
             for_update=True,
+            include_deleted=True,
         )
         if announcement is None:
             await self._session.rollback()
             raise self._not_found()
-        if announcement.status == "archived":
+        if announcement.deleted_at is not None:
             await self._session.commit()
             return
-        if announcement.status in {"draft", "scheduled"}:
+        if announcement.status == "archived":
+            now = self._clock()
+            announcement.deleted_at = now
+            announcement.updated_by = audit.actor.user.id
+            announcement.revision += 1
+            self._add_audit(
+                actor_user_id=audit.actor.user.id,
+                action="announcement.delete",
+                announcement_id=announcement.id,
+                request_id=audit.request_id,
+                ip_prefix=audit.ip_prefix,
+                change_summary={
+                    "previous_status": "archived",
+                    "deletion_mode": "archive",
+                },
+                now=now,
+            )
+        elif announcement.status in {"draft", "scheduled"}:
             previous_status = announcement.status
             now = self._clock()
             await self._outbox.delete_active_by_event_key(f"announcement:{announcement.id}:publish")
