@@ -396,11 +396,13 @@ describe("administrator questionnaire panel", () => {
       "生成二维码",
       "查看统计",
       "查看提交名单",
+      "查看内容",
+      "编辑问卷",
       "删除问卷",
     ]) {
-      expect(
-        within(commandGroup).getByRole("button", { name }),
-      ).toBeInTheDocument();
+      const command = within(commandGroup).getByRole("button", { name });
+      expect(command).toBeInTheDocument();
+      expect(command).toHaveClass("shrink-0", "whitespace-nowrap");
     }
   });
 

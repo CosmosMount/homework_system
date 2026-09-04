@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 
 import {
   buttonClassName,
@@ -73,11 +73,13 @@ function makeEditDraft(detail: AdminIntentionSurveyDetail): EditDraft {
 }
 
 export function IntentionAdminDetail({
+  children,
   directions,
   disabled,
   onUpdated,
   survey,
 }: Readonly<{
+  children: ReactNode;
   directions: Direction[];
   disabled: boolean;
   onUpdated: (survey: AdminIntentionSurveyDetail) => void;
@@ -229,7 +231,12 @@ export function IntentionAdminDetail({
 
   return (
     <div className="mt-5">
-      <div className="flex flex-wrap gap-2">
+      <div
+        aria-label={`问卷“${survey.title}”操作`}
+        className="flex flex-wrap gap-2 lg:flex-nowrap"
+        role="group"
+      >
+        {children}
         <button
           className={commandButtonClassName}
           disabled={busy}

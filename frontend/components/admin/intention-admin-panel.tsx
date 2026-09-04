@@ -533,10 +533,15 @@ export function IntentionAdminPanel({
                 </span>
               </div>
 
-              <div
-                aria-label={`问卷“${survey.title}”操作`}
-                className="mt-5 flex flex-wrap gap-2 lg:flex-nowrap"
-                role="group"
+              <IntentionAdminDetail
+                directions={directions}
+                disabled={pending}
+                onUpdated={(updated) =>
+                  setSurveys((current) =>
+                    current.map((item) => (item.id === updated.id ? updated : item)),
+                  )
+                }
+                survey={survey}
               >
                 {survey.status === "draft" ? (
                   <button
@@ -612,18 +617,7 @@ export function IntentionAdminPanel({
                 >
                   删除问卷
                 </button>
-              </div>
-
-              <IntentionAdminDetail
-                directions={directions}
-                disabled={pending}
-                onUpdated={(updated) =>
-                  setSurveys((current) =>
-                    current.map((item) => (item.id === updated.id ? updated : item)),
-                  )
-                }
-                survey={survey}
-              />
+              </IntentionAdminDetail>
 
               {directionAssignmentAvailable ? (
                 <IntentionDirectionAssigner
