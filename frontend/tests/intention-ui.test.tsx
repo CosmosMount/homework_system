@@ -383,6 +383,27 @@ describe("administrator questionnaire panel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("keeps all questionnaire commands on one row at the desktop breakpoint", () => {
+    const survey = adminSurvey({ status: "open" });
+    render(<IntentionAdminPanel initialSurveys={[survey]} />);
+
+    const commandGroup = screen.getByRole("group", {
+      name: `问卷“${survey.title}”操作`,
+    });
+    expect(commandGroup).toHaveClass("flex-wrap", "lg:flex-nowrap");
+    for (const name of [
+      "关闭问卷",
+      "生成二维码",
+      "查看统计",
+      "查看提交名单",
+      "删除问卷",
+    ]) {
+      expect(
+        within(commandGroup).getByRole("button", { name }),
+      ).toBeInTheDocument();
+    }
+  });
+
   it("keeps a questionnaire when permanent deletion is cancelled", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<IntentionAdminPanel initialSurveys={[adminSurvey()]} />);

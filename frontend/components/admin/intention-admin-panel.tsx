@@ -533,7 +533,11 @@ export function IntentionAdminPanel({
                 </span>
               </div>
 
-              <div className="mt-5 flex flex-wrap gap-2">
+              <div
+                aria-label={`问卷“${survey.title}”操作`}
+                className="mt-5 flex flex-wrap gap-2 lg:flex-nowrap"
+                role="group"
+              >
                 {survey.status === "draft" ? (
                   <button
                     className={commandButtonClassName}
@@ -601,7 +605,7 @@ export function IntentionAdminPanel({
                   查看提交名单
                 </button>
                 <button
-                  className="min-h-9 border border-[var(--color-danger)] px-3 text-sm text-[var(--color-danger)] disabled:opacity-55"
+                  className="min-h-9 shrink-0 border border-[var(--color-danger)] px-3 text-sm whitespace-nowrap text-[var(--color-danger)] disabled:opacity-55"
                   disabled={pending}
                   onClick={() => removeSurvey(survey)}
                   type="button"
