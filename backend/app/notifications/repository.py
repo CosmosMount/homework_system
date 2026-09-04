@@ -100,6 +100,20 @@ class OutboxRepository:
             )
         )
 
+    async def delete_active_by_event_key_prefix(
+        self,
+        event_key_prefix: str,
+        *,
+        job_type: str,
+    ) -> None:
+        await self._session.execute(
+            delete(OutboxJob).where(
+                OutboxJob.job_type == job_type,
+                OutboxJob.event_key.startswith(event_key_prefix, autoescape=True),
+                OutboxJob.status.in_(("pending", "processing", "retry")),
+            )
+        )
+
     async def list_jobs(
         self,
         *,

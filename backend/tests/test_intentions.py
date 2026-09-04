@@ -655,6 +655,154 @@ async def test_opened_questionnaire_update_rolls_back_when_commit_fails() -> Non
 
 
 @pytest.mark.asyncio
+async def test_admin_permanently_deletes_questionnaire_and_active_mail_in_one_commit() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, status="open")
+    service, session = make_service(now)
+    delete_response_options = AsyncMock()
+    delete_survey = AsyncMock()
+    get_survey = AsyncMock(return_value=survey)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=get_survey,
+            delete_response_options_for_survey=delete_response_options,
+            delete_survey=delete_survey,
+        ),
+    )
+    delete_active_mail = AsyncMock()
+    service._outbox = cast(
+        OutboxRepository,
+        SimpleNamespace(delete_active_by_event_key_prefix=delete_active_mail),
+    )
+
+    await service.remove(
+        survey.id,
+        audit_context=make_audit_context("admin"),
+    )
+
+    get_survey.assert_awaited_once_with(survey.id, for_update=True)
+    delete_active_mail.assert_awaited_once_with(
+        f"intention:{survey.id}:",
+        job_type="intention_open_email",
+    )
+    delete_response_options.assert_awaited_once_with(survey.id)
+    delete_survey.assert_awaited_once_with(survey)
+    session.commit.assert_awaited_once()
+    session.rollback.assert_not_awaited()
+    audit = cast(Mock, service._audit.add).call_args.args[0]
+    assert audit.action == "intention.delete"
+    assert audit.target_id == survey.id
+    assert audit.change_summary == {
+        "previous_status": "open",
+        "deletion_mode": "physical",
+    }
+    assert survey.title not in repr(audit.change_summary)
+
+
+@pytest.mark.asyncio
+async def test_questionnaire_delete_returns_not_found_without_partial_cleanup() -> None:
+    now = datetime.now(UTC)
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(get_survey=AsyncMock(return_value=None)),
+    )
+    delete_active_mail = AsyncMock()
+    service._outbox = cast(
+        OutboxRepository,
+        SimpleNamespace(delete_active_by_event_key_prefix=delete_active_mail),
+    )
+
+    with pytest.raises(ApplicationError) as missing:
+        await service.remove(
+            uuid4(),
+            audit_context=make_audit_context("admin"),
+        )
+
+    assert missing.value.status_code == 404
+    assert missing.value.code == "RESOURCE_NOT_FOUND"
+    delete_active_mail.assert_not_awaited()
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+    cast(Mock, service._audit.add).assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "context",
+    [
+        make_context("student"),
+        make_context("admin", student_view=True),
+    ],
+)
+async def test_questionnaire_delete_rejects_student_and_admin_student_view(
+    context: AuthenticatedContext,
+) -> None:
+    now = datetime.now(UTC)
+    service, session = make_service(now)
+
+    with pytest.raises(ApplicationError) as forbidden:
+        await service.remove(
+            uuid4(),
+            audit_context=IntentionAuditContext(
+                actor=context,
+                request_id="delete-forbidden",
+                ip_prefix="127.0.0.0/24",
+            ),
+        )
+
+    assert forbidden.value.status_code == 403
+    session.rollback.assert_not_awaited()
+    session.commit.assert_not_awaited()
+    cast(Mock, service._audit.add).assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_questionnaire_delete_rolls_back_when_commit_fails() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, status="archived")
+    service, session = make_service(now)
+    session.commit.side_effect = RuntimeError("database unavailable")
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            delete_response_options_for_survey=AsyncMock(),
+            delete_survey=AsyncMock(),
+        ),
+    )
+    service._outbox = cast(
+        OutboxRepository,
+        SimpleNamespace(delete_active_by_event_key_prefix=AsyncMock()),
+    )
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await service.remove(
+            survey.id,
+            audit_context=make_audit_context("admin"),
+        )
+
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_repository_deletes_response_options_before_questionnaire_cascade() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    repository = IntentionRepository(cast(AsyncSession, session))
+    survey_id = uuid4()
+    survey = make_survey(datetime.now(UTC))
+
+    await repository.delete_response_options_for_survey(survey_id)
+    statement = str(session.execute.await_args.args[0])
+    assert "DELETE FROM intention_response_options" in statement
+    assert "intention_responses.survey_id" in statement
+
+    await repository.delete_survey(survey)
+    session.delete.assert_awaited_once_with(survey)
+
+
+@pytest.mark.asyncio
 async def test_closed_questionnaire_can_reopen_while_archived_remains_terminal() -> None:
     now = datetime.now(UTC)
     direction_id = uuid4()

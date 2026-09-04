@@ -218,6 +218,25 @@ class OutboxProcessor:
                 return
             apply_token_superseded(job)
 
+    async def _deliver_intention_email_if_active(
+        self,
+        job: OutboxJob,
+        secret_payload: dict[str, object],
+    ) -> bool:
+        async with self._factory() as session, session.begin():
+            active_job = await OutboxRepository(session).get_by_id(job.id, for_update=True)
+            if active_job is None or active_job.status != "processing":
+                return False
+            await self._sender.send(job, secret_payload)
+            active_job.status = "sent"
+            active_job.sent_at = datetime.now(UTC)
+            active_job.attempt_count += 1
+            active_job.locked_by = None
+            active_job.locked_at = None
+            active_job.last_error_code = None
+            active_job.last_error_summary = None
+            return True
+
     async def _delete_account_object(self, job: OutboxJob) -> None:
         object_key = job.payload.get("object_key")
         if not isinstance(object_key, str) or not object_key:
@@ -255,6 +274,14 @@ class OutboxProcessor:
                     await self._knowledge_sync.synchronize(run_id)
                 elif job.job_type == "delete_account_object":
                     await self._delete_account_object(job)
+                elif job.job_type == "intention_open_email":
+                    secret_payload = self._secret_payload(job)
+                    if not await self._deliver_intention_email_if_active(
+                        job,
+                        secret_payload,
+                    ):
+                        continue
+                    continue
                 else:
                     if not await self._token_email_is_deliverable(job, datetime.now(UTC)):
                         await self._mark_token_superseded(job.id)

@@ -129,6 +129,7 @@ def test_questionnaire_openapi_exposes_questions_limits_stats_and_admin_roster()
     assert detail_path["patch"]["responses"]["200"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/AdminIntentionSurveyDetail"
     }
+    assert "204" in detail_path["delete"]["responses"]
 
     assert "/api/v1/admin/intentions/{survey_id}/responses" in paths
     roster_operation = paths["/api/v1/admin/intentions/{survey_id}/responses"]["get"]

@@ -216,6 +216,51 @@ async def test_worker_sends_current_token_email_once() -> None:
     assert processor.failed_ids == []
 
 
+class IntentionEmailProcessorHarness(OutboxProcessor):
+    def __init__(self, job: OutboxJob, *, active: bool) -> None:
+        self._job = job
+        self._active = active
+        self.sender = RecordingSender()
+        self._sender = self.sender
+        self.delivery_checks: list[UUID] = []
+        self.sent_ids: list[UUID] = []
+
+    async def _claim(self, now: datetime) -> list[OutboxJob]:
+        return [self._job]
+
+    def _secret_payload(self, job: OutboxJob) -> dict[str, object]:
+        return {}
+
+    async def _deliver_intention_email_if_active(
+        self,
+        job: OutboxJob,
+        secret_payload: dict[str, object],
+    ) -> bool:
+        self.delivery_checks.append(job.id)
+        if not self._active:
+            return False
+        await self._sender.send(job, secret_payload)
+        return True
+
+    async def _mark_sent(self, job_id: UUID, now: datetime) -> None:
+        self.sent_ids.append(job_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", [False, True])
+async def test_worker_rechecks_intention_mail_job_before_delivery(active: bool) -> None:
+    job = make_job()
+    job.job_type = "intention_open_email"
+    job.event_key = f"intention:{uuid4()}:open:1:email:{uuid4()}"
+    job.payload["survey_id"] = str(uuid4())
+    processor = IntentionEmailProcessorHarness(job, active=active)
+
+    assert await processor.run_once() == 1
+    assert processor.delivery_checks == [job.id]
+    assert processor.sender.calls == ([job.id] if active else [])
+    assert processor.sent_ids == []
+
+
 def make_account_object_job(*, object_key: object = "account/private-object") -> OutboxJob:
     now = datetime.now(UTC)
     return OutboxJob(

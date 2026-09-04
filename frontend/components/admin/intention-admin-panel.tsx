@@ -266,6 +266,43 @@ export function IntentionAdminPanel({
     }
   }
 
+  async function removeSurvey(survey: AdminIntentionSurvey) {
+    if (
+      !window.confirm(
+        `确认永久删除问卷“${survey.title}”？题目、选项和全部学生回答将一并删除，未发送的问卷邮件会取消，且无法恢复。`,
+      )
+    ) {
+      return;
+    }
+    begin();
+    try {
+      await csrfFetch<void>("/admin/intentions/" + survey.id, {
+        method: "DELETE",
+      });
+      setSurveys((current) => current.filter((item) => item.id !== survey.id));
+      setStats((current) => {
+        const next = { ...current };
+        delete next[survey.id];
+        return next;
+      });
+      setRosters((current) => {
+        const next = { ...current };
+        delete next[survey.id];
+        return next;
+      });
+      setQr((current) => {
+        const next = { ...current };
+        delete next[survey.id];
+        return next;
+      });
+      setMessage("问卷已永久删除。");
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
     <div className="mt-8 space-y-8">
       {message ? <FormMessage tone="success">{message}</FormMessage> : null}
@@ -562,6 +599,14 @@ export function IntentionAdminPanel({
                   type="button"
                 >
                   查看提交名单
+                </button>
+                <button
+                  className="min-h-9 border border-[var(--color-danger)] px-3 text-sm text-[var(--color-danger)] disabled:opacity-55"
+                  disabled={pending}
+                  onClick={() => removeSurvey(survey)}
+                  type="button"
+                >
+                  删除问卷
                 </button>
               </div>
 

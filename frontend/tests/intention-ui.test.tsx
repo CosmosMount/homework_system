@@ -383,6 +383,65 @@ describe("administrator questionnaire panel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("keeps a questionnaire when permanent deletion is cancelled", () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<IntentionAdminPanel initialSurveys={[adminSurvey()]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "删除问卷" }));
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining("题目、选项和全部学生回答将一并删除"),
+    );
+    expect(csrfFetchMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("heading", { name: "培训方向问卷" }),
+    ).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("permanently deletes a questionnaire and removes its card immediately", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    csrfFetchMock.mockResolvedValue(undefined);
+    const removed = adminSurvey();
+    const retained = adminSurvey({ id: "survey-2", title: "保留问卷" });
+    render(<IntentionAdminPanel initialSurveys={[removed, retained]} />);
+
+    const removedCard = screen
+      .getByRole("heading", { name: removed.title })
+      .closest("article");
+    expect(removedCard).not.toBeNull();
+    fireEvent.click(
+      within(removedCard!).getByRole("button", { name: "删除问卷" }),
+    );
+
+    await screen.findByText("问卷已永久删除。");
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/admin/intentions/survey-1",
+      { method: "DELETE" },
+    );
+    expect(
+      screen.queryByRole("heading", { name: removed.title }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: retained.title }),
+    ).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("keeps the questionnaire card when permanent deletion fails", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    csrfFetchMock.mockRejectedValue(new Error("network unavailable"));
+    render(<IntentionAdminPanel initialSurveys={[adminSurvey()]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "删除问卷" }));
+
+    await screen.findByText("操作失败，请稍后重试。");
+    expect(
+      screen.getByRole("heading", { name: "培训方向问卷" }),
+    ).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
   it("searches active students and sends email only to selected members", async () => {
     apiFetchMock.mockResolvedValue({
       page: 1,

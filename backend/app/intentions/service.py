@@ -657,6 +657,42 @@ class IntentionService:
             raise
         return await self.admin_detail(survey_id, context=audit_context.actor)
 
+    async def remove(
+        self,
+        survey_id: UUID,
+        *,
+        audit_context: IntentionAuditContext,
+    ) -> None:
+        self._require_admin(audit_context.actor)
+        survey = await self._repo.get_survey(survey_id, for_update=True)
+        if survey is None:
+            await self._session.rollback()
+            raise self._not_found()
+
+        previous_status = survey.status
+        now = self._clock()
+        await self._outbox.delete_active_by_event_key_prefix(
+            f"intention:{survey.id}:",
+            job_type="intention_open_email",
+        )
+        await self._repo.delete_response_options_for_survey(survey.id)
+        await self._repo.delete_survey(survey)
+        self._add_audit(
+            audit_context,
+            action="intention.delete",
+            target_id=survey.id,
+            now=now,
+            change_summary={
+                "previous_status": previous_status,
+                "deletion_mode": "physical",
+            },
+        )
+        try:
+            await self._session.commit()
+        except Exception:
+            await self._session.rollback()
+            raise
+
     @staticmethod
     def _mail_event_key(survey: IntentionSurvey, user_id: UUID) -> str:
         return f"intention:{survey.id}:open:{survey.revision}:email:{user_id}"

@@ -64,6 +64,18 @@ class IntentionRepository:
     def add_response_option(self, option: IntentionResponseOption) -> None:
         self._session.add(option)
 
+    async def delete_response_options_for_survey(self, survey_id: UUID) -> None:
+        await self._session.execute(
+            delete(IntentionResponseOption).where(
+                IntentionResponseOption.response_id.in_(
+                    select(IntentionResponse.id).where(IntentionResponse.survey_id == survey_id)
+                )
+            )
+        )
+
+    async def delete_survey(self, survey: IntentionSurvey) -> None:
+        await self._session.delete(survey)
+
     async def replace_audience(self, survey_id: UUID, direction_ids: Sequence[UUID]) -> None:
         await self._session.execute(
             delete(IntentionSurveyDirection).where(IntentionSurveyDirection.survey_id == survey_id)

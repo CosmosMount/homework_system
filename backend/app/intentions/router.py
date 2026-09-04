@@ -125,6 +125,23 @@ async def patch_admin_intention(
     return await service.patch(survey_id, payload, audit_context=_audit_context(request, context))
 
 
+@router.delete(
+    "/admin/intentions/{survey_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_admin_intention(
+    survey_id: UUID,
+    request: Request,
+    service: IntentionServiceDependency,
+    context: AdminContextDependency,
+    _csrf: CsrfDependency,
+) -> None:
+    await service.remove(
+        survey_id,
+        audit_context=_audit_context(request, context),
+    )
+
+
 @router.get("/admin/intentions/{survey_id}/stats", response_model=IntentionStatsResponse)
 async def intention_stats(
     survey_id: UUID,
