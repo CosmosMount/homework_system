@@ -1,3 +1,17 @@
+# 2026-09-04：飞书知识库图片文字说明保留与网页展示
+
+- Backend 从飞书图片块 `image.caption.content` 读取说明，移除空字符、裁剪首尾空白、限制 20,000 字符并忽略纯空白，以可选 `caption` 保存在既有结构化块 JSONB。
+- Frontend 在图片所属 `figure` 下显示 `figcaption`，说明同时作为图片、打开预览按钮和对话框的可访问名称；无说明回退文件名，连续画廊和白板行为保持。
+- 后端知识库 15 项、全量 Ruff 规则、目标格式和相关严格 Mypy；前端知识库 17 项、全量 ESLint、严格 TypeScript、Next.js 生产构建及 `git diff --check` 通过。
+- 本轮无新依赖、数据库列或 Alembic 迁移，未连接运行数据、未触发真实飞书同步、未构建镜像或部署；部署后仍须真实管理员手动成功同步一次。
+
+# 2026-09-04：第一志愿配置方向问卷标题门禁
+
+- 仅标题去除首尾空白后精确等于“意向选择”的问卷显示“按第一志愿配置方向”入口；Backend 同步实施独立资格校验，页面绕过返回 `422 INVALID_INTENTION_DIRECTION_SURVEY`，且不读取后续业务数据或写审计。
+- 后端定向 60 项、完整 360 项，Ruff、174 文件格式和 154 源文件严格 Mypy 通过；前端定向 18 项、完整 25 文件/128 项，ESLint、严格 TypeScript、生产构建和 `git diff --check` 通过。
+- 固定标签 `questionnaire-title-gate-20260904` 已部署；Backend/Worker 与 Frontend 镜像分别为 `sha256:680fb42e5426…`、`sha256:f2b8df9bfc27…`，应用以 `appuser` 运行，六服务 healthy、重启 0，运行 OpenAPI 为 116 条路径。
+- 本轮无迁移；PostgreSQL/MinIO 容器 ID 不变，发布前后用户、问卷、方向审计、作业受众和知识库聚合一致。匿名页面/API/虚假批量 POST 为 307/401/401，未执行真实方向配置。
+
 # 2026-08-31：仓库 MIT License 与分步提交
 
 - 用户确认仓库采用标准 MIT License，版权主体为 `HKUST(GZ) RoboMaster PNX Team`；根目录新增 `LICENSE`，README 增加许可证入口。
@@ -649,3 +663,94 @@
 - 新加密备份 `pnx-backup-20260831T102419Z-daily` 为 101,156,599 字节、0600、SHA-256 `e3a7ddf3ca640f8d825c3d763a0db938b3264fca21fced5894c216d8da8a1468`，完整验证通过。
 - 固定标签 `knowledge-file-gallery-fix-20260831` 已上线；Backend/Worker 为 `sha256:2b1c9079e5dc9f2079acdb063cd7a0e2d88c52c68be045a346f180054d692141`，Frontend 为 `sha256:a5ad5927756819aeedbe4931b4921a60831d11fcaced9ea9530ded90f04446d3`。六服务 healthy、重启 0，`0018` 不变，PostgreSQL/MinIO 未重建，数据聚合一致。
 - 当前成功快照不会原地改写；须真实管理员在新版本上再次手动同步后，才可把 16 个目录文件的资源关联作为最终验收。失败同步不得覆盖当前成功快照。
+
+# 2026-09-01：正文附件失败原因与 Drive 文件引用修复部署完成
+
+- 生产只读诊断确认目录独立文件已正常本地化；剩余问题分为正文附件被类型/50 MiB 安全策略拒绝，以及 `/file/{token}` Drive 引用被误当文档 mention 后退化为纯文字。
+- 后端严格识别受信飞书/Lark 文件 URL，显式区分 `media/file` 远端端点；成功 Drive 文件复用 `knowledge_assets`、文档资源关系与登录态下载，失败归一为 `type_not_allowed/too_large/unavailable`，日志不记录 token、文件名、URL 或上游正文。
+- 前端富文本文件显示内部下载控件或三类中文不可用状态；学生视图不生成飞书失败链接，真实管理员普通视图保留来源排障。普通文档 mention、外链、块附件、目录文件、图片和白板路径保持。
+- 保留既有安全扩展名、危险后缀、EXE 拦截和默认 50 MiB，不直接提高到 200 MiB；无依赖、API 路径、数据库字段或 Alembic 迁移。
+- 知识库后端定向 34 项、完整 325 项、Ruff、173 文件格式检查、153 个源文件严格 Mypy；前端知识库 16 项、完整 25 文件/122 项 Vitest、ESLint、严格 TypeScript和 Next.js 生产构建全部通过。
+- 源码阶段未连接运行 PostgreSQL/MinIO 或飞书，未运行 migrate 或真实同步；后端知识库定向 34 项、完整 325 项及全部静态门，前端知识库 16 项、完整 25 文件/122 项及生产构建均通过。
+- 用户反馈同步后无变化，生产只读检查确认最新 `succeeded/217/1102` 由旧 Worker 执行。新备份 `pnx-backup-20260901T012444Z-daily` 的外层、完整解密、内部校验和 PostgreSQL 17 恢复目录通过。
+- 固定标签 `knowledge-inline-files-20260901` 已两阶段上线；Backend/Worker 为 `sha256:ca23fa69c76468c96f1cf065f98e4d3b6a25ed8fbdc4d1b29c6ce8e7f18e9d10`，Frontend 为 `sha256:98a00ead7518a601160f211faf667f8c4dd2d494f3f48e0b6cb485b17f724b34`。六服务 healthy、重启 0，`0018`、PostgreSQL/MinIO 容器和数据聚合保持不变。
+- 发布未触发飞书同步；须真实管理员在新 Worker 上再次手动成功同步，旧快照不会原地补齐，失败同步仍不得覆盖最近成功快照。
+
+# 2026-09-01：知识库文件 1 GiB 有界流式同步部署完成
+
+- 新增独立文件上限 1,073,741,824 字节，附件、正文 Drive 文件与目录文件使用该值；图片/白板继续为 52,428,800 字节，类型白名单、危险后缀、EXE 拦截、`files/medias` 端点和当前快照授权均不变。
+- 飞书下载按流执行声明/累计双重限制，Service 只保留 64 KiB 首块，MinIO 固定 16 MiB multipart、每片 SHA-256、按 ETag 顺序完成并增量计算完整摘要；上游/MinIO/取消异常关闭响应并尽力 abort，abort 失败不覆盖原错误，无宿主明文临时文件。
+- 定向 40 项、完整后端 331 项 Pytest、全量 Ruff、174 文件格式检查、120 源文件严格 Mypy、`git diff --check`、无网络只读镜像断言与真实 MinIO 小型 multipart/checksum 冒烟全部通过；测试对象已删除。
+- OpenPGP 备份 `pnx-backup-20260901T021328Z-daily` 为 274,518,885 字节、0600、SHA-256 `91b8aa98374ab81ec0982a1a5a64e7aef674930c58b2d0ab6fddd039c1a87a92`；完整解密、内部校验、PostgreSQL 17 的 316 项恢复目录和 2,986 个对象清单通过。
+- 固定标签 `knowledge-file-1gib-20260901` 已只替换 Backend/Worker，镜像 `sha256:0757eb16493e0fbd1c5292ba9cd78db5ca81ee8b0800cf50b7bd6cc5e03b2f4f`；Frontend/Nginx/PostgreSQL/MinIO 保持。六服务 healthy、重启 0，运行上限为 1 GiB/50 MiB，Alembic 仍为 `20260831_0018 (head)`，发布前后聚合 `170/15/2535/2195/1111/434` 不变。
+- 本轮无依赖、公开 API、数据库字段或迁移，发布未触发飞书同步。真实管理员仍须手动成功同步验收 50 MiB～1 GiB 合规文件；生产模板 Worker 768 MiB 不变，当前宿主 `compose.yml` 的既有运行容器没有实际内存 cap。
+
+# 2026-09-01：飞书知识库 Windows EXE 支持部署完成
+
+- 仅知识库只读快照文件允许经结构校验的 `.exe`；支持 x86/x64/ARM/ARM64 与 PE32/PE32+ 合法配对，拒绝双扩展、伪造头、未知/不匹配架构、无执行标志和 DLL。普通用户上传白名单未放宽。
+- 合规 EXE 延续 1 GiB 流式 MinIO multipart 与当前成功快照授权，签名下载强制 attachment、octet-stream、nosniff；不内联、自动运行、杀毒或为代码签名背书。
+- 定向 47 项、完整后端 348 项、Ruff、174 文件格式、154 个 `app + tests` 严格 Mypy、`git diff --check`、候选只读断言和真实 MinIO 响应头冒烟全部通过；临时对象已删除。
+- 新 OpenPGP 备份 `pnx-backup-20260901T073356Z-daily` 为 2,850,824,736 字节、0600、SHA-256 `376aa4f8031d02d353c39972b17881c33dd7a1a908253b7306cbc2f24ca10756`，完整恢复级校验通过。
+- 固定标签 `knowledge-exe-20260901` 已只替换 Backend/Worker，镜像 `sha256:e96142385c75ca08589c9fb993d06094a121725986492af00913b708eeaa33c3`；六服务 healthy、重启 0，`0018`、1 GiB/50 MiB 上限、Frontend/Nginx/PostgreSQL/MinIO 和知识库聚合保持。发布未触发同步，仍须真实管理员手动成功同步实际 EXE。
+
+# 2026-09-03：按所有人的第一志愿配置技术方向源码完成
+
+- 问卷卡片新增按需加载的第一志愿映射区，只接受按题序第一道单选题；管理员必须把全部选项显式映射到启用方向，停用方向不可选，映射完整且二次确认后才能提交。
+- 新管理端点复核真实管理员、CSRF、第一题、全量选项和启用方向，按稳定用户顺序锁定唯一最新回答对应的当前 `active student`；实际变化覆盖 `direction_id` 并增加 revision，相同方向计为未变化，非激活/管理员回答者计为跳过。
+- 每个实际变化写 `user.direction_assign_from_intention` 脱敏审计，另写 `intention.first_choice_directions_apply` 汇总；不保存答案或选项 ID，不修改问卷、累计提交次数、二维码、Session 或既有作业固定受众。
+- 后端问卷/API 契约定向 57 项、完整 357 项、Ruff、174 文件格式与 154 文件严格 Mypy 通过；前端问卷定向 15 项、完整 25 文件/125 项、ESLint、严格 TypeScript 和 Next.js 生产构建通过。
+- 更新 INT-008、INT-T18～INT-T20、ADR-053 及产品/页面/架构/API/数据/安全/测试/变更记录。复用现有字段，无依赖或 Alembic 迁移。
+- 本轮未连接或修改运行 PostgreSQL/MinIO，未调用真实管理写接口，未构建或部署 Docker；运行环境仍保持上一已部署版本。
+
+# 2026-09-03：按所有人的第一志愿配置技术方向部署完成
+
+- 固定标签 `questionnaire-first-choice-20260903` 已部署；Backend/Worker 镜像为 `sha256:baed161838bed54fd6002439dd0c5facd7362cef90479a1f19a448d94a42edb6`，Frontend 为 `sha256:2da9cf011f66c3e3bfe2edd5f2ef98bd875a9e8ca12119017cf21d6cbca74507`，应用以 `appuser` 运行。
+- 无缓存候选通过 OpenAPI 116 路径、前端产物标记、无网络只读健康和非 root 验证；首次发布后的模型漂移门发现 `ix_knowledge_nodes_asset_id` 只存在于 `0018` 迁移，已在 ORM 补齐声明，Ruff、格式、严格 Mypy 和最终 `alembic check` 通过，无数据库结构变化。
+- 新 OpenPGP 每日备份 `pnx-backup-20260903T144234Z-daily` 为 4,300,735,513 字节、0600，SHA-256 `65e940136171ec3918fcdc76d313c26d6f16da99374007d7d5ce054a35f01754`；隔离恢复 3,115 个对象、引用对账无缺失/大小/哈希差异，RTO 162 秒，临时容器、网络和卷已清理。
+- Backend/Worker、Frontend/Nginx 两阶段替换后六服务 healthy、重启 0；登录、live、ready、worker、Nginx 和 Frontend 健康均为 200，管理员问卷页面匿名 307，新端点匿名 401。
+- 未运行 migrate，Alembic 保持 `20260831_0018 (head)`，PostgreSQL/MinIO 容器 ID 未变；未使用管理员登录态、未执行真实批量配置，`students_with_direction=0`、方向配置审计为 0、`assignment_audience_users=116`，知识库与账号清理边界不变。
+- 已保留统一回滚标签 `first-choice-rollback-20260903`；应用回滚无需数据库降级，管理员实际执行过方向覆盖后不能靠代码回滚恢复旧值。
+
+# 2026-09-04：管理员用户按技术组查看与问卷邮件多选技术组源码完成
+
+- 用户管理页新增“按技术组查看”，复用受管理员保护的服务端 `direction_id` 精确过滤；筛选值与搜索、活跃度、页码共同保存在 URL，全部跳转和写后刷新保持当前组。
+- 问卷邮件技术组范围支持勾选 1～100 个启用组；Service 在问卷锁事务内整体校验后查询当前 `active student` 并集，任一无效组或空收件范围整体拒绝，成员级事件键继续防止重复入队。
+- 新前端只提交 `direction_ids`，后端暂时兼容旧单个 `direction_id` 且拒绝两字段同时提交；脱敏审计只含排序后的技术组 UUID 和计数。
+- 后端定向 64 项、完整 364 项、Ruff、174 文件格式和 154 文件严格 Mypy；前端定向 28 项、完整 25 文件/128 项、ESLint、严格 TypeScript 与 Next.js 生产构建全部通过。
+- 已更新 ADR-054 和全部受影响权威文档；复用现有用户方向、查询与 Outbox，无新依赖、数据库字段、索引或 Alembic 迁移。
+- 本轮未连接或修改运行 PostgreSQL/MinIO，未调用真实邮件写接口、SMTP 或飞书同步，也未构建或部署 Docker。
+
+# 2026-09-04：管理员用户按技术组查看与问卷邮件多选技术组部署完成
+
+- 固定标签 `direction-email-groups-20260904` 已按 Backend/Worker、Frontend/Nginx 两阶段上线；Backend/Worker 镜像为 `sha256:68174ac1699dddc01104251f08b1e512d911f2347fd7a2fe5b117e47da6154ea`，Frontend 为 `sha256:888912e456f06a4258d8c1ed2d5cde3b4ed0ab04adb40560ab85b441e7ec6e84`，应用以 `appuser` 运行。六服务 healthy、重启 0。
+- 工作树已有并发的问卷技术组填写受众、`20260904_0019` 和知识库图片 `caption`，因此从部署前生产镜像源码建立临时隔离候选，只叠加本次功能和既有标题门禁；这些并发功能未部署，用户工作树未回退。Backend/Frontend `.dockerignore` 增加 `*.orig`，最终镜像无补丁残留。
+- 新 OpenPGP 每日备份 `pnx-backup-20260904T021846Z-daily` 为 4,300,757,375 字节，SHA-256 `2e2d6750382651e9e9492e49e968f6f766fd9b992c353a2956ac80f6abfa1f96`；数据库 dump 25,085,869 字节，3,115 个对象/6,414,684,531 字节。空卷恢复和引用对账无缺失、大小或哈希差异，RTO 148 秒，隔离恢复资源已清理。
+- 运行 OpenAPI 为 116 条路径，`direction_ids.maxItems=100` 且旧 `direction_id` 继续兼容；登录及健康入口通过，管理员页面匿名 307，用户 API 与双技术组邮件 POST 匿名 401，四个应用容器严重错误关键词为 0。验收未携带登录态或触发业务写入。
+- 未运行 migrate，Alembic 保持 `20260831_0018 (head)` 且无漂移；PostgreSQL/MinIO 容器 `bfa750f66ab0…`、`331150f34f37…` 未重建。发布窗口问卷与邮件计数增长经脱敏审计确认来自真实业务流量，不是部署命令。
+- 回滚标签 `direction-email-groups-rollback-20260904` 指向部署前 Backend `sha256:680fb42e542616179e5e4066966dc1968da6d87b13347a31aee8897f2100617e` 和 Frontend `sha256:f2b8df9bfc2717160aa92850bd260353bbed3fe7f0b13b13a9a34a7a23d76831`；无需数据库降级。
+
+# 2026-09-04：问卷支持分技术组填写源码完成
+
+- 问卷创建和草稿编辑支持“全部学生填写”或 1～50 个启用技术组；卡片与管理详情显示填写范围，首次开放时复核组状态，开放后不再允许修改受众，重新开启沿用原范围。
+- 学生列表、直接详情、二维码详情和提交全部以当前技术组为权威受众，非目标学生统一 404；已有回答不会因换组删除。统计分母按当前目标激活学生计算。
+- 手动成员、技术组子集和问卷全部目标学生三类邮件范围均受问卷受众约束，越界请求整体回滚，不产生部分 Outbox。
+- 新增可回滚迁移 `20260904_0019`，旧问卷默认面向全部学生；降级会丢失受众配置，开放受限问卷不能在降级后继续提供服务。
+- 已更新 INT-009、INT-T22～INT-T25、ADR-056 和全部受影响权威文档。后端定向 84 项、完整 376 项、Ruff、175 文件格式、154 文件严格 Mypy，前端定向 21 项、完整 25 文件/132 项、ESLint、严格 TypeScript、生产构建、双向离线 DDL 与 `git diff --check` 全部通过。
+- 本轮未连接或迁移运行 PostgreSQL/MinIO，未调用真实管理写接口、创建邮件任务、构建镜像或部署 Docker。
+
+# 2026-09-04：问卷开放后可修改非答案结构源码完成
+
+- `draft/open/closed` 均可按 revision 编辑；草稿继续完整替换，开放或关闭问卷只更新标题、说明、题目文字、提交上限、时间窗口和填写范围，归档保持只读。
+- Backend 在问卷行锁内按稳定顺序比较题量、题型和选项数量/规范化文字/顺序；任一变化返回 `409 INTENTION_ANSWER_STRUCTURE_IMMUTABLE`，合法更新不删除问题、选项、回答，不重置累计次数或二维码 token。
+- 受限受众每次保存整体确认技术组启用；结构、归档、revision、受众及提交失败都无部分写入。审计只保存状态、字段变化布尔值、题目文字变化数和受众规模，不记录问卷正文。
+- Frontend 为开放/关闭问卷显示编辑入口，题型禁用、选项只读且隐藏题目增删入口；归档无入口，草稿完整编辑不回退。
+- 已接受 ADR-057，新增 INT-T26 并更新全部受影响权威文档。后端定向 82 项、完整 384 项、Ruff、154 文件格式和 154 文件严格 Mypy；前端定向 23 项、完整 25 文件/134 项、ESLint、严格 TypeScript、生产构建及 `git diff --check` 全部通过。
+- 本功能无新依赖、数据库字段或迁移。源码完成阶段未调用生产业务写接口；部署与现有 0019 结构缺口修复仍在当前任务中继续。
+
+# 2026-09-04：问卷开放后非答案结构编辑部署完成
+
+- OpenPGP 备份 `pnx-backup-20260904T040419Z-daily` 为 4,300,826,759 字节、0600，空卷恢复数据库和 3,115 个对象成功，缺失/大小/哈希差异为 0，RTO 159 秒。
+- 生产此前为 0019 应用发布过程中的不完整状态：数据库仍是 `20260831_0018` 且新列/表不存在。修正候选临时入口后，仓库既有 `20260904_0019` 只迁移一次成功，12 份旧问卷均默认全体、关联表为空、模型无漂移；没有创建 0020。
+- `questionnaire-live-edit-20260904` 已按 Backend/Worker、Frontend/Nginx 两阶段上线，镜像分别为 `sha256:5f2a114bd60c31bc52d0b6c17e3d24ca5e3912fb6797e45d687074096e8e33c6` 与 `sha256:cc1e3a67d372627219b78a8ade5bfef0df0babe7c35ad76747493350921b83ce`；六服务 healthy、重启 0，PostgreSQL/MinIO 容器和卷未重建。
+- 健康、匿名 307/401、运行 OpenAPI 116 路径、前端产物、0019 两外键/两索引、Alembic 漂移、业务聚合与四服务日志全部通过。未携带管理员 Session、未调用真实 PATCH；回答增长来自真实学生业务流量。
+- 隔离候选继续排除知识库图片说明。兼容回滚 Backend/Frontend 镜像为 `sha256:f79df018…`、`sha256:5a058b07…`，保留 0019 受众授权，只撤回本轮编辑能力，数据库不得降级。

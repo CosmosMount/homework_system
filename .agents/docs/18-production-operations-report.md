@@ -744,3 +744,124 @@
 
 - 旧成功快照不会原地改写。只有真实管理员在新版本 `/admin/knowledge` 再手动触发一次成功同步，16 个目录文件才会通过 `files` 端点本地化并获得节点资源关联；失败运行继续不得替换当前 217 篇成功快照。本部署未冒充管理员触发同步。
 - 应用回滚可恢复上一组 `knowledge-directory-media-20260831` Backend/Worker 与 `knowledge-root-view-20260831` Frontend，并按同序定向替换；本轮无 Schema 或数据变化，不需要数据库/MinIO 回滚。加密归档与临时 GPG 私钥仍同机位于 `/tmp`，Docker socket 命名 ACL 仍需部署方交互撤销。
+
+## 2026-09-01 知识库文件 1 GiB 流式同步部署
+
+### 质量、备份与候选
+
+- 附件及 Drive 文件上限已独立设为 1 GiB，图片/白板保持 50 MiB；飞书响应采用声明/累计双重上限，Service 只嗅探 64 KiB 首块，MinIO 使用固定 16 MiB multipart、每片 SHA-256、按序 ETag 和增量完整摘要。定向 40 项、完整后端 331 项、Ruff、174 文件格式、120 源文件严格 Mypy 与 `git diff --check` 全部通过。
+- 新 OpenPGP 每日备份 `pnx-backup-20260901T021328Z-daily` 为 274,518,885 字节、0600、SHA-256 `91b8aa98374ab81ec0982a1a5a64e7aef674930c58b2d0ab6fddd039c1a87a92`；外层、完整解密、内部逐文件、PostgreSQL 17 的 316 项恢复目录均通过，MinIO 清单为 2,986 个对象、相对周基线累计负载 101 个/267,698,872 字节且删除 0。
+- 无缓存固定候选 `knowledge-file-1gib-20260901` 的 Backend/Worker 镜像为 `sha256:0757eb16493e0fbd1c5292ba9cd78db5ca81ee8b0800cf50b7bd6cc5e03b2f4f`，以 `appuser` 运行。无网络只读容器确认两项上限与流式方法存在；当前 MinIO 的小型 PDF multipart/checksum 冒烟成功，服务端生成测试对象在 `finally` 中立即删除。
+
+### 定向替换与运行验收
+
+- 替换前知识库运行只有 `failed=4/succeeded=11`，无 `pending/running`。仅使用 `--no-deps --force-recreate` 替换 Backend/Worker；PostgreSQL、MinIO、Frontend、Nginx 容器 ID 分别保持 `bfa750f66ab0…`、`331150f34f37…`、`dd637d6c58b5…`、`afe9b42c8991…`，Frontend 继续运行原镜像摘要 `sha256:98a00ead7518a601160f211faf667f8c4dd2d494f3f48e0b6cb485b17f724b34`。
+- 六服务 healthy、重启 0；`/login`、live、ready、worker 和 `nginx-health` 为 200，知识库页面/API/虚假资源下载匿名为 307/401/401，发布窗口 Backend/Worker 严重错误关键词为 0。运行 Worker 环境确认为文件 `1073741824`、图片/白板 `52428800`。
+- 未运行 migrate，Alembic 保持 `20260831_0018 (head)`；发布前后 `users/runs/nodes/documents/assets/outbox=170/15/2535/2195/1111/434`，运行状态保持不变，发布未触发飞书同步。生产 Compose 模板继续声明 Worker 768 MiB；当前宿主项目仍由 `compose.yml` 运行且实际 `HostConfig.Memory=0`，本任务没有扩展为运行拓扑迁移。
+
+### 验收与回滚边界
+
+- 真实管理员必须在新 Worker 上再次手动成功同步，50 MiB～1 GiB 且类型合规的文件才会获得内部资源关联；超过 1 GiB 和危险类型仍按既有粗粒度状态失败。失败同步不覆盖最近成功快照，本部署未代替管理员操作。
+- 应用回滚只需把 `.env` 固定标签恢复为 `knowledge-inline-files-20260901` 并定向替换 Backend/Worker；本轮无 Schema 或持久数据变化，不需要数据库/MinIO 回滚。加密备份和临时 GPG 私钥仍同机位于 `/tmp`，需迁移到受控异机介质。
+
+## 2026-09-01 知识库 Windows EXE 支持部署
+
+### 质量、备份与候选
+
+- EXE 仅在知识库专用入口放行，普通上传白名单未变；PE 校验覆盖五种架构、PE32/PE32+ 配对、双扩展、伪造/越界/非执行/DLL。定向 47 项、完整后端 348 项、Ruff、174 文件格式、154 个 `app + tests` 严格 Mypy 与 `git diff --check` 全部通过。
+- 发布前知识库运行只有 `failed=4/succeeded=12`，无 `pending/running`。新 OpenPGP 每日备份 `pnx-backup-20260901T073356Z-daily` 为 2,850,824,736 字节、0600、SHA-256 `376aa4f8031d02d353c39972b17881c33dd7a1a908253b7306cbc2f24ca10756`；完整解密、内部逐文件、PostgreSQL 17 的 316 项恢复目录均通过。MinIO 清单 2,996 个/4,942,021,167 字节，累计增量 111 个/2,903,856,572 字节，删除 0；明文验证目录已清理。
+- 无缓存固定候选 `knowledge-exe-20260901` 镜像为 `sha256:e96142385c75ca08589c9fb993d06094a121725986492af00913b708eeaa33c3`，以 `appuser` 运行。无网络、只读、去能力容器确认 PE 接受/拒绝和强制下载策略；当前 MinIO 临时对象实测 attachment、octet-stream、nosniff 后在 `finally` 删除。
+
+### 定向替换与运行验收
+
+- `.env` 已固定新标签，只使用 `--no-deps --force-recreate --wait` 替换 Backend/Worker。PostgreSQL、MinIO、Frontend、Nginx 容器 ID 保持 `bfa750f66ab0…`、`331150f34f37…`、`dd637d6c58b5…`、`afe9b42c8991…`；Frontend 镜像继续为 `sha256:98a00ead7518a601160f211faf667f8c4dd2d494f3f48e0b6cb485b17f724b34`。
+- 六服务 healthy、重启 0；Nginx、Backend live/ready 和 Frontend 容器内部健康通过，知识库页面/API/虚假资源下载匿名为 307/401/401。运行 Worker 为文件 1,073,741,824、图片/白板 52,428,800 字节，并包含 `application/vnd.microsoft.portable-executable`；Backend/Worker 严重错误关键词计数为 0。
+- 未运行 migrate，Alembic 保持 `20260831_0018 (head)`。发布前后 `users/runs/nodes/documents/assets=170/16/2768/2412/1121`，同步状态保持 `failed=4/succeeded=12`，没有自动同步或知识库写入。Outbox `435→436` 对应北京时间 15:41 的外部正常 `email_verification`，不是部署行为。
+
+### 验收与回滚边界
+
+- 真实管理员仍须在新 Worker 上手动成功同步，合规 EXE 才会进入新的成功快照并获得内部资源关联；部署不冒充管理员。PE 结构校验不等于恶意软件检测，终端侧仍须遵守组织安全策略。
+- 应用回滚只需把固定标签恢复为 `knowledge-file-1gib-20260901` 并定向替换 Backend/Worker，不需要数据库降级或 MinIO 恢复。新加密备份和临时 GPG 私钥仍同机位于 `/tmp`，必须迁移到受控异机介质并分离保存。
+
+## 2026-09-03 第一志愿配置方向部署
+
+### 候选与备份
+
+- 工作树与运行 Backend 逐文件摘要确认知识库、上传和配置源码一致，只有 intentions 域为本次待部署差异；固定标签 `questionnaire-first-choice-20260903` 无缓存构建，Backend/Frontend 均以 `appuser` 运行。无网络、只读、去能力容器确认 Backend OpenAPI 新 POST 与 Frontend 三项产物标记，候选健康为 200。
+- 新 OpenPGP 每日备份 `pnx-backup-20260903T144234Z-daily` 为 4,300,735,513 字节、0600，SHA-256 `65e940136171ec3918fcdc76d313c26d6f16da99374007d7d5ce054a35f01754`；库存 3,115 个对象、6,414,684,531 字节，相对周基线增量负载 230 个/4,376,519,936 字节，删除 0。
+- 备份在全新 `pnx-restore-first-choice-20260903` 环境完成外层/内部校验、PostgreSQL 和 MinIO 恢复、Alembic head 与引用对账；缺失/大小/哈希差异为 0，RTO 162 秒，1,875 个未跟踪历史对象保留。隔离容器、网络和卷随后精确清理，生产数据服务 ID 未变。
+
+### 两阶段发布与修正
+
+- `.env` 固定为新标签，先替换 Backend/Worker 并验证新端点匿名 401、健康和运行镜像，再替换 Frontend/Nginx。首次最终 `alembic check` 发现迁移 `0018` 已创建 `ix_knowledge_nodes_asset_id`，但 ORM 元数据漏声明并误报应删除索引；只在 `KnowledgeNode.__table_args__` 补齐同名 `Index`，不执行数据库 DDL。
+- 索引声明补丁通过 Ruff、格式、严格 Mypy、无网络候选 OpenAPI 和对生产只读 `alembic check`，Backend/Worker 使用修正镜像再次定向替换。最终 Backend/Worker 镜像为 `sha256:baed161838bed54fd6002439dd0c5facd7362cef90479a1f19a448d94a42edb6`，Frontend 为 `sha256:2da9cf011f66c3e3bfe2edd5f2ef98bd875a9e8ca12119017cf21d6cbca74507`。
+- 六服务 healthy、重启 0；Backend、Worker、Frontend、Nginx 容器分别为 `9aef36ef1063…`、`4d8a2a82fc86…`、`e10ace8c1524…`、`2c1a9e9edff1…`。PostgreSQL/MinIO 继续为 `bfa750f66ab0…`、`331150f34f37…`，未重建容器、卷或网络。
+
+### 运行验收与数据边界
+
+- 登录、live、ready、worker、Nginx 与 Frontend 内部健康均为 200；管理员问卷页面匿名为 307 并回到登录页，新批量 POST 匿名为 401。运行 OpenAPI 为 116 条路径，Frontend 产物包含配置入口、不会重算和配置结果标记。
+- 未运行 migrate，Alembic 为 `20260831_0018 (head)` 且无模型漂移。最终聚合为用户/激活学生 `184/169`、方向 `6/6`、激活学生已配置方向 `0`、问卷五表 `6/10/35/412/790`、问卷状态 `archived:2/closed:2/open:2`、固定作业受众 `116`、知识库 `runs/nodes/documents/assets=24/4622/4138/1240`、最近成功同步 `215/1201`、Outbox `dead/sent=41/615`。
+- 发布和验收未携带管理员 Session，未执行真实第一志愿覆盖、飞书同步、账号删除、上传或邮件写入；`intention.first_choice_directions_apply` 与 `user.direction_assign_from_intention` 审计均为 0，`delete_account_object` 为 0。实时注册与问卷填写在候选构建/备份期间正常发生，不属于发布命令。
+- 最终 Backend、Worker、Frontend、Nginx 全生命周期严重错误关键词计数均为 0。统一回滚标签 `first-choice-rollback-20260903` 指向发布前实际 Backend `sha256:e96142385c75ca08589c9fb993d06094a121725986492af00913b708eeaa33c3` 与 Frontend `sha256:98a00ead7518a601160f211faf667f8c4dd2d494f3f48e0b6cb485b17f724b34`；回滚不需要数据库降级。
+- 加密归档和临时 GPG 私钥仍同机位于 `/tmp`，需迁移到受控异机介质并分离保存。
+
+## 2026-09-04 第一志愿配置方向标题门禁部署
+
+### 候选、备份与回滚
+
+- 固定候选 `questionnaire-title-gate-20260904` 构建完成；Backend/Frontend 镜像 ID 分别为 `sha256:680fb42e542616179e5e4066966dc1968da6d87b13347a31aee8897f2100617e`、`sha256:f2b8df9bfc2717160aa92850bd260353bbed3fe7f0b13b13a9a34a7a23d76831`，均为 `appuser`。隔离候选确认 Backend 可导入、OpenAPI 116 条路径与标题常量，Frontend 产物包含“意向选择”和“按第一志愿配置方向”。
+- 发布前 OpenPGP 每日增量备份 `pnx-backup-20260904T011752Z-daily` 为 4,300,754,642 字节，SHA-256 `0740f785a13c45bb29f3613c0667289e23cc0e961363c3f5e189f534a15ac700`；PostgreSQL dump 为 25,079,935 字节，PostgreSQL 17 恢复目录 316 项，对象库存 3,115 个/6,414,684,531 字节，完整解密与 Tar 读取通过。发布前应用镜像标记为 `questionnaire-title-gate-rollback-20260904`。
+
+### 两阶段发布与运行验收
+
+- 自 `2026-09-04T01:28:06Z` 起按 Backend/Worker、Frontend/Nginx 两阶段执行 `--no-deps --force-recreate --wait`，没有运行 migrate。最终四个应用容器为 `35abc3c43346…`、`7dfae87c9b2b…`、`0c96ccd1223b…`、`1fd9339d8a5d…`；六服务 healthy、重启 0，Backend/Worker/Frontend 均为 `appuser`。
+- PostgreSQL/MinIO 容器继续为 `bfa750f66ab0…`、`331150f34f37…`，未重建数据容器、卷或网络。Alembic 保持 `20260831_0018 (head)`，`alembic check` 无新升级操作。
+- `/login`、live、ready、worker、`/nginx-health` 均为 200；`/admin/intentions` 匿名为 307，管理列表与虚假 UUID 的方向配置 POST 匿名为统一 `401 AUTHENTICATION_REQUIRED`。运行 OpenAPI 为 116 条路径并包含配置端点，标题门禁常量为“意向选择”。
+- 发布前后聚合完全一致：用户/激活学生/已配置方向学生 `184/168/143`，问卷五表 `6/10/35/419/809`，固定作业受众 `116`，方向用户/汇总审计 `143/1`，知识库运行/节点/文档/资源 `24/4622/4138/1240`，账号清理 Outbox `0`。
+- 验收命令未携带管理员 Session，未执行真实方向配置、飞书同步、账号删除、上传或邮件写入。方向审计是发布前已存在的管理员业务操作，本轮未新增；发布窗口有正常管理员只读访问但没有批量配置 POST，Backend、Worker、Frontend、Nginx 日志无启动、权限、连接、事务、外键或未处理异常。
+
+## 2026-09-04 用户技术组筛选与问卷多组邮件部署
+
+### 隔离候选、备份与回滚
+
+- 发布准备期间工作树出现并发开发的问卷技术组填写受众、迁移 `20260904_0019` 和知识库图片 `caption`，直接构建会使应用依赖尚未部署的数据库契约。Backend 候选因此以部署前生产镜像源码为基线，仅叠加多技术组邮件的 Schema、Repository 和 Service；Frontend 仅叠加用户技术组筛选、多组选组并保留既有第一志愿标题门禁。用户工作树未回退，并发功能明确未部署。
+- `backend/.dockerignore` 与 `frontend/.dockerignore` 增加 `*.orig`；最终镜像内没有补丁残留。固定标签 `direction-email-groups-20260904` 的 Backend/Worker 镜像为 `sha256:68174ac1699dddc01104251f08b1e512d911f2347fd7a2fe5b117e47da6154ea`，Frontend 为 `sha256:888912e456f06a4258d8c1ed2d5cde3b4ed0ab04adb40560ab85b441e7ec6e84`，均以 `appuser` 运行。
+- 候选 OpenAPI 为 116 条路径，技术组邮件 `direction_ids.maxItems=100` 并继续接受互斥的旧 `direction_id`，不包含问卷 `all_students` 受众模型；Frontend 严格 TypeScript、生产构建和独立 `/health` 通过。
+- 发布前新建 OpenPGP 每日备份 `pnx-backup-20260904T021846Z-daily`：归档 4,300,757,375 字节、SHA-256 `2e2d6750382651e9e9492e49e968f6f766fd9b992c353a2956ac80f6abfa1f96`，数据库 dump 25,085,869 字节，对象库存 3,115 个/6,414,684,531 字节。独立空卷恢复和引用对账缺失、大小、哈希差异均为 0，RTO 148 秒；1,875 个历史未跟踪对象按既有策略告警，恢复容器、网络、卷和含秘密临时配置已清理。
+- 专用回滚标签 `direction-email-groups-rollback-20260904` 分别指向部署前 Backend `sha256:680fb42e542616179e5e4066966dc1968da6d87b13347a31aee8897f2100617e` 与 Frontend `sha256:f2b8df9bfc2717160aa92850bd260353bbed3fe7f0b13b13a9a34a7a23d76831`。本轮没有 Schema 迁移，应用回滚无需恢复数据库。
+
+### 两阶段发布与运行验收
+
+- `.env` 已固定 `APP_IMAGE_TAG=direction-email-groups-20260904`。先替换 Backend/Worker 并验收，再替换 Frontend/Nginx；最终 Backend、Worker、Frontend、Nginx 容器为 `cb252694f071…`、`cbd41ae696dc…`、`1b317e887fd6…`、`23da463746ae…`。六服务 healthy、重启 0，Backend/Worker/Frontend 均为 `appuser`。
+- PostgreSQL/MinIO 容器继续为 `bfa750f66ab0…`、`331150f34f37…`，没有重建数据容器、卷或网络。未运行 migrate，Alembic 保持 `20260831_0018 (head)`，最终 `alembic check` 无漂移。
+- `/login`、Backend live/ready、Worker、`/nginx-health` 与 Frontend 容器内部 `/health` 均为 200；`/admin/users`、`/admin/intentions` 匿名为 307，携带虚假技术组的用户 API 和双技术组邮件 POST 匿名为 401。外部 `/health` 按既有 Nginx 规则仍为 301 到 `/health/`，本次未调整。
+- 运行 OpenAPI 保持 116 条路径并含 `direction_ids` 上限与旧字段兼容，Frontend 产物包含用户技术组筛选和多组选组。Backend、Worker、Frontend、Nginx 新容器生命周期严重错误关键词计数均为 0。
+
+### 数据边界与遗留风险
+
+- 发布前用户/激活学生/已分组学生为 `184/168/143`，问卷五表为 `6/10/35/419/809`，`intention_open_email=319`；验收时分别为 `184/168/143`、`10/16/58/496/965`、`380`，新增邮件均为 sent。
+- 脱敏审计确认数据增长来自发布窗口内的真实业务流量：`intention.create=4`、`intention.open=4`、`intention.email_notify=2`、`intention.response_submit=89`，新增邮件任务 61；首批业务动作发生在应用替换前。所有部署验收请求都未携带认证信息并在业务逻辑前返回 401，没有由部署命令产生邮件或问卷写入。
+- 问卷技术组填写受众、`20260904_0019` 和知识库图片 `caption` 仍只是工作树源码候选，未进入当前镜像。加密备份和临时 GPG 私钥仍同机位于 `/tmp`，需迁移到受控异机介质并分离保存。
+
+## 2026-09-04 问卷开放后非答案结构编辑与 0019 基线修复部署
+
+### 隔离候选、备份与恢复
+
+- 用户确认以 0019 功能作为应用基线，但发布前只读检查发现实际运行组合为 `direction-email-groups-20260904` 应用、`20260831_0018` 数据库，且 `intention_surveys.all_students` 与 `intention_survey_directions` 不存在。当前应用健康但没有 0019 数据契约，因而本次不创建 0020，而是在备份保护下补齐现有 0019。
+- Backend 以当时运行镜像为父镜像，只覆盖工作树的 `app/intentions` 和 0019 迁移；Frontend 在临时副本构建，使用部署前 `knowledge-blocks.tsx.orig` 排除知识库图片说明。候选运行检查确认 OpenAPI 116 路径、0019 head、开放后结构冻结标记、既有技术组筛选标记和非 root `appuser`，同时确认 Backend 不含 `raw_caption`、Frontend 不含说明样式标记。
+- 发布前备份 `pnx-backup-20260904T040419Z-daily` 为 OpenPGP 每日增量归档，4,300,826,759 字节、0600、SHA-256 `8d828a64c2c7c702abd6d6cedee2c13a7a9c5e9a626ff1fe70497294f28dc2c7`；PostgreSQL dump 25,153,596 字节，对象库存 3,115 个/6,414,684,531 字节、增量 payload 230 个/4,376,519,936 字节。
+- 独立项目 `pnx-restore-live-edit-20260904` 从空 PostgreSQL/MinIO 卷恢复成功，外层与内部校验和、数据库 head、对象导入和引用对账均通过，缺失、大小及哈希差异为 0，RPO 151 秒、RTO 159 秒；1,875 个未跟踪历史对象保持既有告警。隔离容器、网络、卷和明文临时目录均已清理。
+
+### 迁移与两阶段替换
+
+- 首次执行迁移命令时，尚未部署的 Backend 候选因权限修正层误继承临时 `sh` ENTRYPOINT，在 Alembic 加载前以“无法打开 alembic”退出；生产数据库未变化，运行服务未替换。重新构建为空 ENTRYPOINT、原 Uvicorn CMD 后，候选默认命令、导入和 OpenAPI 重新验证通过。
+- 仓库现有 `20260831_0018 → 20260904_0019` 随后只执行一次成功。迁移后 12 份旧问卷全部 `all_students=true`、受众关联数 0，`all_students` 非空，关联表 2 个外键/2 个索引有效，问题/选项保持 `18/64`，`alembic check` 无新操作。
+- `.env` 固定为 `APP_IMAGE_TAG=questionnaire-live-edit-20260904`。先替换 Backend/Worker 并完成健康、OpenAPI、匿名 401 与日志门，再替换 Frontend/Nginx。最终 Backend、Worker、Frontend、Nginx 容器为 `b11a08839710…`、`a2de4d34b867…`、`97c2889ececf…`、`dc752c2dff1f…`；Backend/Worker 镜像 `sha256:5f2a114bd60c31bc52d0b6c17e3d24ca5e3912fb6797e45d687074096e8e33c6`，Frontend `sha256:cc1e3a67d372627219b78a8ade5bfef0df0babe7c35ad76747493350921b83ce`。
+- PostgreSQL/MinIO 容器继续为 `bfa750f66ab0…`、`331150f34f37…`，未重建容器、卷或网络。六服务 healthy、重启 0；应用均为 `appuser`。
+
+### 运行验收、数据边界与回滚
+
+- 登录、Backend live/ready、Worker、Nginx 与 Frontend 容器内部健康均为 200；外部 `/health` 保持既有 301。`/intentions`、`/admin/intentions` 匿名为 307 到登录页，管理详情 GET 与合法形状 PATCH 匿名均为 401。运行 OpenAPI 116 路径，Frontend 产物包含“已有回答不会删除”冻结提示。
+- 部署前后用户/激活学生/已分组学生保持 `184/168/143`，问卷/问题/选项和状态保持 `12/18/64`、`archived:2/closed:3/open:7`；作业固定受众 116、`intention.update` 审计 3、问卷邮件 sent 487、账号清理 Outbox 0 均不变。回答/选择由 `592/1101` 增至 `603/1112`，时间与未认证部署命令确认属于真实学生业务提交。验收未携带管理员 Session，未调用真实 PATCH、状态、邮件、方向配置、飞书同步、删除或上传。
+- Backend、Worker、Frontend、Nginx 全部新容器严重错误关键词为 0。专用兼容回滚镜像分别为 Backend/Worker `sha256:f79df018b95d1eaeca450d376325bae1a19d8d81c5841934bd437af5580e410e`、Frontend `sha256:5a058b0715d7b9648fbee00b3ddd710fa6174aa920a1d283b491bc9821a25627`；它们保留 0019 技术组受众和既有功能，只撤回开放后编辑，应用回滚不得降级数据库。
+- 新加密归档和临时 GPG 私钥仍同机位于 `/tmp`，只适合作为短期恢复材料；必须迁移到受控异机介质并分离保存。

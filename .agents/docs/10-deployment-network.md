@@ -245,7 +245,7 @@ minio
 
 - 部署方只需填写 `FEISHU_APP_ID`、`FEISHU_APP_SECRET` 和 `FEISHU_WIKI_URL`，三项必须成组配置，不再要求独立 Space ID、Root Node Token 或参考仓库的可选 `FEISHU_DOCUMENT_ID`；生产可用 `FEISHU_APP_SECRET_FILE` 替代直接 secret 值。
 - `FEISHU_WIKI_URL=https://<tenant>.feishu.cn/wiki/space/<space_id>` 同步整个空间；`https://<tenant>.feishu.cn/wiki/<node_token>` 同步单篇新版文档。空间 ID 从 URL 自动解析且必须为数字。
-- 旧 `FEISHU_KNOWLEDGE_SOURCE_URL` 仅作为当前 `.env` 的迁移兼容别名；新部署、示例与 Compose 统一使用 `FEISHU_WIKI_URL`。文档、媒体数量和单媒体字节上限是平台内置安全边界与可选运维调优项，不是部署方必须填写的第四项业务资料。
+- 旧 `FEISHU_KNOWLEDGE_SOURCE_URL` 仅作为当前 `.env` 的迁移兼容别名；新部署、示例与 Compose 统一使用 `FEISHU_WIKI_URL`。文档、资源数量和字节上限是平台内置安全边界与可选运维调优项，不是部署方必须填写的第四项业务资料；Compose 默认 `FEISHU_KNOWLEDGE_MAX_FILE_BYTES=1073741824`（文件 1 GiB）、`FEISHU_KNOWLEDGE_MAX_ASSET_BYTES=52428800`（图片/白板 50 MiB）。文件同步使用 16 MiB multipart，Worker 768 MiB 内存边界无需随文件上限提高。
 - 未启用同步时生产仍创建权限 0600 的空 secret 文件并将 App ID/Wiki URL 留空；不得把真实 app secret 写入 `.env.example`、镜像、Compose 文件、CI 日志或前端环境。
 - 只有常驻 Worker 或基于同一 Worker 服务启动的一次性前台初始化容器连接 `worker_egress_net` 并主动访问飞书开放 API；Backend/Frontend 保持无飞书出网路径。防火墙可把该网络的 443 出站进一步限制到飞书开放 API 解析地址，并监控 DNS 变化。
 - 未配置凭证时服务仍可启动、学生可读取已有快照，但管理员创建同步返回安全的未配置错误。首次真实同步已于 2026-08-27 在部署方完成权限配置后以前台接管方式验收通过；后续更新继续检查最新运行、Outbox 与学生读取状态。

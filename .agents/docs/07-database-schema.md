@@ -88,11 +88,12 @@ erDiagram
 - Connect 用户名由 `email_normalized` 的 local-part 派生，不新增用户名列、独立唯一约束或可编辑用户名；旧域名存量账号不启用前缀登录。
 - 数据库 CHECK 允许 `@hkust-gz.edu.cn` 存量行与 `@connect.hkust-gz.edu.cn` 新行共存；公开注册和管理员邮箱修改的 Service 只允许 Connect 域名。
 - 任一 `active` 账号必须具有 `email_verified_at`；`cohort_id` 和 `direction_id` 均可空且不参与登录条件。新产品只维护 `direction_id`，`cohort_id` 仅保留历史兼容。
+- 管理员按问卷第一志愿批量配置方向时复用 `direction_id`，只更新当前 `active student` 且在值实际变化时增加用户 revision；`updated_at` 由既有 ORM 更新语义维护。本功能不新增用户字段或索引。
 - 公开注册先创建 `pending_email student`；验证事务在固定 advisory lock 内确认没有任何 `active` 用户时把首个账号设为 `admin`，其余账号保持 `student`。同一事务锁也用于登录时确认不存在其他用户行；唯一的已验证 `active student` 必须提升为 `admin`、增加 revision、撤销旧 Session 并写审计。
 - `password_hash` 只存 Argon2id 编码结果。
 - 角色变更和状态变更均写 `audit_logs`。
 
-索引：`(status, created_at)`、`(cohort_id, direction_id, status)`、`(role, status)`。届次索引暂保留，供历史受众查询使用。管理员账号搜索在现有约 300 账号容量边界内，于分页前对 `email_normalized`、`full_name`、`student_number` 做转义后的大小写不敏感包含匹配，并把中文/英文角色与状态名称映射到枚举条件；`%`、`_` 和反斜杠按普通文本处理。本行为不新增字段、索引或 Alembic 迁移。
+索引：`(status, created_at)`、`(cohort_id, direction_id, status)`、`(role, status)`。届次索引暂保留，供历史受众查询使用。管理员账号搜索在现有约 300 账号容量边界内，于分页前对 `email_normalized`、`full_name`、`student_number` 做转义后的大小写不敏感包含匹配，并把中文/英文角色与状态名称映射到枚举条件；`%`、`_` 和反斜杠按普通文本处理。用户页按技术组查看继续使用同一查询的 `users.direction_id = :direction_id` 精确条件和现有组合索引。本行为不新增字段、索引或 Alembic 迁移。
 
 ### `sessions`
 
@@ -241,16 +242,27 @@ erDiagram
 
 ### `intention_surveys`
 
-`id`, `title`, `description_markdown`, `description_html`, `status`, `max_submissions`, `starts_at`, `ends_at`, `public_token_hash`, `created_by`, `updated_by`, `created_at`, `updated_at`, `revision`。
+`id`, `title`, `description_markdown`, `description_html`, `status`, `all_students`, `max_submissions`, `starts_at`, `ends_at`, `public_token_hash`, `created_by`, `updated_by`, `created_at`, `updated_at`, `revision`。
 
-- `status` 只允许 `draft`、`open`、`closed`、`archived`；Service 允许 `draft → open → closed`、`closed → open` 和 `closed → archived`，归档为终态。重新开启只更新问卷根记录的状态、操作者、时间与 revision，不修改问题、选项、回答、提交次数或 token，因此无需新增字段或迁移。
+- `status` 只允许 `draft`、`open`、`closed`、`archived`；Service 允许 `draft → open → closed`、`closed → open` 和 `closed → archived`，归档为终态。重新开启只更新问卷根记录的状态、操作者、时间与 revision；非归档编辑可更新问卷根字段和受众，`open/closed` 另可原位更新题目文字，但不修改题目/选项身份、回答、提交次数或 token。
+- `all_students` 为非空布尔值；`true` 表示全部学生，`false` 表示只允许 `intention_survey_directions` 中技术组的当前学生。`20260904_0019` 对既有行使用 `true` 服务端默认，保持原可见范围。
 - 标题去除首尾空白后长度为 1～200；开始和结束时间同时存在时必须 `starts_at < ends_at`。
 - `description_html` 由统一安全 Markdown 渲染器生成；`public_token_hash` 是唯一 64 位 SHA-256 十六进制值，不保存二维码明文 token。
 - `max_submissions` 为 1～100 的正整数或 `NULL`（不限次数）；索引 `(status, starts_at, ends_at)` 支持学生开放问卷查询。
 
+### `intention_survey_directions`
+
+`survey_id`, `direction_id`，复合主键 `(survey_id, direction_id)`。
+
+- 问卷删除时关系 `ON DELETE CASCADE`；技术组仍被问卷引用时 `ON DELETE RESTRICT`，另有 `direction_id` 索引支持方向反查。
+- Service 保证 `all_students=true` 时没有关联，受限问卷保存 1～50 个不重复且创建/任一非归档编辑时启用的技术组；首次开放再次复核启用状态，归档后关系冻结。调整受众只影响后续资格，不删除既有回答。
+- 学生列表查询以 `all_students=true OR 当前 users.direction_id 命中关系` 过滤；详情、二维码和提交继续独立查验。统计分母和问卷“全部”邮件范围用这些技术组中当前 `active student` 计算，回答关系不因用户后续换组而删除。
+
 ### `intention_questions`
 
 `id`, `survey_id`, `prompt`, `allow_multiple`, `display_order`。
+
+- `draft` 编辑可级联替换问题与选项；`open/closed` 编辑只允许原位更新 `prompt`，并要求问题数量/顺序、`allow_multiple` 及所属选项数量/文字/顺序全部不变，以保持回答外键及答案语义。
 
 - 问卷删除时级联删除问题；`prompt` 去空白后长度 1～200，`display_order >= 0`。
 - `(survey_id, display_order)` 唯一；每题独立使用 `allow_multiple` 表达单选或多选。
@@ -276,6 +288,8 @@ erDiagram
 - 回答删除时级联删除选择；选项仍被引用时 `RESTRICT`。
 - Service 在写入前锁定问卷和本人回答，验证全部问题、问题归属、选项归属及每题选择数量，并在同一事务校验/增加提交次数；数据库唯一约束处理并发首次填写。
 - 管理员统计只聚合回答数和分题选项选择数；实名名单通过受管理员保护的查询连接 `users`，批量装载最新选择，只返回需求允许字段。
+- 第一志愿方向配置连接 `intention_responses`、`intention_response_options` 与第一题选项，按用户 UUID 稳定锁定符合条件账号并更新 `users.direction_id/revision`；`(survey_id,user_id)` 唯一约束保证取到的是每人的唯一最新回答。选择表和回答表保持不变，既有 `assignment_audience_users` 也不补写或重算，因此无需 Alembic 迁移；应用回滚不会自动恢复已经明确写入的用户方向。
+- 方向配置资格直接复用已规范化保存的 `intention_surveys.title`：去除首尾空白后只接受精确值“意向选择”。该应用层规则不新增列、检查约束、索引或 Alembic 迁移。
 
 ## 提交、版本和评语
 
@@ -382,7 +396,7 @@ CHECK (
 - `secret_payload_ciphertext` 可空，只用于保存经独立 Outbox 密钥认证加密的投递秘密；不得通过管理 API、日志或审计返回。
 - 领取索引 `(status, available_at)`；Worker 使用 `FOR UPDATE SKIP LOCKED`。
 - 邮件管理 API 只查询 `job_type` 为邮件的记录并对接收方脱敏。
-- 问卷范围邮件复用本表，手动成员、技术组和全部激活学生最终都按单个收件学生创建 `job_type=intention_open_email` 任务，事件键为 `intention:{survey_id}:open:{revision}:email:{user_id}`；普通载荷只保存已验证收件地址、称呼、问卷标题和站内相对路径，不保存范围、技术组、答案、补充说明、二维码 token 或管理员身份。范围只用于发送事务中的权威查询与脱敏审计，本功能不新增字段、表、索引或 Alembic 迁移。
+- 问卷范围邮件复用本表，手动成员、多个技术组和全部激活学生最终都按单个收件学生创建 `job_type=intention_open_email` 任务，事件键为 `intention:{survey_id}:open:{revision}:email:{user_id}`；普通载荷只保存已验证收件地址、称呼、问卷标题和站内相对路径，不保存范围、技术组、答案、补充说明、二维码 token 或管理员身份。多个技术组仅在发送事务中用于按并集解析当前激活学生，范围与技术组 UUID 列表只进入脱敏审计；本功能不新增字段、表、索引或 Alembic 迁移。
 - 删除未发布通知/作业时，只删除同一资源仍处于 `pending/processing/retry` 的定时发布任务；已发送邮件任务和其他业务历史不删除。资源行锁与 Worker 的资源行锁共同解决删除/发布竞态。
 - 账号擦除为每个个人对象创建 `delete_account_object`：普通 `payload` 暂存服务端对象键，multipart ID 只存认证密文，邮件管理 API 不查询该类型。Worker 成功后清空两种载荷；失败摘要不得含对象键/上传 ID。目标账号的历史邮件任务按当前/历史用户事件键和令牌 ID 锁定，收件人、姓名与密文秘密清空，活动任务转 `dead/USER_DELETED`。
 
@@ -423,7 +437,7 @@ CHECK (
 | HW | `assignments`, 受众配置与快照, `assignment_extensions` |
 | COMP、TEAM | `competitions`, `competition_registrations`, `teams`, `team_members`；`competition_tasks` 仅保留历史兼容数据 |
 | SUB | `submissions`, `submission_versions`, `version_files`, `feedback` |
-| INT | `intention_surveys`, `intention_questions`, `intention_options`, `intention_responses`, `intention_response_options`, `outbox_jobs` |
+| INT | `intention_surveys`, `intention_survey_directions`, `intention_questions`, `intention_options`, `intention_responses`, `intention_response_options`, `outbox_jobs` |
 | HELP | `help_requests`, `student_notifications`, `audit_logs` |
 | SHOW | `assignment_excellent_submissions`、作业与版本外键、源附件删除保护 |
 | FILE | `files`, `upload_sessions`, `upload_parts` |
@@ -460,7 +474,7 @@ CHECK (
 ### `knowledge_nodes` 与 `knowledge_documents`
 
 - 节点按 `sync_run_id` 保存父节点、飞书节点/对象标识、`document/folder/file/unsupported` 类型、标题、深度、顺序和安全原文 URL；同一运行的节点 token 唯一。`file` 节点可以通过可空 `asset_id` 关联 `knowledge_assets`，失败或历史快照保持空值，文件内容仍不进入 PostgreSQL。
-- 文档一对一关联节点，按运行保存外部文档标识、标题、原文 URL、规范化块 `JSONB` 和顺序；同一运行的文档标识唯一。公式继续使用既有 JSONB：独立公式为 `type=equation`，行内公式由 segment 的 `equation=true` 标记，不新增列或表。
+- 文档一对一关联节点，按运行保存外部文档标识、标题、原文 URL、规范化块 `JSONB` 和顺序；同一运行的文档标识唯一。图片文字说明继续使用既有 JSONB 中图片块的可选纯文本 `caption`，公式同样使用既有 JSONB：独立公式为 `type=equation`，行内公式由 segment 的 `equation=true` 标记，不新增列或表。
 - 失败运行可保留诊断状态，但从不被学生读取；同一运行重试前级联清空部分节点/文档再重建。
 - 对齐参考同步后，只有目录遍历和全部目标 Docx 的 blocks、标题及引用均完成的运行才能标为 `succeeded`；目录子树或单篇正文不得被静默跳过并形成新的部分成功快照。
 

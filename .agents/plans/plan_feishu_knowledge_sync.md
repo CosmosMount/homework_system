@@ -467,3 +467,132 @@
 - 新 OpenPGP 每日备份 `pnx-backup-20260831T102419Z-daily` 为 101,156,599 字节、0600、SHA-256 `e3a7ddf3ca640f8d825c3d763a0db938b3264fca21fced5894c216d8da8a1468`；外层、完整解密、内部逐文件和 PostgreSQL 17 恢复目录检查通过。
 - 固定标签 `knowledge-file-gallery-fix-20260831` 已按 Backend/Worker、Frontend/Nginx 两阶段上线。Backend/Worker 镜像为 `sha256:2b1c9079e5dc9f2079acdb063cd7a0e2d88c52c68be045a346f180054d692141`，Frontend 为 `sha256:a5ad5927756819aeedbe4931b4921a60831d11fcaced9ea9530ded90f04446d3`；六服务 healthy、重启 0，入口和匿名 307/401 守卫通过，发布窗口日志无严重错误。
 - 本轮无迁移，生产 Alembic 保持 `20260831_0018 (head)`；PostgreSQL/MinIO 容器、卷和网络未重建，部署前后 `users/runs/nodes/documents/assets/outbox=169/12/1836/1544/1064/430`。当前 217 篇/1,057 资源快照由旧代码生成，16 个文件仍无关联；真实管理员须在新版本上再手动同步一次，成功后才完成最终业务验收。
+
+## 2026-08-31 内嵌附件失败原因与 Drive 文件 mention 修复
+
+### 背景与必要性
+
+- 最新成功快照已有 217 篇文档和 1,073 个资源；16 个目录独立文件均已关联资源，说明目录文件 `files` 端点修复已经生效。
+- 正文 47 个附件块中有 13 个未本地化：7 个属于现有安全类型白名单之外，6 个超过默认 50 MiB。当前页面只显示不可下载，没有说明安全策略导致的具体状态，管理员也难以区分类型、大小和上游失败。
+- 正文另有 13 处 Drive `/file/{token}` 引用。同步器把全部 `mention_doc` 当作文档 token，前端无法映射到当前快照文档后，在学生侧关闭飞书原文链接的策略下退化为纯文字；其中合规文件本可通过 Drive `files` 端点本地化并复用登录态下载。
+- 本修订对应 `KB-003`、`KB-005`～`KB-008`、`FILE-006`、`FILE-007`、`SEC-003` 和 `NFR-004`。
+
+### 实施范围
+
+1. 资产引用显式记录远端下载端点：正文图片、附件和白板继续使用 `medias`，目录独立文件与受信飞书 Drive `/file/{token}` 引用使用 `files`。只从受信飞书主机和严格路径提取 token，非受信 URL 不进入下载流程。
+2. 同步发现同时覆盖 `mention_doc.url` 和富文本链接中的 Drive 文件引用；成功本地化后复用 `knowledge_assets`、`knowledge_document_assets` 与既有 `/knowledge/assets/{asset_id}/content` 登录态下载，不新增数据库迁移、对象键暴露或飞书写回路径。
+3. 同步器把失败归一为 `type_not_allowed`、`too_large`、`unavailable` 三个稳定粗粒度类别并传入正文规范化。日志不得记录飞书 token、文件名、原始 URL、Cookie 或上游错误正文。
+4. Drive 文件富文本段落成功时输出内部资源标识和安全文件元数据，失败时输出文件标记、显示名与粗粒度原因；不得把 Drive 文件误写为 `document_token`。普通文档 mention 和普通外链保持既有行为。
+5. 前端把 Drive 文件段落渲染为内联文件控件：有资源时通过登录态接口下载，无资源时分别显示“文件类型不支持”“文件超过同步上限”或“暂不可下载”。学生不获得飞书原始下载链接；真实管理员普通视图保留既有来源排障入口。
+6. 保留当前安全扩展名、危险后缀和默认 50 MiB，不放行 EXE，不直接提高到 200 MiB。更大文件需要另行设计流式 Feishu→MinIO 下载及内存验证，避免当前整文件读入内存路径放大 Worker 风险。
+
+### 验证与发布方式
+
+- 后端测试覆盖受信 `/file/` token、非受信 URL、`mention_doc`/富文本链接发现、`files`/`medias` 精确端点、文档资源授权关系，以及三类失败原因；前端测试覆盖可下载 Drive 文件、三类不可用状态、普通文档 mention 和管理员回退行为。
+- 运行后端知识库定向与完整 Pytest、Ruff、格式和严格 Mypy；运行前端知识库定向与完整 Vitest、ESLint、严格 TypeScript、Next.js 生产构建，并执行 `git diff --check`。
+- 源码修复不连接或修改当前运行 PostgreSQL/MinIO，不主动触发真实飞书同步。部署后须由真实管理员在 `/admin/knowledge` 手动触发一次成功同步；旧快照不会自动补齐，失败同步继续不得覆盖最近成功快照。
+
+### 实施与验证结果
+
+- 后端已为资产引用增加 `media/file` 远端端点，严格识别受信飞书/Lark `/file/{token}` 的 mention 与富文本链接；Drive 文件不再写入 `document_token`，成功时进入现有文档资源关系和登录态下载，失败时进入三类稳定状态。目录独立文件继续走 `files`，正文块/内嵌附件继续走 `medias`。
+- 同步器只把资源种类和 `type_not_allowed/too_large/unavailable` 写入回退日志；快照文件 segment/附件块返回内部资源元数据或粗粒度原因。前端已增加内联文件控件、三类中文状态和学生/管理员回退分流，普通文档 mention 与普通 HTTPS 外链保持。
+- 知识库后端定向 34 项、完整后端 325 项、Ruff、173 文件格式检查和 153 个源文件严格 Mypy通过；前端知识库 16 项、完整 25 文件/122 项 Vitest、ESLint、严格 TypeScript与 Next.js 16.3.2 生产构建通过，`git diff --check` 通过。
+- 本轮无依赖或数据迁移，源码验证未连接运行 PostgreSQL/MinIO 或飞书，未运行 migrate、真实同步、Docker 构建或部署。旧成功快照保持不变；上线后仍须由真实管理员手动成功同步。
+
+### 2026-09-01 生产部署结果
+
+- 用户反馈手动同步后页面无变化。生产只读检查确认北京时间 09:06～09:10 的最新运行已成功生成 217 篇文档和 1,102 个资源，但 Backend/Worker/Frontend 仍固定为旧标签 `knowledge-file-gallery-fix-20260831`，本修订 21 个工作树文件尚未进入镜像；因此该运行只能生成旧格式快照，不是同步按钮失效。
+- 部署前确认无 `pending/running` 同步并创建 OpenPGP 每日备份 `pnx-backup-20260901T012444Z-daily`：归档 228,753,791 字节、0600、SHA-256 `1fb111de74dd27c47be9d6d24bc79e29c98bd8ee218663cc819dd676cb67e222`；外层校验、完整解密、内部逐文件校验和 PostgreSQL 17 的 316 项恢复目录均通过。备份包含 2,984 个对象清单，本次相对周基线累计增量 99 个对象且删除 0。
+- 固定标签 `knowledge-inline-files-20260901` 已无缓存构建。Backend/Worker 镜像为 `sha256:ca23fa69c76468c96f1cf065f98e4d3b6a25ed8fbdc4d1b29c6ce8e7f18e9d10`，Frontend 为 `sha256:98a00ead7518a601160f211faf667f8c4dd2d494f3f48e0b6cb485b17f724b34`，均以 `appuser` 运行；隔离容器验证受信严格 `/file/{token}`、恶意主机/额外路径拒绝及三类中文状态均已进入产物。
+- 已按 Backend/Worker、Frontend/Nginx 两阶段使用 `--no-deps --force-recreate` 替换并等待健康。六服务 healthy、重启 0，Backend 存活/就绪为 200，知识库页面/API/虚假资源下载匿名为 307/401/401；运行逻辑、编译产物和发布窗口严重错误日志检查通过。PostgreSQL 与 MinIO 容器 ID 保持 `bfa750f66ab0…`、`331150f34f37…`，容器、卷和网络未重建。
+- 本轮未运行 migrate，Alembic 保持 `20260831_0018 (head)`；部署前后 `users/runs/nodes/documents/assets/outbox=170/14/2302/1978/1109/433`。发布过程未触发飞书同步或其他业务写入，最新运行仍是旧代码生成的 `succeeded/217/1102`；必须由真实管理员在新 Worker 上再次手动同步，成功后再验收合规 Drive 文件具有 `asset_id`、不合规资源显示明确原因且学生侧无飞书失败链接。
+
+## 2026-09-01 知识库文件 1 GiB 流式本地化修订
+
+### 背景与必要性
+
+- 用户明确要求把飞书知识库文件同步上限提高到 1 GiB，即 1,073,741,824 字节。现有默认 50 MiB 会使 6 个安全类型文件显示“文件超过同步上限”，无法通过平台登录态下载。
+- 当前 `UrllibHttpTransport` 使用 `response.read(max_bytes + 1)`，`KnowledgeSynchronizer` 再把同一完整 `bytes` 交给 MinIO；生产 Worker 内存限制为 768 MiB。仅修改配置会在 1 GiB 文件到来时先触发 OOM，违反 NFR-008 和 ADR-050 预留的内存边界。
+- 本修订影响 `KB-003`、`KB-005`～`KB-008`、`FILE-003`、`FILE-007`、`NFR-008`，不改变作业/通知上传的 2 GiB 总上限、文件类型白名单、资源授权或管理员手动同步边界。
+
+### 实施范围
+
+1. 新增独立 `FEISHU_KNOWLEDGE_MAX_FILE_BYTES`，默认和生产设为 1 GiB；现有 `FEISHU_KNOWLEDGE_MAX_ASSET_BYTES` 保持 50 MiB，仅约束图片与白板，避免把视觉媒体也无差别放宽到 1 GiB。块附件、富文本内嵌附件、正文 Drive 文件和目录独立文件使用文件上限。
+2. Feishu 下载改为拒绝重定向的流式响应：打开时先校验受信固定主机、HTTP 状态和可用的 `Content-Length`，读取中累计字节；任一路径超过相应上限立即关闭并抛出 `FEISHU_RESPONSE_TOO_LARGE`，空响应保持 `FEISHU_ASSET_EMPTY`。JSON 请求仍使用既有 12 MiB 有界整包路径。
+3. Service 只读取首个固定小块完成图片魔数、文件名、危险后缀、扩展名和内容类型校验；校验通过后，以固定 16 MiB 分片把首块及后续流写入 MinIO multipart，同时增量计算完整 SHA-256、大小和首 32 字节。不得创建宿主明文临时文件，也不得把完整文件存入 PostgreSQL 或内存。
+4. 任意 Feishu、类型或 MinIO 错误都必须关闭上游响应；已创建 multipart 必须尽力 abort，未完成对象不得进入知识库资源表。超限继续映射 `too_large`，类型拒绝继续映射 `type_not_allowed`，其他失败继续映射 `unavailable`；日志脱敏边界不变。
+5. 保持 350 ms 串行 Drive 队列、`files/medias` 精确端点、已有资源复用、最后成功快照、学生无飞书失败链接和 5 分钟登录态下载授权。不新增依赖、公开 API、数据库字段或 Alembic 迁移。
+
+### 验证与部署
+
+- 单元测试覆盖精确上限成功、声明大小与累计读取超限、空流、响应关闭、固定块读取、首块类型拒绝不创建 multipart、multipart 分片 SHA-256/ETag 顺序、完整哈希/大小、异常 abort 和原异常保留；现有 `files/medias`、三类失败原因、授权与普通文档 mention 回归继续通过。
+- 使用小型确定性数据和降低后的测试上限证明内存与文件大小解耦；禁止在自动测试、工作区或生产中生成 1 GiB 明文样本。运行后端知识库/对象存储定向及完整 Pytest、Ruff、格式、严格 Mypy，前端既有知识库回归、ESLint、严格 TypeScript、生产构建和 `git diff --check`。
+- 上线前生成并完整校验新 PostgreSQL + MinIO 加密同点备份；无迁移，只构建并替换 Backend/Worker，Frontend 镜像可复用当前固定产物。确认六服务 healthy、Worker 768 MiB 限制不变、PostgreSQL/MinIO 容器不重建、运行配置为 1 GiB 且发布前后聚合一致。
+- 发布不代替管理员触发飞书同步。真实管理员在新 Worker 上再次手动同步后，验收原 50 MiB～1 GiB 且类型合规的文件获得内部 `asset_id`；超过 1 GiB 仍显示“文件超过同步上限”，危险类型继续显示“文件类型不支持”，失败同步不得覆盖最近成功快照。
+
+### 实施、验证与部署结果
+
+- 已新增文件/视觉资源独立上限和流式 transport：附件及 Drive 文件使用 1,073,741,824 字节，图片/白板保持 52,428,800 字节；声明大小与累计读取双重限制，超限、空流、网络异常和正常消费结束都关闭响应。Service 只缓存 64 KiB 首块，后续最多 1 MiB 读取；MinIO 固定 16 MiB multipart，每片 SHA-256 Base64，按 ETag 顺序完成并增量计算完整摘要。任意上游或对象存储异常尽力 abort，abort 失败不覆盖原错误。
+- 定向知识库/对象存储 40 项与完整后端 331 项 Pytest、全量 Ruff、174 个 Python 文件格式检查、120 个源码文件严格 Mypy 和 `git diff --check` 通过。测试使用 4 字节边界与 16 MiB 加尾块样本，不生成 1 GiB 文件；新镜像在无网络只读容器通过配置/实现断言，并在当前 MinIO 完成一次小型 multipart/checksum 创建后立即删除测试对象。
+- 新 OpenPGP 每日备份 `pnx-backup-20260901T021328Z-daily` 为 274,518,885 字节、0600、SHA-256 `91b8aa98374ab81ec0982a1a5a64e7aef674930c58b2d0ab6fddd039c1a87a92`；完整解密、内部逐文件校验、PostgreSQL 17 的 316 项恢复目录和 2,986 个对象清单通过。
+- 固定标签 `knowledge-file-1gib-20260901` 已只替换 Backend/Worker，镜像为 `sha256:0757eb16493e0fbd1c5292ba9cd78db5ca81ee8b0800cf50b7bd6cc5e03b2f4f`；Frontend 继续运行原摘要 `sha256:98a00ead7518a601160f211faf667f8c4dd2d494f3f48e0b6cb485b17f724b34`，PostgreSQL、MinIO、Frontend、Nginx 容器 ID 保持不变。六服务 healthy、重启 0，五个健康入口为 200，知识库页面/API/虚假资源下载匿名为 307/401/401，发布窗口 Backend/Worker 严重错误关键词为 0。
+- 运行 Worker 已确认 `FEISHU_KNOWLEDGE_MAX_FILE_BYTES=1073741824`、`FEISHU_KNOWLEDGE_MAX_ASSET_BYTES=52428800`；Alembic 保持 `20260831_0018 (head)`，发布前后 `users/runs/nodes/documents/assets/outbox=170/15/2535/2195/1111/434` 且运行状态保持 `failed=4/succeeded=11`，没有发布写入或自动同步。生产模板的 Worker 768 MiB 限制未变；当前宿主项目实际使用 `compose.yml` 且 `HostConfig.Memory=0`，本修订未扩大基础设施范围去修改该既有运行方式。
+- 旧成功快照不会原地更新。本部署未冒充管理员触发同步；仍须真实管理员再次手动成功同步，才能验收 50 MiB～1 GiB 合规文件获得内部资源关联。
+
+## 2026-09-01 知识库 Windows EXE 下载支持修订
+
+### 背景与必要性
+
+- 用户在 1 GiB 流式文件同步上线后明确要求增加 `.exe` 支持，目标仍是飞书培训知识库只读快照中的块附件、富文本文件、正文 Drive 文件和目录独立文件，不是放宽学生作业、赛事作品或通知附件上传。
+- 现有全局 `normalize_file_name()` 同时把 `exe` 列为危险后缀，`application/x-msdownload` 等列为危险媒体类型；直接修改 `SAFE_EXTENSIONS` 或危险集合会扩大所有用户上传入口，违反最小范围和文件安全边界。
+- 本修订影响 `KB-003`、`KB-005`～`KB-008`、`FILE-006`、`FILE-007`、`SEC-003` 和 ADR-051，不改变公开 API、数据库 Schema、用户上传白名单、1 GiB 文件上限或管理员手动同步边界。
+
+### 实施范围
+
+1. 在共享文件校验层新增知识库专用文件名入口：普通安全类型继续完全复用现有规则；仅知识库允许最终扩展名为单一语义的 `.exe`。若 `.exe` 前还有已知安全扩展名或危险后缀（如 `.pdf.exe`、`.zip.exe`、`.cmd.exe`、`.exe.exe`）则按伪装/双危险扩展拒绝；版本号等非扩展语义段可保留。
+2. `.exe` 不信任飞书报告的 MIME，也不只检查 `MZ` 两字节。64 KiB 首块必须包含 DOS `MZ`、有效 `e_lfanew`、`PE\0\0`、受支持 CPU 架构、合理 section 数、PE32/PE32+ optional header、可执行映像标志且不得为 DLL；任一不符归一为既有 `unavailable`，并在创建 MinIO multipart 前关闭响应。
+3. 成功文件在资源元数据中使用 `application/vnd.microsoft.portable-executable`；对象键仍由服务端生成，上传继续使用 16 MiB multipart 和 1 GiB 累计上限。登录态知识库资源端点继续返回 307 短时签名地址，但 EXE 的 MinIO 响应必须同时强制 `Content-Disposition: attachment` 与 `Content-Type: application/octet-stream`，配合 Nginx `X-Content-Type-Options: nosniff`，不得内联展示或提供飞书直链。
+4. 作业、赛事、通知等用户上传继续由原 `normalize_file_name()` 和危险 MIME 集合拒绝 `.exe`；不把 `.exe` 加入全局 `SAFE_EXTENSIONS`，不允许管理员在作业/赛题中选择该扩展名。本修订不做杀毒、沙箱执行、代码签名背书或自动运行，页面只提供明确文件名/大小/类型和用户主动下载。
+
+### 验证与部署
+
+- 后端覆盖有效 PE32/PE32+、伪造 `MZ`、越界 PE offset、无可执行标志、DLL、未知架构、`.pdf.exe` 和全局上传仍拒绝 `.exe`；类型拒绝不得创建 multipart且必须关闭飞书响应。资源授权测试断言 EXE 只获得 attachment + octet-stream 的签名下载，其他附件行为不变。
+- 运行知识库/上传/对象存储定向与完整后端 Pytest、Ruff、格式、严格 Mypy 和 `git diff --check`。无前端结构或 API 变化时复用既有“文件类型/大小”控件和已验证 Frontend 镜像。
+- 质量门通过后生成并完整校验新 PostgreSQL + MinIO OpenPGP 备份，只构建和定向替换 Backend/Worker；不运行迁移，不重建 PostgreSQL/MinIO，不代替管理员触发同步。真实管理员再次手动成功同步后，验收合规 PE 获得内部资源关联，伪造/双扩展文件仍显示不可用，失败同步不得覆盖最近成功快照。
+
+### 实施、验证与部署结果
+
+- 已新增知识库专用文件名与媒体检测：普通安全类型继续复用全局规则，仅知识库接受单一语义 `.exe`。64 KiB 首块验证 DOS/PE 签名、有界偏移、五种支持架构与 PE32/PE32+ 合法配对、标准 optional header 下界、section 表边界、可执行映像且非 DLL；失败发生在创建 multipart 前并关闭飞书响应。普通作业、赛事、通知等上传仍拒绝 EXE 和伪装双扩展。
+- 合规 PE 元数据使用 `application/vnd.microsoft.portable-executable`，继续走服务端对象键、1 GiB 流式读取和 16 MiB multipart。当前成功快照登录态授权不变；签名下载强制 attachment 与 `application/octet-stream`。知识库/上传/对象存储定向 47 项、完整后端 348 项 Pytest、全量 Ruff、174 文件格式、154 个 `app + tests` 严格 Mypy 和 `git diff --check` 全部通过。
+- 新 OpenPGP 每日备份 `pnx-backup-20260901T073356Z-daily` 为 2,850,824,736 字节、0600、SHA-256 `376aa4f8031d02d353c39972b17881c33dd7a1a908253b7306cbc2f24ca10756`；外层、完整解密、内部逐文件与 PostgreSQL 17 的 316 项恢复目录均通过。MinIO 清单为 2,996 个对象/4,942,021,167 字节，相对周基线累计负载 111 个/2,903,856,572 字节，删除 0；验证明文目录已清理。
+- 无缓存固定标签 `knowledge-exe-20260901` 已只替换 Backend/Worker，镜像为 `sha256:e96142385c75ca08589c9fb993d06094a121725986492af00913b708eeaa33c3`，以 `appuser` 运行。Frontend 继续为 `sha256:98a00ead7518a601160f211faf667f8c4dd2d494f3f48e0b6cb485b17f724b34`；Frontend/Nginx/PostgreSQL/MinIO 容器 ID 保持，六服务 healthy、重启 0。无网络只读候选断言和当前 MinIO 实际 attachment/octet-stream/nosniff 冒烟通过，测试对象已删除。
+- 未运行 migrate，Alembic 保持 `20260831_0018 (head)`；文件/视觉上限保持 1 GiB/50 MiB。发布前后 `users/runs/nodes/documents/assets=170/16/2768/2412/1121`，同步状态保持 `failed=4/succeeded=12`，没有 `pending/running`，发布未触发飞书同步。Outbox `435→436` 是发布窗口内外部正常 `email_verification`，不是部署写入；知识库页面/API/虚假资源匿名为 307/401/401，Backend/Worker 严重日志计数为 0。
+- 旧成功快照不会原地增加 EXE 资源。本部署未代替管理员同步；真实管理员仍须在新 Worker 上手动成功同步，再验收合规 PE 获得内部 `asset_id`。应用回滚只需恢复 `knowledge-file-1gib-20260901` 并定向替换 Backend/Worker，无数据库或 MinIO 回滚。
+
+## 2026-09-04 图片文字说明保留与网页展示修订
+
+### 背景与必要性
+
+- 固定参考提交 `c28f8a0` 会从飞书图片块的 `image.caption.content` 导出文字说明，并在图片下方显示；当前规范化器只保留 `token/width/height`，导致说明在写入文档 JSONB 前丢失，网页只能使用通用文件名作为替代文本。
+- 本修订对应 `KB-003` 和 `NFR-004`，只补齐既有图片块语义，不改变图片下载、当前成功快照、连续画廊、页内预览或资源授权边界。
+
+### 实施范围
+
+1. 后端规范化图片块时读取 `image.caption.content`，移除空字符、限制长度并忽略纯空白说明；有效说明以可选 `caption` 字段写入现有结构化块 JSONB。不得接收或生成 HTML。
+2. 前端知识块类型增加可选 `caption`；图片存在说明时，将说明同时用于图片替代文本和可见 `figcaption`，无说明时继续使用安全文件名或通用图片名称。白板既有固定提示保持不变。
+3. 图片说明属于对应图片自身，连续图片组成画廊时每张图仍在自己的 `figure` 内展示说明；说明不得被画廊分组逻辑误判为独立正文边界，也不得改变图片顺序。
+4. 更新产品需求、设计系统、页面、架构、API、数据库、安全、测试、ADR、变更记录、任务状态和阶段记忆。不新增依赖、数据库列或 Alembic 迁移。
+
+### 验证与上线边界
+
+- 后端回归使用包含有效说明、空字符和纯空白说明的飞书图片块，断言有效文字被安全保留、空说明不进入结构化输出，图片资源发现与尺寸不回归。
+- 前端回归断言单图和画廊中的说明可见、图片 `alt` 与预览可访问名称使用说明，无说明图片继续使用文件名且不渲染空说明。
+- 运行知识库后端定向 Pytest、Ruff/格式/Mypy，以及前端知识库 Vitest、ESLint、严格 TypeScript 和生产构建；执行 `git diff --check` 并复核未覆盖工作树中既有并行修改。
+- 旧成功快照不会原地获得 `caption`。源码或镜像部署后仍须由真实管理员手动完成一次成功同步，新的网页展示才会覆盖飞书中已有图片说明；失败同步继续不得替换最近成功快照。
+
+### 实施与验证结果
+
+- Backend 已在图片规范化分支读取、清洗并限长 `caption.content`，有效说明写入可选 `caption`；空说明省略，资源关联、宽高、图片失败语义不变。Frontend 已将说明用于可见 `figcaption`、图片 `alt`、预览按钮和对话框名称，单图、画廊、无说明回退和白板行为均保持。
+- 后端知识库定向 15 项、Backend 全量 Ruff 规则检查、目标文件 Ruff 格式检查及相关 2 文件严格 Mypy通过；前端知识库定向 17 项、全量 ESLint、严格 TypeScript 和 Next.js 16.3.2 生产构建通过。
+- `git diff --check` 通过；复核确认本次只在现有文档块 JSONB 增加可选纯文本字段，没有数据库列、Alembic 迁移或新依赖。
+- 本轮未连接或修改运行 PostgreSQL/MinIO，未调用飞书、未触发真实同步、未构建镜像或部署。旧成功快照不变，部署后必须由真实管理员手动完成一次成功同步。

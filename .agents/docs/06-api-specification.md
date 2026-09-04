@@ -311,29 +311,33 @@
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /intentions` | 返回当前 `open` 且处于填写窗口内的问卷摘要、题目数、提交上限及本人已提交次数 | INT-002～INT-004 |
-| `GET /intentions/{survey_id}` | 返回清洗说明、多道题目/选项、提交上限和本人最新回答；可选 `token` 不匹配时返回 404 | INT-001～INT-004、INT-006 |
-| `PUT /intentions/{survey_id}/response` | `{answers:[{question_id,selected_option_ids}],free_text?}` 覆盖本人最新回答并原子增加一次提交次数 | INT-002～INT-004 |
+| `GET /intentions` | 返回当前 `open`、处于填写窗口内且面向全部学生或命中本人当前技术组的问卷摘要、题目数、提交上限及本人已提交次数 | INT-002～INT-004、INT-009 |
+| `GET /intentions/{survey_id}` | 返回清洗说明、多道题目/选项、提交上限和本人最新回答；可选 `token` 不匹配或本人不属于当前填写范围时返回 404 | INT-001～INT-004、INT-006、INT-009 |
+| `PUT /intentions/{survey_id}/response` | `{answers:[{question_id,selected_option_ids}],free_text?}` 在本人当前属于填写范围时覆盖最新回答并原子增加一次提交次数 | INT-002～INT-004、INT-009 |
 
-学生接口按有效角色鉴权；普通管理员视图不能代填，管理员学生视图可以按本人账号填写。问卷关闭、未开始或已过结束时间时，读取不可见，写入返回 `409 INTENTION_CLOSED`；达到上限返回 `409 INTENTION_SUBMISSION_LIMIT_REACHED`。缺少题目、重复题目、单选数量错误、问题不属于问卷、选项不属于对应问题或重复选项均被拒绝。
+学生接口按有效角色鉴权；普通管理员视图不能代填，管理员学生视图可以按本人账号和当前 `users.direction_id` 填写。问卷关闭、未开始或已过结束时间时，读取不可见，写入返回 `409 INTENTION_CLOSED`；问卷受众不匹配时列表不返回，详情、带二维码 token 的详情和提交统一返回 404；达到上限返回 `409 INTENTION_SUBMISSION_LIMIT_REACHED`。缺少题目、重复题目、单选数量错误、问题不属于问卷、选项不属于对应问题或重复选项均被拒绝。
 
 ### 管理接口
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /admin/intentions` | 返回全部问卷及题目数、提交人数和每人提交上限，不含个人回答 | INT-001～INT-005 |
-| `GET /admin/intentions/{survey_id}` | 返回任意状态问卷的管理摘要、revision、完整问题与选项，不含个人回答 | INT-001～INT-002 |
-| `POST /admin/intentions` | 使用 `{title,description_markdown,questions,max_submissions?,starts_at?,ends_at?}` 创建 `draft` 多题问卷并清洗 Markdown；`max_submissions=null` 表示不限 | INT-001～INT-003 |
-| `PATCH /admin/intentions/{survey_id}` | 按 `revision` 原子替换 `draft` 的标题、说明、题目、提交上限和时间窗口，成功返回刷新后的完整问卷；非草稿或 revision 冲突返回 409 | INT-001～INT-003 |
-| `POST /admin/intentions/{survey_id}/{action}` | `action` 为 `open`、`closed` 或 `archived`；`open` 可用于首次开放 `draft` 或重新开启 `closed`，`closed` 关闭当前开放问卷，`archived` 只归档已关闭问卷 | INT-002 |
-| `GET /admin/intentions/{survey_id}/stats` | 返回有效学生数、提交人数/比例和每道题各选项人数/比例 | INT-005 |
+| `GET /admin/intentions` | 返回全部问卷及 `{audience:{all_students,direction_ids}}`、题目数、提交人数和每人提交上限，不含个人回答 | INT-001～INT-005、INT-009 |
+| `GET /admin/intentions/{survey_id}` | 返回任意状态问卷的管理摘要、填写范围、revision、完整问题与选项，不含个人回答 | INT-001～INT-002、INT-009 |
+| `POST /admin/intentions` | 使用 `{title,description_markdown,questions,max_submissions?,starts_at?,ends_at?,audience:{all_students,direction_ids}}` 创建 `draft` 多题问卷并清洗 Markdown；`max_submissions=null` 表示不限，省略 `audience` 兼容为全部学生 | INT-001～INT-003、INT-009 |
+| `PATCH /admin/intentions/{survey_id}` | 按 `revision` 原子修改非归档问卷并返回刷新后的完整内容；`draft` 可整体替换题目/选项，`open/closed` 只原位更新标题、说明、题目文字、提交上限、时间窗口和填写范围，题量/题型/选项变化返回 `409 INTENTION_ANSWER_STRUCTURE_IMMUTABLE`，归档返回 `409 INTENTION_ARCHIVED`，revision 冲突返回 409 | INT-001～INT-003、INT-009 |
+| `POST /admin/intentions/{survey_id}/{action}` | `action` 为 `open`、`closed` 或 `archived`；`open` 可用于首次开放 `draft` 或按原受众重新开启 `closed`，草稿首次开放会复核目标技术组仍启用；`closed` 关闭当前开放问卷，`archived` 只归档已关闭问卷 | INT-002、INT-009 |
+| `GET /admin/intentions/{survey_id}/stats` | 返回当前目标激活学生数、提交人数/比例和每道题各选项人数/比例 | INT-005、INT-009 |
 | `GET /admin/intentions/{survey_id}/responses` | 返回实名提交名单：身份、最新分题答案、补充说明、累计提交次数和最后提交时间 | INT-005 |
 | `POST /admin/intentions/{survey_id}/qr-token` | 轮换二维码 token 并返回 `{survey_id,token,fill_url,generated_at}` | INT-006 |
-| `POST /admin/intentions/{survey_id}/email-notifications` | 必填 `Idempotency-Key`；请求为 `{recipient_scope:"manual",recipient_user_ids:[uuid,...]}`、`{recipient_scope:"direction",direction_id:uuid}` 或 `{recipient_scope:"all"}`，返回 `{survey_id,requested_count,queued_count,already_queued_count}` | INT-007、MAIL-001～MAIL-005 |
+| `POST /admin/intentions/{survey_id}/email-notifications` | 必填 `Idempotency-Key`；请求为 `{recipient_scope:"manual",recipient_user_ids:[uuid,...]}`、`{recipient_scope:"direction",direction_ids:[uuid,...]}` 或 `{recipient_scope:"all"}`，返回 `{survey_id,requested_count,queued_count,already_queued_count}`；旧 `direction_id` 暂作滚动发布兼容输入 | INT-007、MAIL-001～MAIL-005 |
+| `POST /admin/intentions/{survey_id}/apply-first-choice-directions` | 请求为 `{question_id,option_mappings:[{option_id,direction_id}],confirm_overwrite:true}`，返回 `{survey_id,question_id,eligible_response_count,updated_count,unchanged_count,skipped_response_count}` | INT-008 |
 
-状态允许 `draft → open → closed`、`closed → open` 和 `closed → archived`；`archived` 为终态，其他状态组合返回 `409 STATE_CONFLICT`。重新开启只改变状态、更新者、更新时间和 revision，保留内容、既有回答/累计次数、二维码 token、时间窗口和提交上限，并写 `intention.reopen` 脱敏审计。管理详情和修改接口必须使用真实管理员依赖，学生和管理员学生视图均返回 403；详情不含个人答案。统计接口不含个人信息；实名名单接口同样只允许真实管理员，名单只返回当前最新答案，不返回被覆盖的历史内容。二维码 token 使用高熵随机值，数据库只保存 SHA-256；每次生成使旧 token 失效，`closed`/`archived` 问卷拒绝生成，填写地址仍由 Session 登录保护；关闭前已有 token 在重新开启且原时间窗口有效时可继续定位问卷。
+`audience.all_students=true` 时 `direction_ids` 必须为空；`all_students=false` 时必须提供 1～50 个不重复 UUID，且创建、每次非归档编辑和首次开放都整体确认目标组仍启用，否则返回 `400 INVALID_INTENTION_AUDIENCE`。状态允许 `draft → open → closed`、`closed → open` 和 `closed → archived`；`archived` 为终态，其他状态组合返回 `409 STATE_CONFLICT`。修改接口锁定问卷并先检查 revision；`open/closed` 请求仍提交完整问题结构用于比较，但只能改变题目文字，题目数量及顺序、`allow_multiple`、选项数量/文字/顺序必须和数据库一致，且不删除问题、选项、回答或 token。重新开启只改变状态、更新者、更新时间和 revision，保留当前内容、填写范围、既有回答/累计次数、二维码 token、时间窗口和提交上限，并写 `intention.reopen` 脱敏审计。管理详情和修改接口必须使用真实管理员依赖，学生和管理员学生视图均返回 403；详情不含个人答案。统计接口不含个人信息且分母按当前填写范围内的激活学生计算；实名名单接口同样只允许真实管理员，名单只返回当前最新答案，不返回被覆盖的历史内容。二维码 token 使用高熵随机值，数据库只保存 SHA-256；每次生成使旧 token 失效，`closed`/`archived` 问卷拒绝生成，填写地址仍由 Session、角色、开放窗口和当前技术组受众保护；关闭前已有 token 在重新开启且当前时间窗口有效时可继续定位问卷。
 
-邮件端点只允许真实管理员并要求 CSRF，三种范围互斥：`manual` 要求 1～100 个不重复成员 UUID 且不得带技术组，`direction` 只允许一个技术组 UUID，`all` 不得带成员或技术组。请求不得包含邮箱；手动模式由服务端整体重新校验全部账号仍为已验证激活学生，任一无效返回 `400 INVALID_INTENTION_EMAIL_RECIPIENTS`；技术组模式由服务端复核技术组当前激活，否则返回 `400 INVALID_INTENTION_EMAIL_DIRECTION`；技术组或全部模式由服务端解析发送瞬间的权威激活学生集合，集合为空返回 `400 NO_INTENTION_EMAIL_RECIPIENTS`，以上错误均不写部分任务。问卷不是当前可填写的 `open` 状态时返回 `409 INTENTION_CLOSED`。同一 revision 下同一成员的既有事件返回 `already_queued_count` 而不重复入队；关闭后重新开启 revision 增加，可由管理员再次显式选择发送。
+第一志愿方向端点只允许真实管理员并要求 CSRF，`confirm_overwrite` 只能为 `true`。服务端以 `display_order,id` 确认第一题且要求单选，请求选项集合必须与第一题全部选项完全一致，全部目标方向必须仍启用；错误分别返回 `422 INVALID_INTENTION_FIRST_CHOICE`、`422 INTENTION_FIRST_CHOICE_MUST_BE_SINGLE`、`400 INVALID_INTENTION_DIRECTION_MAPPING`。事务只更新当前有最新回答的 `active student`，相同方向不增加 revision；没有可更新回答者返回 `422 NO_INTENTION_DIRECTION_RESPONSES`。成功结果中的跳过数量为全部回答者减去符合条件回答者；操作不受问卷状态限制，但开放问卷后续改答不会自动同步。事务失败整体回滚，不修改问卷、回答、提交次数、二维码、Session 或既有作业受众快照。
+该端点仅适用于标题去除首尾空白后精确等于“意向选择”的问卷；其他标题、附加前后缀或近似文案返回 `422 INVALID_INTENTION_DIRECTION_SURVEY`。标题校验发生在题目、方向、回答和用户锁查询之前，拒绝时不得改方向或写成功审计。
+
+邮件端点只允许真实管理员并要求 CSRF，三种范围互斥：`manual` 要求 1～100 个不重复成员 UUID 且不得带技术组，`direction` 要求 1～100 个不重复技术组 UUID 且不得带成员，`all` 不得带成员或技术组。旧客户端可暂时只提交一个 `direction_id`，但不得与 `direction_ids` 同时存在。请求不得包含邮箱；手动模式由服务端整体重新校验全部账号仍为问卷受众内的已验证激活学生，任一无效或越界返回 `400 INVALID_INTENTION_EMAIL_RECIPIENTS`；技术组模式要求所选组是问卷目标技术组的子集，再整体复核全部技术组当前激活，任一越界或无效返回 `400 INVALID_INTENTION_EMAIL_DIRECTION`；技术组成员按并集合并，`all` 只解析问卷全部目标激活学生。最终集合为空返回 `400 NO_INTENTION_EMAIL_RECIPIENTS`，以上错误均不写部分任务。问卷不是当前可填写的 `open` 状态时返回 `409 INTENTION_CLOSED`。同一 revision 下同一成员的既有事件返回 `already_queued_count` 而不重复入队；关闭后重新开启 revision 增加，可由管理员再次显式选择发送。
 
 ## 优秀作业接口
 
@@ -398,7 +402,7 @@
 | `GET/POST /admin/directions` | 列表/创建可选方向 | AUTH-007 |
 | `PATCH /admin/directions/{id}` | 修改名称或启用状态 | AUTH-007 |
 
-`GET /admin/users` 的 `search` 去除首尾空白后最长 200 字符；空字符串等同未搜索。姓名、邮箱和学号使用大小写不敏感包含匹配，`%`、`_` 与反斜杠按普通文本转义；“管理员 / 学生 / 正常 / 待验证 / 已禁用”及对应英文枚举映射到角色或状态条件。过滤后的 `total` 与 `items` 使用同一条件，前端固定每页 20 条并通过 URL 保留 `search`、`activity` 和 `page`；请求页超过 `total` 推导的末页时，页面规范化跳转到末页，API 本身继续返回明确分页响应。
+`GET /admin/users` 的 `search` 去除首尾空白后最长 200 字符；空字符串等同未搜索。姓名、邮箱和学号使用大小写不敏感包含匹配，`%`、`_` 与反斜杠按普通文本转义；“管理员 / 学生 / 正常 / 待验证 / 已禁用”及对应英文枚举映射到角色或状态条件。`direction_id` 在分页前精确筛选一个技术组。过滤后的 `total` 与 `items` 使用同一条件，前端固定每页 20 条并通过 URL 保留 `direction_id`、`search`、`activity` 和 `page`；请求页超过 `total` 推导的末页时，页面规范化跳转到末页，API 本身继续返回明确分页响应。
 
 管理员删除请求示例：
 
@@ -441,13 +445,13 @@
 | --- | --- | --- |
 | `GET /knowledge` | 返回最新成功快照元数据、目录节点和文档摘要；目录节点含 `document/folder/file/unsupported` 类型以及可空 `asset_id/file_size/mime_type`，无快照返回 `snapshot:null` 与空数组 | 登录，KB-001～KB-002、KB-005～KB-007 |
 | `GET /knowledge/documents/{document_id}` | 只在最新成功快照中按内部 UUID 返回标题、原文 URL、同步时间和结构化块 | 登录，KB-002～KB-003、KB-005 |
-| `GET /knowledge/assets/{asset_id}/content` | 验证资源被最新成功快照的文档资源关联或独立文件节点引用后，图片/白板跳转短时 inline URL，正文附件和目录文件跳转 attachment URL | 登录，KB-006～KB-008 |
+| `GET /knowledge/assets/{asset_id}/content` | 验证资源被最新成功快照的文档资源关联或独立文件节点引用后，图片/白板跳转短时 inline URL，正文附件和目录文件跳转 attachment URL；知识库 PE 文件额外把签名响应强制为 `Content-Type: application/octet-stream` | 登录，KB-006～KB-008 |
 | `GET /admin/knowledge` | 返回 `configured`、学生当前快照和最近运行的脱敏状态 | 真实管理员，KB-004～KB-005、KB-008 |
 | `POST /admin/knowledge/sync` | CSRF 校验后创建同步运行、审计和 Outbox，返回 `202 {run}` | 真实管理员，KB-004～KB-005 |
 
-目录和文档响应不返回飞书 app secret、tenant token、MinIO 对象键或飞书错误正文。目录独立文件只返回内部资源 UUID、安全标题、大小和媒体类型，不返回永久地址。文档既有结构化块 JSON 可包含 `type=equation` 的独立公式块，以及富文本 segment 的 `equation=true` 行内公式标记；LaTeX 只作为文本内容返回，不接受 HTML。媒体路径只接受内部 UUID，不接受对象键或任意 URL。
+目录和文档响应不返回飞书 app secret、tenant token、MinIO 对象键或飞书错误正文。目录独立文件只返回内部资源 UUID、安全标题、大小和媒体类型，不返回永久地址。文档既有结构化块 JSON 可包含图片块的可选纯文本 `caption`、`type=equation` 的独立公式块，以及富文本 segment 的 `equation=true` 行内公式标记；图片说明来自飞书 `image.caption.content`，移除空字符、限制 20,000 字符，纯空白时省略，不接受 HTML。LaTeX 只作为文本内容返回，不接受 HTML。文件型富文本 segment 使用 `file=true`，并可返回可空 `asset_id`、`file_name`、`file_size`、`mime_type` 和 `unavailable_reason`；块附件也可返回同一失败原因。`unavailable_reason` 只允许 `type_not_allowed`、`too_large`、`unavailable`，不得返回上游错误正文。媒体路径只接受内部 UUID，不接受对象键或任意 URL。
 
-`source_url` 与块内既有 `fallback_url` 继续作为快照来源/兼容元数据返回，API Schema 不因本次页面策略变化；真实学生和管理员学生视图不得把它们渲染为飞书原文或附件失败回退链接。成功本地化附件及富文本内嵌文件仍通过 `GET /knowledge/assets/{asset_id}/content` 授权下载。
+`source_url`、块内既有 `fallback_url` 与文件 segment 的安全 HTTPS `href` 继续作为快照来源/兼容元数据返回；真实学生和管理员学生视图不得把它们渲染为飞书原文或文件失败回退链接。成功本地化附件、富文本内嵌文件与 Drive 文件引用都通过 `GET /knowledge/assets/{asset_id}/content` 授权下载，并通过当前成功快照的文档资源关系取得授权。
 
 稳定错误：未配置为 `503 KNOWLEDGE_SYNC_NOT_CONFIGURED`；已有进行中运行为 `409 KNOWLEDGE_SYNC_IN_PROGRESS`；文档或媒体不属于当前快照统一为 `404 RESOURCE_NOT_FOUND`；MinIO 签名失败为 `503 DEPENDENCY_UNAVAILABLE`。管理员学生视图调用管理接口返回 `403 FORBIDDEN`。
 
