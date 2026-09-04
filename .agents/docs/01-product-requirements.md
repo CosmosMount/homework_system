@@ -116,6 +116,7 @@ stateDiagram-v2
 - **INT-008**：真实管理员可以显式读取问卷按 `display_order` 排列的第一道题，把该题全部选项逐一映射到当前启用的技术方向，并在确认覆盖后按事务开始时的最新答案批量配置方向；第一题必须为单选，映射不得重复、遗漏或引用其他题选项、停用/不存在方向。操作只处理仍为 `active student` 的回答者，覆盖已有 `users.direction_id` 并增加实际变化用户的 revision，相同方向计为未变化；管理员、待验证/禁用账号和未提交者保持不变。服务端按稳定用户顺序锁行，每个实际变化写不含问卷答案/选项 ID 的用户方向审计，另写只含问卷/题目 UUID、映射数和符合条件/更新/未变化/跳过数量的汇总审计；事务失败不得部分更新。该操作不修改问卷、回答、累计提交次数、二维码或 Session，不重算既有 `assignment_audience_users`，开放问卷后续改答也不会自动同步，管理员需要再次显式执行。
   其中只有标题按既有规范化语义去除首尾空白后精确等于“意向选择”的问卷具备该能力；其他标题、附加前后缀或近似文案不显示入口，直接调用接口也必须在读取题目或写入任何方向、审计前整体拒绝。
 - **INT-009**：问卷填写范围只能为全部学生，或 1～50 个不重复且当前启用技术组的并集；未设置技术组的学生只能填写全部学生问卷。范围可在创建及任一非归档状态编辑，受限范围每次保存及草稿首次开放前都必须整体确认目标组仍启用；归档后保留并冻结。学生列表查询、直接详情、二维码详情和提交接口必须依据请求时 `users.direction_id` 在后端独立校验；非目标学生或无技术组学生访问受限问卷统一返回 404，前端隐藏不能代替授权。调整范围不删除已有回答，既有问卷迁移后默认面向全部学生，学生方向或问卷范围变化只影响后续访问资格。
+- **INT-010**：真实管理员可以在二次确认后永久删除任意状态问卷；问卷、受众、题目、选项、实名最新回答和回答选择必须在同一事务删除，已由第一志愿操作写入的用户技术方向不回滚。删除同时取消该问卷尚未完成的邮件任务并保留不含标题、题目、选项、答案或学生身份的 `intention.delete` 审计；成功后管理列表、学生列表、直接详情、二维码、统计、名单与提交接口均不再显示或接受该问卷，不存在或已删除 UUID 返回 404。删除失败不得产生部分清理。
 
 ## 飞书培训知识库
 
@@ -194,7 +195,7 @@ stateDiagram-v2
 | 查看赛事版本与评语 | 禁止 | 当前团队成员 | 全部 |
 | 查看优秀作业 | 禁止 | 仅所属受众的作业内 | 全部作业 |
 | 填写问卷 | 禁止 | 仅开放问卷、本人且未达提交上限 | 可在学生视图填写本人答案 |
-| 查看完整问卷、统计/实名名单，编辑非归档问卷、管理状态与二维码 | 禁止 | 禁止 | 仅真实管理员视图允许 |
+| 查看完整问卷、统计/实名名单，编辑或永久删除问卷、管理状态与二维码 | 禁止 | 禁止 | 仅真实管理员视图允许 |
 | 查看培训知识库快照 | 禁止 | 允许 | 允许 |
 | 手动同步和查看知识库运行状态 | 禁止 | 禁止 | 仅真实管理员视图 |
 | 创建、查看反馈答疑 | 禁止 | 仅创建和查看本人 | 普通管理员视图仅管理；学生视图按本人使用 |
@@ -218,7 +219,7 @@ stateDiagram-v2
 | SUB-001～SUB-008 | 作业版本、管理员提交反馈 | `/submission-versions`、`/submissions/*`、管理员反馈接口 | `submissions`、`submission_versions`、`version_files`、`feedback` | HW-T04～HW-T09、HW-T13 |
 | COMP-001～COMP-006 | 校内赛公告/报名、管理员赛事 | `/competitions*`、`/admin/competitions*` | `competitions`、`competition_registrations`（`competition_tasks` 仅兼容历史数据） | COMP-T01～COMP-T04 |
 | TEAM-001～TEAM-009 | 校内赛队伍中心、我的队伍、管理员队伍 | `/teams*`、`/competitions/*/teams`、`/competitions/*/auto-assign`、`/admin/teams*` | `teams`、`team_members`、报名表、团队提交引用与一赛一队部分唯一索引 | TEAM-T01～TEAM-T12 |
-| INT-001～INT-009 | 学生问卷列表/填写、管理员问卷查看/非归档编辑/技术组填写范围/统计/实名名单/二维码/三范围邮件/第一志愿方向配置 | `/intentions*`、`/admin/intentions*` | `intention_surveys`、`intention_survey_directions`、`intention_questions`、`intention_options`、`intention_responses`、`intention_response_options`、`users.direction_id`、`outbox_jobs`、审计 | INT-T01～INT-T26 |
+| INT-001～INT-010 | 学生问卷列表/填写、管理员问卷查看/非归档编辑/永久删除/技术组填写范围/统计/实名名单/二维码/三范围邮件/第一志愿方向配置 | `/intentions*`、`/admin/intentions*` | `intention_surveys`、`intention_survey_directions`、`intention_questions`、`intention_options`、`intention_responses`、`intention_response_options`、`users.direction_id`、`outbox_jobs`、审计 | INT-T01～INT-T27 |
 | KB-001～KB-008 | 培训文档阅读器、管理员同步页 | `/knowledge*`、`/admin/knowledge*` | `knowledge_sync_runs`、节点、文档、媒体及引用表、`outbox_jobs` | KB-T01～KB-T12 |
 | HELP-001～HELP-008 | 学生本人反馈答疑、登录态匿名公开答疑、管理员反馈答疑管理/处理/删除 | `/help-requests*`、`/admin/help-requests*` | `help_requests`、`student_notifications`、审计 | HELP-T01～HELP-T13 |
 | SHOW-001～SHOW-005 | 作业详情的优秀作业区块、管理员提交详情 | `/assignments/*/excellent-submissions*`、管理员标记接口 | `assignment_excellent_submissions`、作业/版本外键和删除保护 | SHOW-T01～SHOW-T05 |

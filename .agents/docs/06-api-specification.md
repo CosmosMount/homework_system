@@ -325,6 +325,7 @@
 | `GET /admin/intentions/{survey_id}` | 返回任意状态问卷的管理摘要、填写范围、revision、完整问题与选项，不含个人回答 | INT-001～INT-002、INT-009 |
 | `POST /admin/intentions` | 使用 `{title,description_markdown,questions,max_submissions?,starts_at?,ends_at?,audience:{all_students,direction_ids}}` 创建 `draft` 多题问卷并清洗 Markdown；`max_submissions=null` 表示不限，省略 `audience` 兼容为全部学生 | INT-001～INT-003、INT-009 |
 | `PATCH /admin/intentions/{survey_id}` | 按 `revision` 原子修改非归档问卷并返回刷新后的完整内容；`draft` 可整体替换题目/选项，`open/closed` 只原位更新标题、说明、题目文字、提交上限、时间窗口和填写范围，题量/题型/选项变化返回 `409 INTENTION_ANSWER_STRUCTURE_IMMUTABLE`，归档返回 `409 INTENTION_ARCHIVED`，revision 冲突返回 409 | INT-001～INT-003、INT-009 |
+| `DELETE /admin/intentions/{survey_id}` | 二次确认后永久删除任意状态问卷、全部题目/选项/回答/受众并取消未完成问卷邮件；成功返回 204 | INT-010、NFR-006 |
 | `POST /admin/intentions/{survey_id}/{action}` | `action` 为 `open`、`closed` 或 `archived`；`open` 可用于首次开放 `draft` 或按原受众重新开启 `closed`，草稿首次开放会复核目标技术组仍启用；`closed` 关闭当前开放问卷，`archived` 只归档已关闭问卷 | INT-002、INT-009 |
 | `GET /admin/intentions/{survey_id}/stats` | 返回当前目标激活学生数、提交人数/比例和每道题各选项人数/比例 | INT-005、INT-009 |
 | `GET /admin/intentions/{survey_id}/responses` | 返回实名提交名单：身份、最新分题答案、补充说明、累计提交次数和最后提交时间 | INT-005 |
@@ -333,6 +334,8 @@
 | `POST /admin/intentions/{survey_id}/apply-first-choice-directions` | 请求为 `{question_id,option_mappings:[{option_id,direction_id}],confirm_overwrite:true}`，返回 `{survey_id,question_id,eligible_response_count,updated_count,unchanged_count,skipped_response_count}` | INT-008 |
 
 `audience.all_students=true` 时 `direction_ids` 必须为空；`all_students=false` 时必须提供 1～50 个不重复 UUID，且创建、每次非归档编辑和首次开放都整体确认目标组仍启用，否则返回 `400 INVALID_INTENTION_AUDIENCE`。状态允许 `draft → open → closed`、`closed → open` 和 `closed → archived`；`archived` 为终态，其他状态组合返回 `409 STATE_CONFLICT`。修改接口锁定问卷并先检查 revision；`open/closed` 请求仍提交完整问题结构用于比较，但只能改变题目文字，题目数量及顺序、`allow_multiple`、选项数量/文字/顺序必须和数据库一致，且不删除问题、选项、回答或 token。重新开启只改变状态、更新者、更新时间和 revision，保留当前内容、填写范围、既有回答/累计次数、二维码 token、时间窗口和提交上限，并写 `intention.reopen` 脱敏审计。管理详情和修改接口必须使用真实管理员依赖，学生和管理员学生视图均返回 403；详情不含个人答案。统计接口不含个人信息且分母按当前填写范围内的激活学生计算；实名名单接口同样只允许真实管理员，名单只返回当前最新答案，不返回被覆盖的历史内容。二维码 token 使用高熵随机值，数据库只保存 SHA-256；每次生成使旧 token 失效，`closed`/`archived` 问卷拒绝生成，填写地址仍由 Session、角色、开放窗口和当前技术组受众保护；关闭前已有 token 在重新开启且当前时间窗口有效时可继续定位问卷。
+
+删除接口只允许真实管理员并要求 CSRF，不要求问卷处于特定状态或提交 revision。Service 锁定问卷后，在同一事务删除该问卷仍为 `pending/processing/retry` 的 `intention_open_email`、全部回答选择和问卷根记录；受众、题目、选项及回答通过现有级联清理，已应用到 `users.direction_id` 的第一志愿结果不回滚。成功只返回 204 并写不含问卷/答案正文的 `intention.delete` 审计；不存在或已删除资源返回 `404 RESOURCE_NOT_FOUND`，失败整体回滚。删除提交后，管理/学生列表和所有直接读取、二维码、提交、统计及名单接口均因物理不存在而不再返回该问卷。
 
 第一志愿方向端点只允许真实管理员并要求 CSRF，`confirm_overwrite` 只能为 `true`。服务端以 `display_order,id` 确认第一题且要求单选，请求选项集合必须与第一题全部选项完全一致，全部目标方向必须仍启用；错误分别返回 `422 INVALID_INTENTION_FIRST_CHOICE`、`422 INTENTION_FIRST_CHOICE_MUST_BE_SINGLE`、`400 INVALID_INTENTION_DIRECTION_MAPPING`。事务只更新当前有最新回答的 `active student`，相同方向不增加 revision；没有可更新回答者返回 `422 NO_INTENTION_DIRECTION_RESPONSES`。成功结果中的跳过数量为全部回答者减去符合条件回答者；操作不受问卷状态限制，但开放问卷后续改答不会自动同步。事务失败整体回滚，不修改问卷、回答、提交次数、二维码、Session 或既有作业受众快照。
 该端点仅适用于标题去除首尾空白后精确等于“意向选择”的问卷；其他标题、附加前后缀或近似文案返回 `422 INVALID_INTENTION_DIRECTION_SURVEY`。标题校验发生在题目、方向、回答和用户锁查询之前，拒绝时不得改方向或写成功审计。

@@ -279,13 +279,13 @@ erDiagram
 `id`, `survey_id`, `user_id`, `free_text`, `submission_count`, `submitted_at`, `created_at`, `updated_at`, `revision`。
 
 - `(survey_id, user_id)` 唯一，保证同一学生只保留一份最新回答；每次成功覆盖时原子增加正整数 `submission_count`、更新时间和 revision，不保留被覆盖的答案历史。
-- `user_id` 对账号使用 `ON DELETE CASCADE`，问卷删除也级联删除回答；正式产品通过归档保留问卷，不提供删除 API。账号擦除只删除目标用户答案和选择，不改变问卷及其他人的汇总。
+- `user_id` 对账号使用 `ON DELETE CASCADE`，问卷删除也级联删除回答。管理员删除问卷是明确的永久数据删除操作；账号擦除只删除目标用户答案和选择，不改变问卷及其他人的汇总。
 
 ### `intention_response_options`
 
 `response_id`, `option_id`，复合主键 `(response_id, option_id)`。
 
-- 回答删除时级联删除选择；选项仍被引用时 `RESTRICT`。
+- 回答删除时级联删除选择；选项仍被引用时 `RESTRICT`。永久删除问卷前 Repository 先按 `survey_id` 显式删除全部回答选择，再删除问卷根记录，避免级联删除题目/选项时被限制外键阻断；这些操作与审计、Outbox 清理同事务提交。
 - Service 在写入前锁定问卷和本人回答，验证全部问题、问题归属、选项归属及每题选择数量，并在同一事务校验/增加提交次数；数据库唯一约束处理并发首次填写。
 - 管理员统计只聚合回答数和分题选项选择数；实名名单通过受管理员保护的查询连接 `users`，批量装载最新选择，只返回需求允许字段。
 - 第一志愿方向配置连接 `intention_responses`、`intention_response_options` 与第一题选项，按用户 UUID 稳定锁定符合条件账号并更新 `users.direction_id/revision`；`(survey_id,user_id)` 唯一约束保证取到的是每人的唯一最新回答。选择表和回答表保持不变，既有 `assignment_audience_users` 也不补写或重算，因此无需 Alembic 迁移；应用回滚不会自动恢复已经明确写入的用户方向。
@@ -396,7 +396,7 @@ CHECK (
 - `secret_payload_ciphertext` 可空，只用于保存经独立 Outbox 密钥认证加密的投递秘密；不得通过管理 API、日志或审计返回。
 - 领取索引 `(status, available_at)`；Worker 使用 `FOR UPDATE SKIP LOCKED`。
 - 邮件管理 API 只查询 `job_type` 为邮件的记录并对接收方脱敏。
-- 问卷范围邮件复用本表，手动成员、多个技术组和全部激活学生最终都按单个收件学生创建 `job_type=intention_open_email` 任务，事件键为 `intention:{survey_id}:open:{revision}:email:{user_id}`；普通载荷只保存已验证收件地址、称呼、问卷标题和站内相对路径，不保存范围、技术组、答案、补充说明、二维码 token 或管理员身份。多个技术组仅在发送事务中用于按并集解析当前激活学生，范围与技术组 UUID 列表只进入脱敏审计；本功能不新增字段、表、索引或 Alembic 迁移。
+- 问卷范围邮件复用本表，手动成员、多个技术组和全部激活学生最终都按单个收件学生创建 `job_type=intention_open_email` 任务，事件键为 `intention:{survey_id}:open:{revision}:email:{user_id}`；普通载荷只保存已验证收件地址、称呼、问卷标题和站内相对路径，不保存范围、技术组、答案、补充说明、二维码 token 或管理员身份。多个技术组仅在发送事务中用于按并集解析当前激活学生，范围与技术组 UUID 列表只进入脱敏审计。永久删除问卷时删除同一问卷仍处于 `pending/processing/retry` 的任务；Worker 发送前锁定并复核 `processing` 行，和删除事务串行，已 `sent/dead` 历史继续保留。本功能不新增字段、表、索引或 Alembic 迁移。
 - 删除未发布通知/作业时，只删除同一资源仍处于 `pending/processing/retry` 的定时发布任务；已发送邮件任务和其他业务历史不删除。资源行锁与 Worker 的资源行锁共同解决删除/发布竞态。
 - 账号擦除为每个个人对象创建 `delete_account_object`：普通 `payload` 暂存服务端对象键，multipart ID 只存认证密文，邮件管理 API 不查询该类型。Worker 成功后清空两种载荷；失败摘要不得含对象键/上传 ID。目标账号的历史邮件任务按当前/历史用户事件键和令牌 ID 锁定，收件人、姓名与密文秘密清空，活动任务转 `dead/USER_DELETED`。
 
