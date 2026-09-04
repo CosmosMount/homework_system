@@ -5,6 +5,7 @@ import { type FormEvent, useState } from "react";
 import QRCode from "qrcode";
 
 import { IntentionAdminDetail } from "@/components/admin/intention-admin-detail";
+import { IntentionDirectionAssigner } from "@/components/admin/intention-direction-assigner";
 import { IntentionEmailNotifier } from "@/components/admin/intention-email-notifier";
 import {
   buttonClassName,
@@ -24,6 +25,7 @@ import type {
 import { formatDateTime } from "@/lib/format";
 
 const defaultOptions = "机器人\n视觉\n嵌入式";
+const directionAssignmentSurveyTitle = "意向选择";
 let nextQuestionDraftId = 1;
 
 type QuestionDraft = {
@@ -69,6 +71,8 @@ export function IntentionAdminPanel({
   const [description, setDescription] = useState("");
   const [questions, setQuestions] = useState<QuestionDraft[]>(initialQuestions);
   const [maxSubmissions, setMaxSubmissions] = useState("1");
+  const [allStudents, setAllStudents] = useState(true);
+  const [audienceDirectionIds, setAudienceDirectionIds] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +86,20 @@ export function IntentionAdminPanel({
     setPending(true);
     setError(null);
     setMessage(null);
+  }
+
+  function toggleAudienceDirection(directionId: string) {
+    const selectedAlready = audienceDirectionIds.includes(directionId);
+    if (!selectedAlready && audienceDirectionIds.length >= 50) {
+      setError("问卷填写范围最多选择 50 个技术组。");
+      return;
+    }
+    setError(null);
+    setAudienceDirectionIds((current) =>
+      selectedAlready
+        ? current.filter((item) => item !== directionId)
+        : [...current, directionId],
+    );
   }
 
   function updateQuestion(key: number, patch: Partial<QuestionDraft>) {
@@ -121,6 +139,10 @@ export function IntentionAdminPanel({
       setError("最多提交次数必须是 1～100 的整数，留空表示不限次数。");
       return;
     }
+    if (!allStudents && audienceDirectionIds.length === 0) {
+      setError("分技术组填写必须选择至少一个技术组。");
+      return;
+    }
 
     begin();
     try {
@@ -133,6 +155,10 @@ export function IntentionAdminPanel({
             description_markdown: description,
             questions: normalizedQuestions,
             max_submissions: parsedLimit,
+            audience: {
+              all_students: allStudents,
+              direction_ids: allStudents ? [] : audienceDirectionIds,
+            },
           }),
         },
       );
@@ -141,6 +167,8 @@ export function IntentionAdminPanel({
       setDescription("");
       setQuestions(initialQuestions());
       setMaxSubmissions("1");
+      setAllStudents(true);
+      setAudienceDirectionIds([]);
       setMessage("问卷已创建。开放填写后学生即可提交。");
     } catch (nextError) {
       setError(errorMessage(nextError));
@@ -280,6 +308,57 @@ export function IntentionAdminPanel({
               value={description}
             />
           </label>
+          <fieldset className="lg:col-span-2">
+            <legend className="text-sm font-medium">填写范围</legend>
+            <div className="mt-2 flex flex-wrap gap-4 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  checked={allStudents}
+                  className="size-4 accent-[var(--color-accent)]"
+                  name="questionnaire-audience"
+                  onChange={() => setAllStudents(true)}
+                  type="radio"
+                />
+                全部学生填写
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  checked={!allStudents}
+                  className="size-4 accent-[var(--color-accent)]"
+                  name="questionnaire-audience"
+                  onChange={() => setAllStudents(false)}
+                  type="radio"
+                />
+                指定技术组填写
+              </label>
+            </div>
+            {!allStudents ? (
+              <div className="mt-3">
+                <p className="mb-2 text-xs text-[var(--color-text-muted)]">
+                  已选择 {audienceDirectionIds.length} / 50 个技术组
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {directions
+                    .filter((direction) => direction.is_active)
+                    .map((direction) => (
+                      <label
+                        className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] p-3 text-sm"
+                        key={direction.id}
+                      >
+                        <input
+                          aria-label={"问卷受众：" + direction.name}
+                          checked={audienceDirectionIds.includes(direction.id)}
+                          className="size-4 accent-[var(--color-accent)]"
+                          onChange={() => toggleAudienceDirection(direction.id)}
+                          type="checkbox"
+                        />
+                        {direction.name}
+                      </label>
+                    ))}
+                </div>
+              </div>
+            ) : null}
+          </fieldset>
         </div>
 
         <div className="mt-6 space-y-4">
@@ -383,6 +462,8 @@ export function IntentionAdminPanel({
           const surveyQr = qr[survey.id];
           const qrAvailable =
             survey.status === "draft" || survey.status === "open";
+          const directionAssignmentAvailable =
+            survey.title.trim() === directionAssignmentSurveyTitle;
           return (
             <article
               className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[var(--shadow-card)] sm:p-6"
@@ -396,6 +477,18 @@ export function IntentionAdminPanel({
                     {survey.max_submissions === null
                       ? "不限提交次数"
                       : "每人最多 " + survey.max_submissions + " 次"}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    填写范围：
+                    {survey.audience.all_students
+                      ? "全部学生"
+                      : survey.audience.direction_ids
+                          .map(
+                            (directionId) =>
+                              directions.find((item) => item.id === directionId)?.name ??
+                              "未知技术组",
+                          )
+                          .join("、")}
                   </p>
                 </div>
                 <span className="rounded-full bg-[var(--color-action-fill)] px-3 py-1 text-xs text-[var(--color-action-text)]">
@@ -473,6 +566,7 @@ export function IntentionAdminPanel({
               </div>
 
               <IntentionAdminDetail
+                directions={directions}
                 disabled={pending}
                 onUpdated={(updated) =>
                   setSurveys((current) =>
@@ -482,8 +576,18 @@ export function IntentionAdminPanel({
                 survey={survey}
               />
 
+              {directionAssignmentAvailable ? (
+                <IntentionDirectionAssigner
+                  directions={directions}
+                  disabled={pending}
+                  surveyId={survey.id}
+                  surveyTitle={survey.title}
+                />
+              ) : null}
+
               {survey.status === "open" ? (
                 <IntentionEmailNotifier
+                  audience={survey.audience}
                   directions={directions}
                   surveyId={survey.id}
                   surveyTitle={survey.title}

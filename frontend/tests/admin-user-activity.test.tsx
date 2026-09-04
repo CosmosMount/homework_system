@@ -132,7 +132,24 @@ const disabledUser: AdminUser = {
   status: "disabled",
 };
 
-const directions: Direction[] = [];
+const directions: Direction[] = [
+  {
+    id: "direction-1",
+    code: "robotics",
+    name: "机器人组",
+    description: null,
+    is_active: true,
+    revision: 1,
+  },
+  {
+    id: "direction-inactive",
+    code: "legacy",
+    name: "历史技术组",
+    description: null,
+    is_active: false,
+    revision: 2,
+  },
+];
 
 function userPage(
   items: AdminUser[],
@@ -171,6 +188,7 @@ describe("admin account activity UI", () => {
     getAdminUsersMock.mockImplementation(
       (query?: {
         activity?: "inactive";
+        directionId?: string;
         page?: number;
         pageSize?: number;
         search?: string;
@@ -200,12 +218,13 @@ describe("admin account activity UI", () => {
     });
   });
 
-  it("passes the activity, page and search filters to the admin user API", async () => {
+  it("passes the direction, activity, page and search filters to the admin user API", async () => {
     getAdminUsersMock.mockResolvedValueOnce(userPage([inactiveUser], 155, 2, 20));
     render(
       await AdminUsersPage({
         searchParams: Promise.resolve({
           activity: "inactive",
+          direction_id: "direction-1",
           page: "2",
           search: "沉睡学生",
         }),
@@ -214,6 +233,7 @@ describe("admin account activity UI", () => {
 
     expect(getAdminUsersMock).toHaveBeenCalledWith({
       activity: "inactive",
+      directionId: "direction-1",
       page: 2,
       pageSize: 20,
       search: "沉睡学生",
@@ -226,11 +246,15 @@ describe("admin account activity UI", () => {
     expect(screen.getByRole("searchbox", { name: "搜索用户" })).toHaveValue(
       "沉睡学生",
     );
+    expect(screen.getByRole("combobox", { name: "按技术组查看" })).toHaveValue(
+      "direction-1",
+    );
 
     getAdminUsersMock.mockResolvedValueOnce(userPage([], 155, 999, 20));
     await AdminUsersPage({
       searchParams: Promise.resolve({
         activity: "inactive",
+        direction_id: "direction-1",
         page: "999",
         search: "沉睡学生",
       }),
@@ -242,6 +266,7 @@ describe("admin account activity UI", () => {
       "https://example.test",
     );
     expect(redirectUrl.searchParams.get("activity")).toBe("inactive");
+    expect(redirectUrl.searchParams.get("direction_id")).toBe("direction-1");
     expect(redirectUrl.searchParams.get("search")).toBe("沉睡学生");
     expect(redirectUrl.searchParams.get("page")).toBe("8");
   });
@@ -250,6 +275,7 @@ describe("admin account activity UI", () => {
     render(
       <UserAdminPanel
         activity="inactive"
+        directionId="direction-1"
         directions={directions}
         initialTotal={155}
         initialUsers={[inactiveUser]}
@@ -264,14 +290,22 @@ describe("admin account activity UI", () => {
 
     const previous = screen.getByRole("link", { name: "上一页" });
     const next = screen.getByRole("link", { name: "下一页" });
+    const clearSearch = screen.getByRole("link", { name: "清除" });
     const previousUrl = new URL(previous.getAttribute("href") ?? "", "https://example.test");
     const nextUrl = new URL(next.getAttribute("href") ?? "", "https://example.test");
+    const clearSearchUrl = new URL(
+      clearSearch.getAttribute("href") ?? "",
+      "https://example.test",
+    );
     expect(previousUrl.searchParams.get("page")).toBeNull();
     expect(nextUrl.searchParams.get("page")).toBe("3");
     for (const url of [previousUrl, nextUrl]) {
       expect(url.searchParams.get("search")).toBe("待处理账号");
       expect(url.searchParams.get("activity")).toBe("inactive");
+      expect(url.searchParams.get("direction_id")).toBe("direction-1");
     }
+    expect(clearSearchUrl.searchParams.get("search")).toBeNull();
+    expect(clearSearchUrl.searchParams.get("direction_id")).toBe("direction-1");
   });
 
   it("renders recent, inactive and never-entered activity states", () => {
@@ -444,6 +478,7 @@ describe("admin account activity UI", () => {
         directions={directions}
         initialTotal={141}
         initialUsers={[inactiveUser]}
+        directionId="direction-1"
         page={8}
         pageSize={20}
         search="沉睡"
@@ -471,6 +506,7 @@ describe("admin account activity UI", () => {
       "https://example.test",
     );
     expect(replacementUrl.searchParams.get("activity")).toBe("inactive");
+    expect(replacementUrl.searchParams.get("direction_id")).toBe("direction-1");
     expect(replacementUrl.searchParams.get("search")).toBe("沉睡");
     expect(replacementUrl.searchParams.get("page")).toBe("7");
   });

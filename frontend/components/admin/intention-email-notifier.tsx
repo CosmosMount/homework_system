@@ -26,21 +26,25 @@ type RecipientScope = "manual" | "direction" | "all";
 type NotificationRequest = {
   recipient_scope: RecipientScope;
   recipient_user_ids?: string[];
-  direction_id?: string;
+  direction_ids?: string[];
 };
 
 export function IntentionEmailNotifier({
+  audience,
   directions,
   surveyId,
   surveyTitle,
 }: Readonly<{
+  audience: { all_students: boolean; direction_ids: string[] };
   directions: Direction[];
   surveyId: string;
   surveyTitle: string;
 }>) {
   const [recipientScope, setRecipientScope] =
     useState<RecipientScope>("manual");
-  const [directionId, setDirectionId] = useState("");
+  const [selectedDirectionIds, setSelectedDirectionIds] = useState<string[]>(
+    [],
+  );
   const [search, setSearch] = useState("");
   const [candidates, setCandidates] = useState<AdminUser[]>([]);
   const [selected, setSelected] = useState<AdminUser[]>([]);
@@ -50,7 +54,9 @@ export function IntentionEmailNotifier({
   const [error, setError] = useState<string | null>(null);
 
   const activeDirections = directions.filter(
-    (direction) => direction.is_active,
+    (direction) =>
+      direction.is_active &&
+      (audience.all_students || audience.direction_ids.includes(direction.id)),
   );
 
   function selectScope(scope: RecipientScope) {
@@ -102,13 +108,27 @@ export function IntentionEmailNotifier({
     );
   }
 
+  function toggleDirection(directionId: string) {
+    const selectedAlready = selectedDirectionIds.includes(directionId);
+    if (!selectedAlready && selectedDirectionIds.length >= 100) {
+      setError("一次最多选择 100 个技术组。");
+      return;
+    }
+    setError(null);
+    setSelectedDirectionIds((current) =>
+      selectedAlready
+        ? current.filter((item) => item !== directionId)
+        : [...current, directionId],
+    );
+  }
+
   async function sendNotifications() {
     if (recipientScope === "manual" && selected.length === 0) {
       setError("请先选择至少一名成员。");
       return;
     }
-    if (recipientScope === "direction" && !directionId) {
-      setError("请先选择一个技术组。");
+    if (recipientScope === "direction" && selectedDirectionIds.length === 0) {
+      setError("请先选择至少一个技术组。");
       return;
     }
     const payload: NotificationRequest = {
@@ -117,7 +137,7 @@ export function IntentionEmailNotifier({
     if (recipientScope === "manual") {
       payload.recipient_user_ids = selected.map((item) => item.id);
     } else if (recipientScope === "direction") {
-      payload.direction_id = directionId;
+      payload.direction_ids = selectedDirectionIds;
     }
 
     setPending(true);
@@ -149,12 +169,14 @@ export function IntentionEmailNotifier({
     recipientScope === "manual"
       ? "向已选成员发送邮件"
       : recipientScope === "direction"
-        ? "向该技术组发送邮件"
-        : "向全部激活学生发送邮件";
+        ? "向已选技术组发送邮件"
+        : audience.all_students
+          ? "向全部激活学生发送邮件"
+          : "向问卷全部目标学生发送邮件";
   const sendDisabled =
     pending ||
     (recipientScope === "manual" && selected.length === 0) ||
-    (recipientScope === "direction" && !directionId);
+    (recipientScope === "direction" && selectedDirectionIds.length === 0);
 
   return (
     <section
@@ -163,7 +185,7 @@ export function IntentionEmailNotifier({
     >
       <h3 className="text-sm font-semibold">发送邮件通知</h3>
       <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
-        可手动选择成员、按技术组或向全部激活学生发送；收件范围由服务端在发送时重新确认，邮件不包含问卷答案或二维码令牌。
+        可手动选择成员、按技术组或向问卷全部目标学生发送；收件范围由服务端在发送时重新确认，邮件不包含问卷答案或二维码令牌。
       </p>
       {message ? <FormMessage tone="success">{message}</FormMessage> : null}
       {error ? <FormMessage>{error}</FormMessage> : null}
@@ -196,38 +218,46 @@ export function IntentionEmailNotifier({
               onChange={() => selectScope("all")}
               type="radio"
             />
-            全部激活学生
+            {audience.all_students ? "全部激活学生" : "问卷全部目标学生"}
           </label>
         </div>
       </fieldset>
 
       {recipientScope === "direction" ? (
-        <label className="mt-4 block text-sm font-medium">
-          选择技术组
-          <select
-            className={inputClassName}
-            disabled={pending}
-            onChange={(event) => setDirectionId(event.target.value)}
-            value={directionId}
-          >
-            <option value="">请选择技术组</option>
+        <fieldset className="mt-4">
+          <legend className="text-sm font-medium">
+            选择技术组（已选择 {selectedDirectionIds.length} / 100 个）
+          </legend>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
             {activeDirections.map((direction) => (
-              <option key={direction.id} value={direction.id}>
-                {direction.name}
-              </option>
+              <label
+                className="flex cursor-pointer items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm"
+                key={direction.id}
+              >
+                <input
+                  checked={selectedDirectionIds.includes(direction.id)}
+                  className="size-4 accent-[var(--color-accent)]"
+                  disabled={pending}
+                  onChange={() => toggleDirection(direction.id)}
+                  type="checkbox"
+                />
+                <span>{direction.name}</span>
+              </label>
             ))}
-          </select>
+          </div>
           {activeDirections.length === 0 ? (
-            <span className="mt-2 block text-xs text-[var(--color-text-muted)]">
+            <p className="mt-2 text-xs text-[var(--color-text-muted)]">
               当前没有可用的激活技术组。
-            </span>
+            </p>
           ) : null}
-        </label>
+        </fieldset>
       ) : null}
 
       {recipientScope === "all" ? (
         <p className="mt-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm">
-          将向发送时全部激活学生创建邮件任务；同一开放周期已入队的成员不会重复发送。
+          将向发送时
+          {audience.all_students ? "全部激活学生" : "该问卷技术组内的全部激活学生"}
+          创建邮件任务；同一开放周期已入队的成员不会重复发送。
         </p>
       ) : null}
 

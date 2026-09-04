@@ -139,6 +139,12 @@ def test_questionnaire_openapi_exposes_questions_limits_stats_and_admin_roster()
     create_request = schema["components"]["schemas"]["IntentionSurveyCreateRequest"]
     assert {"title", "questions"} <= set(create_request["required"])
     assert "max_submissions" in create_request["properties"]
+    assert "audience" in create_request["properties"]
+    audience = schema["components"]["schemas"]["IntentionAudienceInput"]
+    assert audience["properties"]["all_students"]["default"] is True
+    assert audience["properties"]["direction_ids"]["maxItems"] == 50
+    admin_summary = schema["components"]["schemas"]["AdminIntentionSurvey"]
+    assert "audience" in admin_summary["required"]
     question = schema["components"]["schemas"]["IntentionQuestionInput"]
     assert {"prompt", "options"} <= set(question["required"])
 
@@ -159,16 +165,50 @@ def test_questionnaire_openapi_exposes_questions_limits_stats_and_admin_roster()
         for parameter in email_operation["parameters"]
     )
     email_request = schema["components"]["schemas"]["IntentionEmailNotificationRequest"]
-    assert {"recipient_scope", "recipient_user_ids", "direction_id"} <= set(
-        email_request["properties"]
-    )
+    assert {
+        "recipient_scope",
+        "recipient_user_ids",
+        "direction_ids",
+        "direction_id",
+    } <= set(email_request["properties"])
     assert email_request["properties"]["recipient_scope"]["enum"] == [
         "manual",
         "direction",
         "all",
     ]
+    assert email_request["properties"]["direction_ids"]["maxItems"] == 100
     assert email_request["properties"]["recipient_scope"]["default"] == "manual"
     assert email_request["properties"]["recipient_user_ids"]["maxItems"] == 100
+
+    direction_operation = paths[
+        "/api/v1/admin/intentions/{survey_id}/apply-first-choice-directions"
+    ]["post"]
+    assert direction_operation["requestBody"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/IntentionDirectionAssignmentRequest"
+    }
+    assert direction_operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/IntentionDirectionAssignmentResponse"
+    }
+
+    direction_request = schema["components"]["schemas"]["IntentionDirectionAssignmentRequest"]
+    assert set(direction_request["required"]) == {
+        "question_id",
+        "option_mappings",
+        "confirm_overwrite",
+    }
+    assert direction_request["properties"]["confirm_overwrite"]["const"] is True
+    assert direction_request["properties"]["option_mappings"]["minItems"] == 1
+    assert direction_request["properties"]["option_mappings"]["maxItems"] == 30
+
+    direction_response = schema["components"]["schemas"]["IntentionDirectionAssignmentResponse"]
+    assert {
+        "survey_id",
+        "question_id",
+        "eligible_response_count",
+        "updated_count",
+        "unchanged_count",
+        "skipped_response_count",
+    } == set(direction_response["required"])
 
 
 def test_help_request_openapi_exposes_private_public_and_admin_contracts() -> None:

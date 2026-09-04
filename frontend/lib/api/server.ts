@@ -113,6 +113,7 @@ export async function getSessions(): Promise<Session[]> {
 
 type AdminUserQuery = Readonly<{
   activity?: "inactive";
+  directionId?: string;
   page?: number;
   pageSize?: number;
   search?: string;
@@ -120,6 +121,7 @@ type AdminUserQuery = Readonly<{
 
 export async function getAdminUsers({
   activity,
+  directionId,
   page = 1,
   pageSize = 100,
   search,
@@ -132,6 +134,9 @@ export async function getAdminUsers({
   });
   if (activity === "inactive") {
     params.set("activity", activity);
+  }
+  if (directionId) {
+    params.set("direction_id", directionId);
   }
   const normalizedSearch = search?.trim().slice(0, 200);
   if (normalizedSearch) {

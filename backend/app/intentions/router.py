@@ -15,6 +15,8 @@ from app.intentions.schemas import (
     AdminIntentionSurvey,
     AdminIntentionSurveyDetail,
     AdminIntentionSurveyPage,
+    IntentionDirectionAssignmentRequest,
+    IntentionDirectionAssignmentResponse,
     IntentionEmailNotificationRequest,
     IntentionEmailNotificationResponse,
     IntentionQrResponse,
@@ -139,6 +141,25 @@ async def intention_roster(
     context: AdminContextDependency,
 ) -> IntentionRosterResponse:
     return await service.roster(survey_id, context=context)
+
+
+@router.post(
+    "/admin/intentions/{survey_id}/apply-first-choice-directions",
+    response_model=IntentionDirectionAssignmentResponse,
+)
+async def apply_first_choice_directions(
+    survey_id: UUID,
+    payload: IntentionDirectionAssignmentRequest,
+    request: Request,
+    service: IntentionServiceDependency,
+    context: AdminContextDependency,
+    _csrf: CsrfDependency,
+) -> IntentionDirectionAssignmentResponse:
+    return await service.apply_first_choice_directions(
+        survey_id,
+        payload,
+        audit_context=_audit_context(request, context),
+    )
 
 
 @router.post("/admin/intentions/{survey_id}/qr-token", response_model=IntentionQrResponse)

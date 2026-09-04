@@ -13,7 +13,7 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260831_0018"]
+    assert script.get_heads() == ["20260904_0019"]
 
 
 def test_persistent_login_migration_is_reversible_and_follows_account_deletion() -> None:
@@ -72,6 +72,23 @@ def test_knowledge_directory_file_migration_is_reversible() -> None:
     assert source.index("SET node_type = 'unsupported'") < source.index(
         'op.drop_column("knowledge_nodes", "asset_id")'
     )
+
+
+def test_intention_direction_audience_migration_preserves_existing_surveys() -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+    migration_path = (
+        backend_root / "migrations" / "versions" / "20260904_0019_intention_direction_audiences.py"
+    )
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260904_0019"' in source
+    assert 'down_revision: str | None = "20260831_0018"' in source
+    assert '"all_students"' in source
+    assert 'server_default=sa.text("true")' in source
+    assert '"intention_survey_directions"' in source
+    assert 'ondelete="CASCADE"' in source
+    assert 'ondelete="RESTRICT"' in source
+    assert 'op.drop_column("intention_surveys", "all_students")' in source
 
 
 def test_account_activity_migration_has_reversible_static_contract() -> None:

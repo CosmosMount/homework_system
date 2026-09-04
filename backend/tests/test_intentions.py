@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, Mock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -22,6 +22,7 @@ from app.intentions.models import (
     IntentionSurvey,
 )
 from app.intentions.repository import (
+    FirstChoiceDirectionRecord,
     IntentionRepository,
     SurveyListRecord,
     SurveyOptionCount,
@@ -29,6 +30,9 @@ from app.intentions.repository import (
 )
 from app.intentions.schemas import (
     IntentionAnswerRequest,
+    IntentionAudienceInput,
+    IntentionDirectionAssignmentRequest,
+    IntentionDirectionMapping,
     IntentionEmailNotificationRequest,
     IntentionOptionInput,
     IntentionQuestionInput,
@@ -43,11 +47,16 @@ from app.notifications.repository import OutboxRepository
 from app.users.models import Direction, User
 
 
-def make_context(role: str = "student", *, student_view: bool = False) -> AuthenticatedContext:
+def make_context(
+    role: str = "student",
+    *,
+    student_view: bool = False,
+    direction_id: UUID | None = None,
+) -> AuthenticatedContext:
     return cast(
         AuthenticatedContext,
         SimpleNamespace(
-            user=SimpleNamespace(id=uuid4(), role=role),
+            user=SimpleNamespace(id=uuid4(), role=role, direction_id=direction_id),
             session=SimpleNamespace(student_view=student_view),
             effective_role="student" if student_view else role,
             is_admin=role == "admin" and not student_view,
@@ -68,14 +77,17 @@ def make_survey(
     *,
     status: str = "open",
     max_submissions: int | None = None,
+    title: str = "培训方向问卷",
+    all_students: bool = True,
 ) -> IntentionSurvey:
     actor_id = uuid4()
     return IntentionSurvey(
         id=uuid4(),
-        title="培训方向问卷",
+        title=title,
         description_markdown="## 请选择",
         description_html="<h2>请选择</h2>",
         status=status,
+        all_students=all_students,
         max_submissions=max_submissions,
         starts_at=None,
         ends_at=None,
@@ -155,6 +167,17 @@ def test_questionnaire_schema_rejects_blank_duplicate_and_invalid_limits() -> No
     with pytest.raises(ValidationError):
         IntentionAnswerRequest(question_id=uuid4(), selected_option_ids=[option_id, option_id])
 
+    direction_id = uuid4()
+    with pytest.raises(ValidationError):
+        IntentionAudienceInput(all_students=True, direction_ids=[direction_id])
+    with pytest.raises(ValidationError):
+        IntentionAudienceInput(all_students=False, direction_ids=[])
+    with pytest.raises(ValidationError):
+        IntentionAudienceInput(
+            all_students=False,
+            direction_ids=[direction_id, direction_id],
+        )
+
 
 @pytest.mark.asyncio
 async def test_admin_creates_sanitized_multi_question_questionnaire() -> None:
@@ -172,6 +195,7 @@ async def test_admin_creates_sanitized_multi_question_questionnaire() -> None:
             add_survey=add_survey,
             add_question=add_question,
             add_option=add_option,
+            replace_audience=AsyncMock(),
         ),
     )
     payload = IntentionSurveyCreateRequest(
@@ -214,6 +238,76 @@ async def test_admin_creates_sanitized_multi_question_questionnaire() -> None:
 
 
 @pytest.mark.asyncio
+async def test_admin_creates_questionnaire_for_selected_active_directions() -> None:
+    now = datetime.now(UTC)
+    direction_ids = [uuid4(), uuid4()]
+    directions = [
+        cast(Direction, SimpleNamespace(id=direction_id)) for direction_id in direction_ids
+    ]
+    service, session = make_service(now)
+    active_directions = AsyncMock(return_value=directions)
+    replace_audience = AsyncMock()
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            add_survey=Mock(),
+            add_question=Mock(),
+            add_option=Mock(),
+            active_directions_by_ids=active_directions,
+            replace_audience=replace_audience,
+        ),
+    )
+    payload = IntentionSurveyCreateRequest(
+        title="分组问卷",
+        questions=[question_payload("第一志愿", "机器人")],
+        audience=IntentionAudienceInput(
+            all_students=False,
+            direction_ids=direction_ids,
+        ),
+    )
+
+    result = await service.create(payload, audit_context=make_audit_context("admin"))
+
+    assert result.audience.all_students is False
+    assert set(result.audience.direction_ids) == set(direction_ids)
+    active_directions.assert_awaited_once_with(direction_ids)
+    replace_audience.assert_awaited_once_with(result.id, direction_ids)
+    session.commit.assert_awaited_once()
+    audit = cast(Mock, service._audit.add).call_args.args[0]
+    assert audit.change_summary == {"all_students": False, "direction_count": 2}
+
+
+@pytest.mark.asyncio
+async def test_admin_rejects_inactive_questionnaire_audience_and_rolls_back() -> None:
+    now = datetime.now(UTC)
+    direction_ids = [uuid4(), uuid4()]
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            active_directions_by_ids=AsyncMock(
+                return_value=[cast(Direction, SimpleNamespace(id=direction_ids[0]))]
+            )
+        ),
+    )
+    payload = IntentionSurveyCreateRequest(
+        title="分组问卷",
+        questions=[question_payload("第一志愿", "机器人")],
+        audience=IntentionAudienceInput(
+            all_students=False,
+            direction_ids=direction_ids,
+        ),
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.create(payload, audit_context=make_audit_context("admin"))
+
+    assert blocked.value.code == "INVALID_INTENTION_AUDIENCE"
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["draft", "open", "closed", "archived"])
 async def test_admin_can_read_complete_questionnaire_in_every_status(status: str) -> None:
     now = datetime.now(UTC)
@@ -233,6 +327,7 @@ async def test_admin_can_read_complete_questionnaire_in_every_status(status: str
             questions=AsyncMock(return_value=[first, second]),
             options=AsyncMock(return_value=options),
             responded_count=AsyncMock(return_value=2),
+            audience_direction_ids=AsyncMock(return_value=[]),
         ),
     )
 
@@ -266,6 +361,8 @@ async def test_admin_updates_draft_structure_and_returns_fresh_detail() -> None:
     old_question = make_question(survey.id, "旧问题", 0)
     new_questions: list[IntentionQuestion] = []
     new_options: list[IntentionOption] = []
+    direction_ids = [uuid4(), uuid4()]
+    replace_audience = AsyncMock()
     service, session = make_service(now)
     service._repo = cast(
         IntentionRepository,
@@ -276,6 +373,14 @@ async def test_admin_updates_draft_structure_and_returns_fresh_detail() -> None:
             responded_count=AsyncMock(return_value=0),
             add_question=Mock(side_effect=new_questions.append),
             add_option=Mock(side_effect=new_options.append),
+            active_directions_by_ids=AsyncMock(
+                return_value=[
+                    cast(Direction, SimpleNamespace(id=direction_id))
+                    for direction_id in direction_ids
+                ]
+            ),
+            replace_audience=replace_audience,
+            audience_direction_ids=AsyncMock(return_value=direction_ids),
         ),
     )
     payload = IntentionSurveyPatchRequest(
@@ -287,6 +392,10 @@ async def test_admin_updates_draft_structure_and_returns_fresh_detail() -> None:
             question_payload("第二志愿", "电控", "嵌入式", allow_multiple=True),
         ],
         max_submissions=4,
+        audience=IntentionAudienceInput(
+            all_students=False,
+            direction_ids=direction_ids,
+        ),
     )
 
     result = await service.patch(survey.id, payload, audit_context=make_audit_context("admin"))
@@ -294,25 +403,114 @@ async def test_admin_updates_draft_structure_and_returns_fresh_detail() -> None:
     assert result.title == "更新后的问卷"
     assert result.revision == 2
     assert result.max_submissions == 4
+    assert result.audience.all_students is False
+    assert set(result.audience.direction_ids) == set(direction_ids)
     assert [question.prompt for question in result.questions] == ["第一志愿", "第二志愿"]
     assert result.questions[1].allow_multiple is True
     assert "<script" not in survey.description_html.lower()
     session.delete.assert_awaited_once_with(old_question)
+    replace_audience.assert_awaited_once_with(survey.id, direction_ids)
     assert session.flush.await_count == 2
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["open", "closed"])
+async def test_admin_updates_opened_questionnaire_without_replacing_answer_structure(
+    status: str,
+) -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, status=status, max_submissions=1, all_students=False)
+    first = make_question(survey.id, "第一志愿", 0)
+    second = make_question(survey.id, "第二志愿", 1, allow_multiple=True)
+    options = [
+        make_option(first.id, "机器人", 0),
+        make_option(first.id, "视觉", 1),
+        make_option(second.id, "电控", 0),
+        make_option(second.id, "嵌入式", 1),
+    ]
+    question_ids = [question.id for question in [first, second]]
+    option_ids = [option.id for option in options]
+    old_direction_id = uuid4()
+    new_direction_id = uuid4()
+    replace_audience = AsyncMock()
+    add_question = Mock()
+    add_option = Mock()
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            questions=AsyncMock(side_effect=[[first, second], [first, second]]),
+            options=AsyncMock(return_value=options),
+            responded_count=AsyncMock(return_value=3),
+            active_directions_by_ids=AsyncMock(
+                return_value=[cast(Direction, SimpleNamespace(id=new_direction_id))]
+            ),
+            audience_direction_ids=AsyncMock(side_effect=[[old_direction_id], [new_direction_id]]),
+            replace_audience=replace_audience,
+            add_question=add_question,
+            add_option=add_option,
+        ),
+    )
+    payload = IntentionSurveyPatchRequest(
+        revision=1,
+        title="开放后的新标题",
+        description_markdown="## 更新后的说明",
+        questions=[
+            question_payload("首选技术组", "机器人", "视觉"),
+            question_payload("可调剂技术组", "电控", "嵌入式", allow_multiple=True),
+        ],
+        max_submissions=5,
+        audience=IntentionAudienceInput(
+            all_students=False,
+            direction_ids=[new_direction_id],
+        ),
+    )
+
+    result = await service.patch(survey.id, payload, audit_context=make_audit_context("admin"))
+
+    assert result.status == status
+    assert result.title == "开放后的新标题"
+    assert result.revision == 2
+    assert [question.id for question in result.questions] == question_ids
+    assert [option.id for question in result.questions for option in question.options] == option_ids
+    assert [question.prompt for question in result.questions] == [
+        "首选技术组",
+        "可调剂技术组",
+    ]
+    assert [option.label for option in result.questions[0].options] == ["机器人", "视觉"]
+    session.delete.assert_not_awaited()
+    add_question.assert_not_called()
+    add_option.assert_not_called()
+    replace_audience.assert_awaited_once_with(survey.id, [new_direction_id])
+    session.commit.assert_awaited_once()
+    audit = cast(Mock, service._audit.add).call_args.args[0]
+    assert audit.change_summary == {
+        "status": status,
+        "title_changed": True,
+        "description_changed": True,
+        "submission_limit_changed": True,
+        "schedule_changed": False,
+        "audience_changed": True,
+        "question_prompt_change_count": 2,
+        "all_students": False,
+        "direction_count": 1,
+    }
+    assert "开放后的新标题" not in repr(audit.change_summary)
+    assert "首选技术组" not in repr(audit.change_summary)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("status", "revision", "expected_code"),
     [
-        ("open", 1, "INTENTION_ALREADY_OPEN"),
-        ("closed", 1, "INTENTION_ALREADY_OPEN"),
-        ("archived", 1, "INTENTION_ALREADY_OPEN"),
+        ("archived", 1, "INTENTION_ARCHIVED"),
         ("draft", 2, "REVISION_CONFLICT"),
+        ("open", 2, "REVISION_CONFLICT"),
     ],
 )
-async def test_admin_update_rejects_non_drafts_and_stale_revisions(
+async def test_admin_update_rejects_archived_and_stale_revisions(
     status: str, revision: int, expected_code: str
 ) -> None:
     now = datetime.now(UTC)
@@ -337,15 +535,150 @@ async def test_admin_update_rejects_non_drafts_and_stale_revisions(
 
 
 @pytest.mark.asyncio
-async def test_closed_questionnaire_can_reopen_while_archived_remains_terminal() -> None:
+@pytest.mark.parametrize(
+    "change",
+    ["question_count", "question_type", "option_label", "option_count", "option_order"],
+)
+async def test_opened_questionnaire_rejects_answer_structure_changes(change: str) -> None:
     now = datetime.now(UTC)
-    survey = make_survey(now, status="draft")
+    survey = make_survey(now, status="open")
+    question = make_question(survey.id, "第一志愿", 0)
+    options = [
+        make_option(question.id, "机器人", 0),
+        make_option(question.id, "视觉", 1),
+    ]
+    submitted_questions = [question_payload("可修改的题目", "机器人", "视觉")]
+    if change == "question_count":
+        submitted_questions.append(question_payload("新增题目", "电控"))
+    elif change == "question_type":
+        submitted_questions[0] = question_payload(
+            "可修改的题目",
+            "机器人",
+            "视觉",
+            allow_multiple=True,
+        )
+    elif change == "option_label":
+        submitted_questions[0] = question_payload("可修改的题目", "机器人", "机械")
+    elif change == "option_count":
+        submitted_questions[0] = question_payload("可修改的题目", "机器人")
+    elif change == "option_order":
+        submitted_questions[0] = question_payload("可修改的题目", "视觉", "机器人")
     service, session = make_service(now)
     service._repo = cast(
         IntentionRepository,
         SimpleNamespace(
             get_survey=AsyncMock(return_value=survey),
-            list_surveys=AsyncMock(return_value=[SurveyListRecord(survey, 2, 0, False)]),
+            audience_direction_ids=AsyncMock(return_value=[]),
+            questions=AsyncMock(return_value=[question]),
+            options=AsyncMock(return_value=options),
+        ),
+    )
+    payload = IntentionSurveyPatchRequest(
+        revision=1,
+        title="更新后的问卷",
+        questions=submitted_questions,
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.patch(survey.id, payload, audit_context=make_audit_context("admin"))
+
+    assert blocked.value.code == "INTENTION_ANSWER_STRUCTURE_IMMUTABLE"
+    assert question.prompt == "第一志愿"
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+    cast(Mock, service._audit.add).assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_opened_questionnaire_rejects_inactive_new_audience_before_mutation() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, status="open")
+    direction_id = uuid4()
+    questions = AsyncMock()
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            active_directions_by_ids=AsyncMock(return_value=[]),
+            questions=questions,
+        ),
+    )
+    payload = IntentionSurveyPatchRequest(
+        revision=1,
+        title="更新后的问卷",
+        questions=[question_payload("第一志愿", "视觉")],
+        audience=IntentionAudienceInput(
+            all_students=False,
+            direction_ids=[direction_id],
+        ),
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.patch(survey.id, payload, audit_context=make_audit_context("admin"))
+
+    assert blocked.value.code == "INVALID_INTENTION_AUDIENCE"
+    assert survey.title == "培训方向问卷"
+    questions.assert_not_awaited()
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_opened_questionnaire_update_rolls_back_when_commit_fails() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, status="closed")
+    question = make_question(survey.id, "第一志愿", 0)
+    options = [make_option(question.id, "视觉", 0)]
+    service, session = make_service(now)
+    session.commit.side_effect = RuntimeError("database unavailable")
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            audience_direction_ids=AsyncMock(return_value=[]),
+            questions=AsyncMock(return_value=[question]),
+            options=AsyncMock(return_value=options),
+            replace_audience=AsyncMock(),
+        ),
+    )
+    payload = IntentionSurveyPatchRequest(
+        revision=1,
+        title="更新后的问卷",
+        questions=[question_payload("首选方向", "视觉")],
+    )
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await service.patch(survey.id, payload, audit_context=make_audit_context("admin"))
+
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_closed_questionnaire_can_reopen_while_archived_remains_terminal() -> None:
+    now = datetime.now(UTC)
+    direction_id = uuid4()
+    survey = make_survey(now, status="draft", all_students=False)
+    service, session = make_service(now)
+    audience_direction_ids = AsyncMock(return_value=[direction_id])
+    active_directions = AsyncMock(return_value=[cast(Direction, SimpleNamespace(id=direction_id))])
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            audience_direction_ids=audience_direction_ids,
+            active_directions_by_ids=active_directions,
+            list_surveys=AsyncMock(
+                return_value=[
+                    SurveyListRecord(
+                        survey,
+                        2,
+                        0,
+                        False,
+                        direction_ids=(direction_id,),
+                    )
+                ]
+            ),
         ),
     )
     audit_context = make_audit_context("admin")
@@ -384,6 +717,531 @@ async def test_closed_questionnaire_can_reopen_while_archived_remains_terminal()
         "from_status": "closed",
         "to_status": "open",
     }
+    audience_direction_ids.assert_awaited_once_with(survey.id)
+    active_directions.assert_awaited_once_with([direction_id])
+
+
+@pytest.mark.asyncio
+async def test_first_open_rejects_a_deactivated_audience_direction() -> None:
+    now = datetime.now(UTC)
+    direction_id = uuid4()
+    survey = make_survey(now, status="draft", all_students=False)
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            audience_direction_ids=AsyncMock(return_value=[direction_id]),
+            active_directions_by_ids=AsyncMock(return_value=[]),
+        ),
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.transition(
+            survey.id,
+            "open",
+            audit_context=make_audit_context("admin"),
+        )
+
+    assert blocked.value.code == "INVALID_INTENTION_AUDIENCE"
+    assert survey.status == "draft"
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_student_list_passes_current_direction_to_audience_filter() -> None:
+    now = datetime.now(UTC)
+    direction_id = uuid4()
+    context = make_context(direction_id=direction_id)
+    service, _session = make_service(now)
+    list_surveys = AsyncMock(return_value=[])
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(list_surveys=list_surveys),
+    )
+
+    result = await service.list_student(context=context)
+
+    assert result.total == 0
+    list_surveys.assert_awaited_once_with(
+        student_user_id=context.user.id,
+        student_direction_id=direction_id,
+        open_only=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_qr_link_does_not_bypass_questionnaire_audience() -> None:
+    now = datetime.now(UTC)
+    direction_id = uuid4()
+    survey = make_survey(now, all_students=False)
+    targeted = AsyncMock(return_value=False)
+    service, _session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            student_direction_is_targeted=targeted,
+        ),
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.student_detail(
+            survey.id,
+            context=make_context(direction_id=direction_id),
+            token="initial-token",
+        )
+
+    assert blocked.value.status_code == 404
+    targeted.assert_awaited_once_with(survey.id, direction_id)
+
+
+@pytest.mark.asyncio
+async def test_non_target_student_cannot_submit_questionnaire() -> None:
+    now = datetime.now(UTC)
+    direction_id = uuid4()
+    survey = make_survey(now, all_students=False)
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            student_direction_is_targeted=AsyncMock(return_value=False),
+        ),
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.submit_response(
+            survey.id,
+            IntentionResponseRequest(
+                answers=[
+                    IntentionAnswerRequest(
+                        question_id=uuid4(),
+                        selected_option_ids=[uuid4()],
+                    )
+                ]
+            ),
+            audit_context=IntentionAuditContext(
+                actor=make_context(direction_id=direction_id),
+                request_id="intention-regression",
+                ip_prefix="127.0.0.0/24",
+            ),
+        )
+
+    assert blocked.value.status_code == 404
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+def test_first_choice_direction_assignment_schema_requires_confirmation_and_unique_options() -> (
+    None
+):
+    option_id = uuid4()
+    direction_id = uuid4()
+
+    with pytest.raises(ValidationError):
+        IntentionDirectionAssignmentRequest.model_validate(
+            {
+                "question_id": uuid4(),
+                "option_mappings": [
+                    {"option_id": option_id, "direction_id": direction_id},
+                    {"option_id": option_id, "direction_id": uuid4()},
+                ],
+                "confirm_overwrite": True,
+            }
+        )
+    with pytest.raises(ValidationError):
+        IntentionDirectionAssignmentRequest.model_validate(
+            {
+                "question_id": uuid4(),
+                "option_mappings": [
+                    {"option_id": option_id, "direction_id": direction_id},
+                ],
+                "confirm_overwrite": False,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "title",
+    ["培训方向问卷", "意向选择问卷", "问卷意向选择"],
+)
+@pytest.mark.asyncio
+async def test_first_choice_direction_assignment_rejects_other_survey_titles(
+    title: str,
+) -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, title=title)
+    questions = AsyncMock()
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            questions=questions,
+        ),
+    )
+    payload = IntentionDirectionAssignmentRequest(
+        question_id=uuid4(),
+        option_mappings=[
+            IntentionDirectionMapping(
+                option_id=uuid4(),
+                direction_id=uuid4(),
+            )
+        ],
+        confirm_overwrite=True,
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.apply_first_choice_directions(
+            survey.id,
+            payload,
+            audit_context=make_audit_context("admin"),
+        )
+
+    assert blocked.value.status_code == 422
+    assert blocked.value.code == "INVALID_INTENTION_DIRECTION_SURVEY"
+    questions.assert_not_awaited()
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+    cast(Mock, service._audit.add).assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_applies_latest_first_choices_to_active_student_directions() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, title="意向选择")
+    first = make_question(survey.id, "第一志愿", 0)
+    second = make_question(survey.id, "第二志愿", 1)
+    robot_option = make_option(first.id, "机器人", 0)
+    vision_option = make_option(first.id, "视觉", 1)
+    second_option = make_option(second.id, "电控", 0)
+    robot_direction_id = uuid4()
+    vision_direction_id = uuid4()
+    robot_direction = cast(Direction, SimpleNamespace(id=robot_direction_id))
+    vision_direction = cast(Direction, SimpleNamespace(id=vision_direction_id))
+    first_user = cast(
+        User,
+        SimpleNamespace(
+            id=uuid4(),
+            direction_id=vision_direction_id,
+            revision=3,
+        ),
+    )
+    second_user = cast(
+        User,
+        SimpleNamespace(
+            id=uuid4(),
+            direction_id=vision_direction_id,
+            revision=5,
+        ),
+    )
+    records = [
+        FirstChoiceDirectionRecord(user=first_user, option_id=robot_option.id),
+        FirstChoiceDirectionRecord(user=second_user, option_id=vision_option.id),
+    ]
+    service, session = make_service(now)
+    active_directions = AsyncMock(return_value=[robot_direction, vision_direction])
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            questions=AsyncMock(return_value=[first, second]),
+            options=AsyncMock(return_value=[robot_option, vision_option, second_option]),
+            active_directions_by_ids=active_directions,
+            responded_count=AsyncMock(return_value=3),
+            active_student_first_choices=AsyncMock(return_value=records),
+        ),
+    )
+    payload = IntentionDirectionAssignmentRequest(
+        question_id=first.id,
+        option_mappings=[
+            IntentionDirectionMapping(
+                option_id=robot_option.id,
+                direction_id=robot_direction_id,
+            ),
+            IntentionDirectionMapping(
+                option_id=vision_option.id,
+                direction_id=vision_direction_id,
+            ),
+        ],
+        confirm_overwrite=True,
+    )
+
+    result = await service.apply_first_choice_directions(
+        survey.id,
+        payload,
+        audit_context=make_audit_context("admin"),
+    )
+
+    assert result.eligible_response_count == 2
+    assert result.updated_count == 1
+    assert result.unchanged_count == 1
+    assert result.skipped_response_count == 1
+    assert first_user.direction_id == robot_direction_id
+    assert first_user.revision == 4
+    assert second_user.direction_id == vision_direction_id
+    assert second_user.revision == 5
+    direction_call = active_directions.await_args
+    assert direction_call is not None
+    assert set(direction_call.args[0]) == {
+        robot_direction_id,
+        vision_direction_id,
+    }
+    session.commit.assert_awaited_once()
+    audit_items = [
+        item.args[0] for item in cast(Mock, service._audit.add).call_args_list if item is not None
+    ]
+    assert [item.action for item in audit_items] == [
+        "user.direction_assign_from_intention",
+        "intention.first_choice_directions_apply",
+    ]
+    assert audit_items[0].target_type == "user"
+    assert audit_items[0].target_id == first_user.id
+    assert audit_items[0].change_summary["source_survey_id"] == str(survey.id)
+    assert "option" not in repr([item.change_summary for item in audit_items])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("submitted_question", "allow_multiple", "expected_code"),
+    [
+        ("second", False, "INVALID_INTENTION_FIRST_CHOICE"),
+        ("first", True, "INTENTION_FIRST_CHOICE_MUST_BE_SINGLE"),
+    ],
+)
+async def test_first_choice_direction_assignment_rejects_wrong_or_multiple_question(
+    submitted_question: str,
+    allow_multiple: bool,
+    expected_code: str,
+) -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, title="意向选择")
+    first = make_question(
+        survey.id,
+        "第一志愿",
+        0,
+        allow_multiple=allow_multiple,
+    )
+    second = make_question(survey.id, "第二志愿", 1)
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            questions=AsyncMock(return_value=[first, second]),
+        ),
+    )
+    question_id = first.id if submitted_question == "first" else second.id
+    payload = IntentionDirectionAssignmentRequest(
+        question_id=question_id,
+        option_mappings=[IntentionDirectionMapping(option_id=uuid4(), direction_id=uuid4())],
+        confirm_overwrite=True,
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.apply_first_choice_directions(
+            survey.id,
+            payload,
+            audit_context=make_audit_context("admin"),
+        )
+
+    assert blocked.value.code == expected_code
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_first_choice_direction_assignment_requires_complete_active_mapping() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, title="意向选择")
+    first = make_question(survey.id, "第一志愿", 0)
+    robot_option = make_option(first.id, "机器人", 0)
+    vision_option = make_option(first.id, "视觉", 1)
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            questions=AsyncMock(return_value=[first]),
+            options=AsyncMock(return_value=[robot_option, vision_option]),
+        ),
+    )
+    payload = IntentionDirectionAssignmentRequest(
+        question_id=first.id,
+        option_mappings=[
+            IntentionDirectionMapping(
+                option_id=robot_option.id,
+                direction_id=uuid4(),
+            )
+        ],
+        confirm_overwrite=True,
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.apply_first_choice_directions(
+            survey.id,
+            payload,
+            audit_context=make_audit_context("admin"),
+        )
+
+    assert blocked.value.code == "INVALID_INTENTION_DIRECTION_MAPPING"
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_first_choice_direction_assignment_rejects_inactive_direction_or_no_students() -> (
+    None
+):
+    now = datetime.now(UTC)
+    survey = make_survey(now, title="意向选择")
+    first = make_question(survey.id, "第一志愿", 0)
+    option = make_option(first.id, "机器人", 0)
+    direction_id = uuid4()
+    payload = IntentionDirectionAssignmentRequest(
+        question_id=first.id,
+        option_mappings=[
+            IntentionDirectionMapping(
+                option_id=option.id,
+                direction_id=direction_id,
+            )
+        ],
+        confirm_overwrite=True,
+    )
+
+    for directions, expected_code in [
+        ([], "INVALID_INTENTION_DIRECTION_MAPPING"),
+        ([cast(Direction, SimpleNamespace(id=direction_id))], "NO_INTENTION_DIRECTION_RESPONSES"),
+    ]:
+        service, session = make_service(now)
+        service._repo = cast(
+            IntentionRepository,
+            SimpleNamespace(
+                get_survey=AsyncMock(return_value=survey),
+                questions=AsyncMock(return_value=[first]),
+                options=AsyncMock(return_value=[option]),
+                active_directions_by_ids=AsyncMock(return_value=directions),
+                responded_count=AsyncMock(return_value=1),
+                active_student_first_choices=AsyncMock(return_value=[]),
+            ),
+        )
+
+        with pytest.raises(ApplicationError) as blocked:
+            await service.apply_first_choice_directions(
+                survey.id,
+                payload,
+                audit_context=make_audit_context("admin"),
+            )
+
+        assert blocked.value.code == expected_code
+        session.rollback.assert_awaited_once()
+        session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_first_choice_repository_locks_only_active_students_in_stable_order() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    rows = Mock()
+    rows.all.return_value = []
+    session.execute.return_value = rows
+    repository = IntentionRepository(cast(AsyncSession, session))
+
+    records = await repository.active_student_first_choices(uuid4(), uuid4())
+
+    assert records == []
+    execute_call = session.execute.await_args
+    assert execute_call is not None
+    sql = str(execute_call.args[0])
+    assert "users.role =" in sql
+    assert "users.status =" in sql
+    assert "ORDER BY users.id" in sql
+    assert "FOR UPDATE" in sql
+
+
+@pytest.mark.asyncio
+async def test_first_choice_direction_assignment_rolls_back_when_commit_fails() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, title="意向选择")
+    first = make_question(survey.id, "第一志愿", 0)
+    option = make_option(first.id, "机器人", 0)
+    direction_id = uuid4()
+    direction = cast(Direction, SimpleNamespace(id=direction_id))
+    user = cast(
+        User,
+        SimpleNamespace(
+            id=uuid4(),
+            direction_id=None,
+            revision=1,
+        ),
+    )
+    service, session = make_service(now)
+    session.commit.side_effect = RuntimeError("commit failed")
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            questions=AsyncMock(return_value=[first]),
+            options=AsyncMock(return_value=[option]),
+            active_directions_by_ids=AsyncMock(return_value=[direction]),
+            responded_count=AsyncMock(return_value=1),
+            active_student_first_choices=AsyncMock(
+                return_value=[
+                    FirstChoiceDirectionRecord(
+                        user=user,
+                        option_id=option.id,
+                    )
+                ]
+            ),
+        ),
+    )
+    payload = IntentionDirectionAssignmentRequest(
+        question_id=first.id,
+        option_mappings=[
+            IntentionDirectionMapping(
+                option_id=option.id,
+                direction_id=direction_id,
+            )
+        ],
+        confirm_overwrite=True,
+    )
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await service.apply_first_choice_directions(
+            survey.id,
+            payload,
+            audit_context=make_audit_context("admin"),
+        )
+
+    session.commit.assert_awaited_once()
+    session.rollback.assert_awaited_once()
+
+
+async def test_first_choice_direction_assignment_rejects_student_views() -> None:
+    service, _session = make_service(datetime.now(UTC))
+    payload = IntentionDirectionAssignmentRequest(
+        question_id=uuid4(),
+        option_mappings=[IntentionDirectionMapping(option_id=uuid4(), direction_id=uuid4())],
+        confirm_overwrite=True,
+    )
+
+    for context in [
+        make_audit_context(),
+        IntentionAuditContext(
+            actor=make_context("admin", student_view=True),
+            request_id="intention-regression",
+            ip_prefix="127.0.0.0/24",
+        ),
+    ]:
+        with pytest.raises(ApplicationError) as blocked:
+            await service.apply_first_choice_directions(
+                uuid4(),
+                payload,
+                audit_context=context,
+            )
+        assert blocked.value.status_code == 403
 
 
 def test_email_notification_request_rejects_duplicate_members() -> None:
@@ -392,15 +1250,31 @@ def test_email_notification_request_rejects_duplicate_members() -> None:
         IntentionEmailNotificationRequest(recipient_user_ids=[member_id, member_id])
 
 
+def test_email_notification_request_rejects_duplicate_directions() -> None:
+    direction_id = uuid4()
+    with pytest.raises(ValidationError):
+        IntentionEmailNotificationRequest(
+            recipient_scope="direction",
+            direction_ids=[direction_id, direction_id],
+        )
+
+
 @pytest.mark.parametrize(
     "payload",
     [
         {},
         {"direction_id": uuid4()},
+        {"direction_ids": [uuid4()]},
         {"recipient_scope": "direction"},
-        {"recipient_scope": "direction", "direction_id": uuid4(), "recipient_user_ids": [uuid4()]},
+        {
+            "recipient_scope": "direction",
+            "direction_ids": [uuid4()],
+            "recipient_user_ids": [uuid4()],
+        },
+        {"recipient_scope": "direction", "direction_id": uuid4(), "direction_ids": [uuid4()]},
         {"recipient_scope": "all", "recipient_user_ids": [uuid4()]},
         {"recipient_scope": "all", "direction_id": uuid4()},
+        {"recipient_scope": "all", "direction_ids": [uuid4()]},
     ],
 )
 def test_email_notification_request_rejects_incompatible_scope(
@@ -410,13 +1284,21 @@ def test_email_notification_request_rejects_incompatible_scope(
         IntentionEmailNotificationRequest.model_validate(payload)
 
 
-def test_email_notification_request_accepts_manual_direction_and_all() -> None:
+def test_email_notification_request_accepts_manual_directions_legacy_and_all() -> None:
     assert (
         IntentionEmailNotificationRequest(recipient_user_ids=[uuid4()]).recipient_scope == "manual"
     )
     assert (
         IntentionEmailNotificationRequest(
-            recipient_scope="direction", direction_id=uuid4()
+            recipient_scope="direction",
+            direction_ids=[uuid4(), uuid4()],
+        ).recipient_scope
+        == "direction"
+    )
+    assert (
+        IntentionEmailNotificationRequest(
+            recipient_scope="direction",
+            direction_id=uuid4(),
         ).recipient_scope
         == "direction"
     )
@@ -497,30 +1379,33 @@ async def test_admin_queues_selected_members_once_per_open_revision() -> None:
 
 
 @pytest.mark.asyncio
-async def test_admin_queues_active_students_in_selected_direction() -> None:
+async def test_admin_queues_active_students_in_selected_directions() -> None:
     now = datetime.now(UTC)
     survey = make_survey(now)
-    direction_id = uuid4()
-    direction = cast(
-        Direction,
-        SimpleNamespace(id=direction_id, is_active=True),
-    )
-    member = cast(
-        User,
-        SimpleNamespace(
-            id=uuid4(),
-            email="direction@connect.hkust-gz.edu.cn",
-            full_name="技术组学生",
-        ),
-    )
+    direction_ids = [uuid4(), uuid4()]
+    directions = [
+        cast(Direction, SimpleNamespace(id=direction_id, is_active=True))
+        for direction_id in direction_ids
+    ]
+    members = [
+        cast(
+            User,
+            SimpleNamespace(
+                id=uuid4(),
+                email=f"direction-{index}@connect.hkust-gz.edu.cn",
+                full_name=f"技术组学生 {index}",
+            ),
+        )
+        for index in range(2)
+    ]
     service, session = make_service(now)
-    active_direction = AsyncMock(return_value=direction)
-    active_scope = AsyncMock(return_value=[member])
+    active_directions = AsyncMock(return_value=directions)
+    active_scope = AsyncMock(return_value=members)
     service._repo = cast(
         IntentionRepository,
         SimpleNamespace(
             get_survey=AsyncMock(return_value=survey),
-            active_direction=active_direction,
+            active_directions_by_ids=active_directions,
             active_students_for_email_scope=active_scope,
         ),
     )
@@ -537,23 +1422,23 @@ async def test_admin_queues_active_students_in_selected_direction() -> None:
         survey.id,
         IntentionEmailNotificationRequest(
             recipient_scope="direction",
-            direction_id=direction_id,
+            direction_ids=direction_ids,
         ),
         audit_context=make_audit_context("admin"),
     )
 
-    assert result.requested_count == 1
-    assert result.queued_count == 1
-    active_direction.assert_awaited_once_with(direction_id)
-    active_scope.assert_awaited_once_with(direction_id=direction_id)
-    assert outbox_add.call_count == 1
+    assert result.requested_count == 2
+    assert result.queued_count == 2
+    active_directions.assert_awaited_once_with(direction_ids)
+    active_scope.assert_awaited_once_with(direction_ids=direction_ids)
+    assert outbox_add.call_count == 2
     session.commit.assert_awaited_once()
     audit = cast(Mock, service._audit.add).call_args.args[0]
     assert audit.change_summary == {
         "recipient_scope": "direction",
-        "direction_id": str(direction_id),
-        "requested_count": 1,
-        "queued_count": 1,
+        "direction_ids": sorted(str(direction_id) for direction_id in direction_ids),
+        "requested_count": 2,
+        "queued_count": 2,
         "already_queued_count": 0,
     }
 
@@ -599,7 +1484,7 @@ async def test_admin_queues_all_active_students_from_authoritative_scope() -> No
 
     assert result.requested_count == 2
     assert result.queued_count == 2
-    active_scope.assert_awaited_once_with(direction_id=None)
+    active_scope.assert_awaited_once_with(direction_ids=None)
     assert outbox_add.call_count == 2
     session.commit.assert_awaited_once()
     audit = cast(Mock, service._audit.add).call_args.args[0]
@@ -615,13 +1500,17 @@ async def test_admin_queues_all_active_students_from_authoritative_scope() -> No
 async def test_questionnaire_email_rejects_inactive_direction_or_empty_scope() -> None:
     now = datetime.now(UTC)
     survey = make_survey(now)
-    direction_id = uuid4()
+    direction_ids = [uuid4(), uuid4()]
     service, session = make_service(now)
+    active_scope = AsyncMock()
     service._repo = cast(
         IntentionRepository,
         SimpleNamespace(
             get_survey=AsyncMock(return_value=survey),
-            active_direction=AsyncMock(return_value=None),
+            active_directions_by_ids=AsyncMock(
+                return_value=[cast(Direction, SimpleNamespace(id=direction_ids[0]))]
+            ),
+            active_students_for_email_scope=active_scope,
         ),
     )
 
@@ -630,11 +1519,12 @@ async def test_questionnaire_email_rejects_inactive_direction_or_empty_scope() -
             survey.id,
             IntentionEmailNotificationRequest(
                 recipient_scope="direction",
-                direction_id=direction_id,
+                direction_ids=direction_ids,
             ),
             audit_context=make_audit_context("admin"),
         )
     assert invalid_direction.value.code == "INVALID_INTENTION_EMAIL_DIRECTION"
+    active_scope.assert_not_awaited()
 
     service._repo = cast(
         IntentionRepository,
@@ -677,6 +1567,116 @@ async def test_questionnaire_email_rejects_non_active_selected_member() -> None:
     assert blocked.value.code == "INVALID_INTENTION_EMAIL_RECIPIENTS"
     session.rollback.assert_awaited_once()
     session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_questionnaire_email_rejects_members_outside_its_audience() -> None:
+    now = datetime.now(UTC)
+    target_direction_id = uuid4()
+    member = cast(
+        User,
+        SimpleNamespace(
+            id=uuid4(),
+            email="outside@connect.hkust-gz.edu.cn",
+            full_name="非目标学生",
+            direction_id=uuid4(),
+        ),
+    )
+    survey = make_survey(now, all_students=False)
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            audience_direction_ids=AsyncMock(return_value=[target_direction_id]),
+            active_students_by_ids=AsyncMock(return_value=[member]),
+        ),
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.send_email_notifications(
+            survey.id,
+            IntentionEmailNotificationRequest(recipient_user_ids=[member.id]),
+            audit_context=make_audit_context("admin"),
+        )
+
+    assert blocked.value.code == "INVALID_INTENTION_EMAIL_RECIPIENTS"
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_questionnaire_email_rejects_directions_outside_its_audience() -> None:
+    now = datetime.now(UTC)
+    survey = make_survey(now, all_students=False)
+    service, session = make_service(now)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            audience_direction_ids=AsyncMock(return_value=[uuid4()]),
+        ),
+    )
+
+    with pytest.raises(ApplicationError) as blocked:
+        await service.send_email_notifications(
+            survey.id,
+            IntentionEmailNotificationRequest(
+                recipient_scope="direction",
+                direction_ids=[uuid4()],
+            ),
+            audit_context=make_audit_context("admin"),
+        )
+
+    assert blocked.value.code == "INVALID_INTENTION_EMAIL_DIRECTION"
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_all_email_scope_uses_only_questionnaire_target_directions() -> None:
+    now = datetime.now(UTC)
+    target_direction_ids = [uuid4(), uuid4()]
+    survey = make_survey(now, all_students=False)
+    service, session = make_service(now)
+    active_scope = AsyncMock(
+        return_value=[
+            cast(
+                User,
+                SimpleNamespace(
+                    id=uuid4(),
+                    email="target@connect.hkust-gz.edu.cn",
+                    full_name="目标学生",
+                    direction_id=target_direction_ids[0],
+                ),
+            )
+        ]
+    )
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            audience_direction_ids=AsyncMock(return_value=target_direction_ids),
+            active_students_for_email_scope=active_scope,
+        ),
+    )
+    service._outbox = cast(
+        OutboxRepository,
+        SimpleNamespace(
+            existing_event_keys=AsyncMock(return_value=set()),
+            add=Mock(),
+        ),
+    )
+
+    result = await service.send_email_notifications(
+        survey.id,
+        IntentionEmailNotificationRequest(recipient_scope="all"),
+        audit_context=make_audit_context("admin"),
+    )
+
+    assert result.requested_count == 1
+    active_scope.assert_awaited_once_with(direction_ids=target_direction_ids)
+    session.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -957,12 +1957,13 @@ async def test_admin_stats_are_grouped_by_question(
     question = make_question(survey.id, "第一志愿", 0)
     option = make_option(question.id, "机器人", 0)
     service, _session = make_service(now)
+    active_student_count = AsyncMock(return_value=total_students)
     service._repo = cast(
         IntentionRepository,
         SimpleNamespace(
             get_survey=AsyncMock(return_value=survey),
             responded_count=AsyncMock(return_value=responded),
-            active_student_count=AsyncMock(return_value=total_students),
+            active_student_count=active_student_count,
             questions=AsyncMock(return_value=[question]),
             option_counts=AsyncMock(
                 return_value=[
@@ -981,6 +1982,32 @@ async def test_admin_stats_are_grouped_by_question(
     assert result.response_rate == expected_rate
     assert result.questions[0].prompt == "第一志愿"
     assert result.questions[0].options[0].percentage == expected_option
+    active_student_count.assert_awaited_once_with(direction_ids=None)
+
+
+@pytest.mark.asyncio
+async def test_admin_stats_count_only_current_target_students() -> None:
+    now = datetime.now(UTC)
+    direction_ids = [uuid4(), uuid4()]
+    survey = make_survey(now, all_students=False)
+    service, _session = make_service(now)
+    active_student_count = AsyncMock(return_value=7)
+    service._repo = cast(
+        IntentionRepository,
+        SimpleNamespace(
+            get_survey=AsyncMock(return_value=survey),
+            responded_count=AsyncMock(return_value=2),
+            audience_direction_ids=AsyncMock(return_value=direction_ids),
+            active_student_count=active_student_count,
+            questions=AsyncMock(return_value=[]),
+            option_counts=AsyncMock(return_value=[]),
+        ),
+    )
+
+    result = await service.stats(survey.id, context=make_context("admin"))
+
+    assert result.total_active_students == 7
+    active_student_count.assert_awaited_once_with(direction_ids=direction_ids)
 
 
 @pytest.mark.asyncio

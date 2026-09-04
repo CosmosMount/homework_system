@@ -732,6 +732,10 @@ export type AdminIntentionSurvey = {
   question_count: number;
   responded_count: number;
   max_submissions: number | null;
+  audience: {
+    all_students: boolean;
+    direction_ids: string[];
+  };
   created_at: string;
   updated_at: string;
   revision: number;
@@ -744,6 +748,15 @@ export type AdminIntentionSurveyDetail = AdminIntentionSurvey & {
 export type AdminIntentionSurveyPage = {
   items: AdminIntentionSurvey[];
   total: number;
+};
+
+export type IntentionDirectionAssignmentResult = {
+  survey_id: string;
+  question_id: string;
+  eligible_response_count: number;
+  updated_count: number;
+  unchanged_count: number;
+  skipped_response_count: number;
 };
 
 export type IntentionEmailNotificationResult = {

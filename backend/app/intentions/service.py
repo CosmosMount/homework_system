@@ -23,12 +23,20 @@ from app.intentions.models import (
     IntentionResponseOption,
     IntentionSurvey,
 )
-from app.intentions.repository import IntentionRepository, SurveyListRecord, SurveyOptionCount
+from app.intentions.repository import (
+    FirstChoiceDirectionRecord,
+    IntentionRepository,
+    SurveyListRecord,
+    SurveyOptionCount,
+)
 from app.intentions.schemas import (
     AdminIntentionSurvey,
     AdminIntentionSurveyDetail,
     AdminIntentionSurveyPage,
     IntentionAnswerResponse,
+    IntentionAudienceResponse,
+    IntentionDirectionAssignmentRequest,
+    IntentionDirectionAssignmentResponse,
     IntentionEmailNotificationRequest,
     IntentionEmailNotificationResponse,
     IntentionOptionResponse,
@@ -53,6 +61,8 @@ from app.intentions.schemas import (
 from app.notifications.models import OutboxJob
 from app.notifications.repository import OutboxRepository
 from app.users.models import User
+
+DIRECTION_ASSIGNMENT_SURVEY_TITLE = "意向选择"
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +119,29 @@ class IntentionService:
             and (survey.ends_at is None or now < survey.ends_at)
         )
 
+    async def _student_is_targeted(
+        self, survey: IntentionSurvey, context: AuthenticatedContext
+    ) -> bool:
+        if survey.all_students:
+            return True
+        return await self._repo.student_direction_is_targeted(
+            survey.id,
+            context.user.direction_id,
+        )
+
+    async def _validate_audience_direction_ids(self, direction_ids: list[UUID]) -> None:
+        if not direction_ids:
+            return
+        requested = set(direction_ids)
+        active = await self._repo.active_directions_by_ids(direction_ids)
+        if {direction.id for direction in active} != requested:
+            await self._session.rollback()
+            raise ApplicationError(
+                status_code=400,
+                code="INVALID_INTENTION_AUDIENCE",
+                message="问卷受众中包含不存在或已停用的技术组，请刷新后重试。",
+            )
+
     def _add_audit(
         self,
         context: IntentionAuditContext,
@@ -117,13 +150,14 @@ class IntentionService:
         target_id: UUID,
         now: datetime,
         change_summary: dict[str, object] | None = None,
+        target_type: str = "intention_survey",
     ) -> None:
         self._audit.add(
             AuditLog(
                 id=uuid7(),
                 actor_user_id=context.actor.user.id,
                 action=action,
-                target_type="intention_survey",
+                target_type=target_type,
                 target_id=target_id,
                 request_id=context.request_id,
                 ip_prefix=context.ip_prefix,
@@ -210,6 +244,10 @@ class IntentionService:
             question_count=record.question_count,
             responded_count=record.responded_count,
             max_submissions=survey.max_submissions,
+            audience=IntentionAudienceResponse(
+                all_students=survey.all_students,
+                direction_ids=list(record.direction_ids),
+            ),
             created_at=survey.created_at,
             updated_at=survey.updated_at,
             revision=survey.revision,
@@ -218,7 +256,11 @@ class IntentionService:
     async def list_student(self, *, context: AuthenticatedContext) -> IntentionSurveyPage:
         self._require_student(context)
         now = self._clock()
-        records = await self._repo.list_surveys(student_user_id=context.user.id, open_only=True)
+        records = await self._repo.list_surveys(
+            student_user_id=context.user.id,
+            student_direction_id=context.user.direction_id,
+            open_only=True,
+        )
         visible = [record for record in records if self._is_open(record.survey, now)]
         return IntentionSurveyPage(
             items=[
@@ -233,7 +275,11 @@ class IntentionService:
     ) -> IntentionSurveyDetail:
         self._require_student(context)
         survey = await self._repo.get_survey(survey_id)
-        if survey is None or not self._is_open(survey, self._clock()):
+        if (
+            survey is None
+            or not self._is_open(survey, self._clock())
+            or not await self._student_is_targeted(survey, context)
+        ):
             raise self._not_found()
         if token is not None and sha256_hexdigest(token) != survey.public_token_hash:
             raise self._not_found()
@@ -277,6 +323,9 @@ class IntentionService:
         if survey is None or not self._is_open(survey, now):
             await self._session.rollback()
             raise self._conflict("INTENTION_CLOSED", "当前问卷已关闭或不在填写时间内。")
+        if not await self._student_is_targeted(survey, audit_context.actor):
+            await self._session.rollback()
+            raise self._not_found()
         questions = await self._repo.questions(survey_id)
         options = await self._repo.options(survey_id)
         question_by_id = {question.id: question for question in questions}
@@ -398,6 +447,7 @@ class IntentionService:
                     len(questions),
                     await self._repo.responded_count(survey_id),
                     False,
+                    direction_ids=tuple(await self._repo.audience_direction_ids(survey_id)),
                 ),
                 student=False,
             ),
@@ -431,6 +481,40 @@ class IntentionService:
                     )
                 )
 
+    async def _update_opened_questions(
+        self,
+        survey_id: UUID,
+        payload_questions: list[IntentionQuestionInput],
+    ) -> int:
+        questions = await self._repo.questions(survey_id)
+        options = await self._repo.options(survey_id)
+        options_by_question: dict[UUID, list[IntentionOption]] = {}
+        for option in options:
+            options_by_question.setdefault(option.question_id, []).append(option)
+
+        structure_matches = len(questions) == len(payload_questions)
+        if structure_matches:
+            for question, submitted in zip(questions, payload_questions, strict=True):
+                current_options = options_by_question.get(question.id, [])
+                structure_matches = question.allow_multiple == submitted.allow_multiple and [
+                    option.label for option in current_options
+                ] == [option.label for option in submitted.options]
+                if not structure_matches:
+                    break
+        if not structure_matches:
+            await self._session.rollback()
+            raise self._conflict(
+                "INTENTION_ANSWER_STRUCTURE_IMMUTABLE",
+                "问卷开放后不能修改题目数量、题型或选项。",
+            )
+
+        prompt_change_count = 0
+        for question, submitted in zip(questions, payload_questions, strict=True):
+            if question.prompt != submitted.prompt:
+                question.prompt = submitted.prompt
+                prompt_change_count += 1
+        return prompt_change_count
+
     async def create(
         self,
         payload: IntentionSurveyCreateRequest,
@@ -438,6 +522,7 @@ class IntentionService:
         audit_context: IntentionAuditContext,
     ) -> AdminIntentionSurvey:
         self._require_admin(audit_context.actor)
+        await self._validate_audience_direction_ids(payload.audience.direction_ids)
         now = self._clock()
         token = random_urlsafe_token(24)
         survey = IntentionSurvey(
@@ -446,6 +531,7 @@ class IntentionService:
             description_markdown=payload.description_markdown,
             description_html=render_markdown(payload.description_markdown),
             status="draft",
+            all_students=payload.audience.all_students,
             max_submissions=payload.max_submissions,
             starts_at=payload.starts_at,
             ends_at=payload.ends_at,
@@ -458,13 +544,30 @@ class IntentionService:
         )
         self._repo.add_survey(survey)
         await self._session.flush()
+        await self._repo.replace_audience(survey.id, payload.audience.direction_ids)
         await self._add_questions(survey.id, payload)
-        self._add_audit(audit_context, action="intention.create", target_id=survey.id, now=now)
+        self._add_audit(
+            audit_context,
+            action="intention.create",
+            target_id=survey.id,
+            now=now,
+            change_summary={
+                "all_students": payload.audience.all_students,
+                "direction_count": len(payload.audience.direction_ids),
+            },
+        )
         await self._session.commit()
         return cast(
             AdminIntentionSurvey,
             self._summary(
-                SurveyListRecord(survey, len(payload.questions), 0, False), student=False
+                SurveyListRecord(
+                    survey,
+                    len(payload.questions),
+                    0,
+                    False,
+                    direction_ids=tuple(sorted(payload.audience.direction_ids)),
+                ),
+                student=False,
             ),
         )
 
@@ -480,29 +583,78 @@ class IntentionService:
         if survey is None:
             await self._session.rollback()
             raise self._not_found()
-        if survey.status != "draft":
+        if survey.status == "archived":
             await self._session.rollback()
-            raise self._conflict("INTENTION_ALREADY_OPEN", "问卷开放后不能修改题目结构。")
+            raise self._conflict("INTENTION_ARCHIVED", "已归档问卷不能修改。")
         if survey.revision != payload.revision:
             await self._session.rollback()
             raise self._conflict("REVISION_CONFLICT", "问卷已被其他管理员修改。")
-        for old in await self._repo.questions(survey_id):
-            await self._session.delete(old)
-        await self._session.flush()
+        await self._validate_audience_direction_ids(payload.audience.direction_ids)
+        old_audience_direction_ids = await self._repo.audience_direction_ids(survey_id)
+        old_title = survey.title
+        old_description = survey.description_markdown
+        old_max_submissions = survey.max_submissions
+        old_starts_at = survey.starts_at
+        old_ends_at = survey.ends_at
+        old_all_students = survey.all_students
+        prompt_change_count = 0
+        if survey.status == "draft":
+            old_questions = await self._repo.questions(survey_id)
+            prompt_change_count = sum(
+                old.prompt != submitted.prompt
+                for old, submitted in zip(
+                    old_questions,
+                    payload.questions,
+                    strict=False,
+                )
+            ) + abs(len(old_questions) - len(payload.questions))
+            for old in old_questions:
+                await self._session.delete(old)
+            await self._session.flush()
+            await self._add_questions(survey_id, payload)
+        else:
+            prompt_change_count = await self._update_opened_questions(
+                survey_id,
+                payload.questions,
+            )
         survey.title = payload.title.strip()
         survey.description_markdown = payload.description_markdown
         survey.description_html = render_markdown(payload.description_markdown)
+        survey.all_students = payload.audience.all_students
         survey.max_submissions = payload.max_submissions
         survey.starts_at = payload.starts_at
         survey.ends_at = payload.ends_at
         survey.updated_by = audit_context.actor.user.id
         survey.updated_at = self._clock()
         survey.revision += 1
-        await self._add_questions(survey_id, payload)
+        await self._repo.replace_audience(survey_id, payload.audience.direction_ids)
         self._add_audit(
-            audit_context, action="intention.update", target_id=survey.id, now=survey.updated_at
+            audit_context,
+            action="intention.update",
+            target_id=survey.id,
+            now=survey.updated_at,
+            change_summary={
+                "status": survey.status,
+                "title_changed": old_title != survey.title,
+                "description_changed": old_description != survey.description_markdown,
+                "submission_limit_changed": old_max_submissions != survey.max_submissions,
+                "schedule_changed": (
+                    old_starts_at != survey.starts_at or old_ends_at != survey.ends_at
+                ),
+                "audience_changed": (
+                    old_all_students != survey.all_students
+                    or set(old_audience_direction_ids) != set(payload.audience.direction_ids)
+                ),
+                "question_prompt_change_count": prompt_change_count,
+                "all_students": payload.audience.all_students,
+                "direction_count": len(payload.audience.direction_ids),
+            },
         )
-        await self._session.commit()
+        try:
+            await self._session.commit()
+        except Exception:
+            await self._session.rollback()
+            raise
         return await self.admin_detail(survey_id, context=audit_context.actor)
 
     @staticmethod
@@ -562,6 +714,10 @@ class IntentionService:
             await self._session.rollback()
             raise self._conflict("STATE_CONFLICT", "问卷状态不允许执行该变更。")
         previous_status = survey.status
+        if previous_status == "draft" and target == "open" and not survey.all_students:
+            await self._validate_audience_direction_ids(
+                await self._repo.audience_direction_ids(survey.id)
+            )
         survey.status = target
         survey.updated_by = audit_context.actor.user.id
         survey.updated_at = self._clock()
@@ -603,7 +759,11 @@ class IntentionService:
                 "当前问卷未开放或不在填写时间内，不能发送邮件通知。",
             )
 
-        direction_id: UUID | None = None
+        audience_direction_ids: list[UUID] | None = None
+        if not survey.all_students:
+            audience_direction_ids = await self._repo.audience_direction_ids(survey.id)
+
+        direction_ids: list[UUID] | None = None
         if payload.recipient_scope == "manual":
             recipients = await self._repo.active_students_by_ids(payload.recipient_user_ids)
             requested_ids = set(payload.recipient_user_ids)
@@ -614,18 +774,46 @@ class IntentionService:
                     code="INVALID_INTENTION_EMAIL_RECIPIENTS",
                     message="所选成员中包含非激活学生，请刷新成员列表后重试。",
                 )
+            if audience_direction_ids is not None and any(
+                user.direction_id not in audience_direction_ids for user in recipients
+            ):
+                await self._session.rollback()
+                raise ApplicationError(
+                    status_code=400,
+                    code="INVALID_INTENTION_EMAIL_RECIPIENTS",
+                    message="所选成员中包含不属于该问卷目标技术组的学生。",
+                )
         else:
-            direction_id = payload.direction_id
             if payload.recipient_scope == "direction":
-                assert direction_id is not None
-                if await self._repo.active_direction(direction_id) is None:
+                if payload.direction_ids:
+                    direction_ids = list(payload.direction_ids)
+                else:
+                    assert payload.direction_id is not None
+                    direction_ids = [payload.direction_id]
+                requested_direction_ids = set(direction_ids)
+                if audience_direction_ids is not None and not requested_direction_ids.issubset(
+                    audience_direction_ids
+                ):
                     await self._session.rollback()
                     raise ApplicationError(
                         status_code=400,
                         code="INVALID_INTENTION_EMAIL_DIRECTION",
-                        message="所选技术组不存在或已停用，请刷新后重试。",
+                        message="所选技术组不属于该问卷的填写受众。",
                     )
-            recipients = await self._repo.active_students_for_email_scope(direction_id=direction_id)
+                active_directions = await self._repo.active_directions_by_ids(direction_ids)
+                if {direction.id for direction in active_directions} != requested_direction_ids:
+                    await self._session.rollback()
+                    raise ApplicationError(
+                        status_code=400,
+                        code="INVALID_INTENTION_EMAIL_DIRECTION",
+                        message="所选技术组中包含不存在或已停用的组，请刷新后重试。",
+                    )
+            recipient_direction_ids = (
+                direction_ids if payload.recipient_scope == "direction" else audience_direction_ids
+            )
+            recipients = await self._repo.active_students_for_email_scope(
+                direction_ids=recipient_direction_ids
+            )
             if not recipients:
                 await self._session.rollback()
                 raise ApplicationError(
@@ -651,8 +839,10 @@ class IntentionService:
             "queued_count": queued_count,
             "already_queued_count": already_queued_count,
         }
-        if direction_id is not None:
-            change_summary["direction_id"] = str(direction_id)
+        if direction_ids is not None:
+            change_summary["direction_ids"] = sorted(
+                str(direction_id) for direction_id in direction_ids
+            )
         self._add_audit(
             audit_context,
             action="intention.email_notify",
@@ -668,6 +858,148 @@ class IntentionService:
             already_queued_count=already_queued_count,
         )
 
+    async def apply_first_choice_directions(
+        self,
+        survey_id: UUID,
+        payload: IntentionDirectionAssignmentRequest,
+        *,
+        audit_context: IntentionAuditContext,
+    ) -> IntentionDirectionAssignmentResponse:
+        self._require_admin(audit_context.actor)
+        survey = await self._repo.get_survey(survey_id, for_update=True)
+        if survey is None:
+            await self._session.rollback()
+            raise self._not_found()
+        if survey.title.strip() != DIRECTION_ASSIGNMENT_SURVEY_TITLE:
+            await self._session.rollback()
+            raise ApplicationError(
+                status_code=422,
+                code="INVALID_INTENTION_DIRECTION_SURVEY",
+                message="仅标题为“意向选择”的问卷可以按第一志愿配置技术方向。",
+            )
+
+        questions = await self._repo.questions(survey_id)
+        if not questions or questions[0].id != payload.question_id:
+            await self._session.rollback()
+            raise ApplicationError(
+                status_code=422,
+                code="INVALID_INTENTION_FIRST_CHOICE",
+                message="只能使用问卷按题序排列的第一道题配置技术方向。",
+            )
+        first_question = questions[0]
+        if first_question.allow_multiple:
+            await self._session.rollback()
+            raise ApplicationError(
+                status_code=422,
+                code="INTENTION_FIRST_CHOICE_MUST_BE_SINGLE",
+                message="第一志愿必须是单选题，才能配置唯一技术方向。",
+            )
+
+        options = [
+            option
+            for option in await self._repo.options(survey_id)
+            if option.question_id == first_question.id
+        ]
+        mapping_by_option = {item.option_id: item.direction_id for item in payload.option_mappings}
+        if set(mapping_by_option) != {option.id for option in options}:
+            await self._session.rollback()
+            raise ApplicationError(
+                status_code=400,
+                code="INVALID_INTENTION_DIRECTION_MAPPING",
+                message="必须为第一志愿的每个选项配置一个技术方向。",
+            )
+
+        requested_direction_ids = set(mapping_by_option.values())
+        active_directions = await self._repo.active_directions_by_ids(
+            sorted(requested_direction_ids)
+        )
+        if {direction.id for direction in active_directions} != requested_direction_ids:
+            await self._session.rollback()
+            raise ApplicationError(
+                status_code=400,
+                code="INVALID_INTENTION_DIRECTION_MAPPING",
+                message="映射中包含不存在或已停用的技术方向，请刷新后重试。",
+            )
+
+        total_responses = await self._repo.responded_count(survey_id)
+        records: list[FirstChoiceDirectionRecord] = await self._repo.active_student_first_choices(
+            survey_id,
+            first_question.id,
+        )
+        if not records:
+            await self._session.rollback()
+            raise ApplicationError(
+                status_code=422,
+                code="NO_INTENTION_DIRECTION_RESPONSES",
+                message="当前没有可配置方向的激活学生回答。",
+            )
+        if len({record.user.id for record in records}) != len(records):
+            await self._session.rollback()
+            raise self._conflict(
+                "INTENTION_RESPONSE_CONFLICT",
+                "第一志愿回答存在冲突，请检查问卷数据后重试。",
+            )
+
+        now = self._clock()
+        updated_count = 0
+        unchanged_count = 0
+        for record in records:
+            target_direction_id = mapping_by_option[record.option_id]
+            if record.user.direction_id == target_direction_id:
+                unchanged_count += 1
+                continue
+            previous_direction_id = record.user.direction_id
+            record.user.direction_id = target_direction_id
+            record.user.revision += 1
+            updated_count += 1
+            self._add_audit(
+                audit_context,
+                action="user.direction_assign_from_intention",
+                target_type="user",
+                target_id=record.user.id,
+                now=now,
+                change_summary={
+                    "direction_id": {
+                        "from": (
+                            str(previous_direction_id)
+                            if previous_direction_id is not None
+                            else None
+                        ),
+                        "to": str(target_direction_id),
+                    },
+                    "source_survey_id": str(survey.id),
+                },
+            )
+
+        skipped_response_count = max(total_responses - len(records), 0)
+        self._add_audit(
+            audit_context,
+            action="intention.first_choice_directions_apply",
+            target_id=survey.id,
+            now=now,
+            change_summary={
+                "question_id": str(first_question.id),
+                "mapping_count": len(mapping_by_option),
+                "eligible_response_count": len(records),
+                "updated_count": updated_count,
+                "unchanged_count": unchanged_count,
+                "skipped_response_count": skipped_response_count,
+            },
+        )
+        try:
+            await self._session.commit()
+        except Exception:
+            await self._session.rollback()
+            raise
+        return IntentionDirectionAssignmentResponse(
+            survey_id=survey.id,
+            question_id=first_question.id,
+            eligible_response_count=len(records),
+            updated_count=updated_count,
+            unchanged_count=unchanged_count,
+            skipped_response_count=skipped_response_count,
+        )
+
     async def stats(
         self, survey_id: UUID, *, context: AuthenticatedContext
     ) -> IntentionStatsResponse:
@@ -676,7 +1008,10 @@ class IntentionService:
         if survey is None:
             raise self._not_found()
         responded = await self._repo.responded_count(survey_id)
-        total_students = await self._repo.active_student_count()
+        direction_ids = (
+            None if survey.all_students else await self._repo.audience_direction_ids(survey_id)
+        )
+        total_students = await self._repo.active_student_count(direction_ids=direction_ids)
         questions = await self._repo.questions(survey_id)
         counts = await self._repo.option_counts(survey_id)
         counts_by_question: dict[UUID, list[SurveyOptionCount]] = {}

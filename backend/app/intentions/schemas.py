@@ -8,6 +8,26 @@ IntentionStatus = Literal["draft", "open", "closed", "archived"]
 IntentionEmailRecipientScope = Literal["manual", "direction", "all"]
 
 
+class IntentionAudienceInput(BaseModel):
+    all_students: bool = True
+    direction_ids: list[UUID] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> "IntentionAudienceInput":
+        if len(self.direction_ids) != len(set(self.direction_ids)):
+            raise ValueError("问卷技术组不得重复")
+        if self.all_students and self.direction_ids:
+            raise ValueError("面向全部学生时不得同时指定技术组")
+        if not self.all_students and not self.direction_ids:
+            raise ValueError("分技术组填写必须选择至少一个技术组")
+        return self
+
+
+class IntentionAudienceResponse(BaseModel):
+    all_students: bool
+    direction_ids: list[UUID]
+
+
 class IntentionOptionInput(BaseModel):
     label: str = Field(min_length=1, max_length=200)
 
@@ -48,6 +68,7 @@ class IntentionSurveyCreateRequest(BaseModel):
     max_submissions: int | None = Field(default=1, ge=1, le=100)
     starts_at: datetime | None = None
     ends_at: datetime | None = None
+    audience: IntentionAudienceInput = Field(default_factory=IntentionAudienceInput)
 
     @field_validator("title")
     @classmethod
@@ -75,23 +96,29 @@ class IntentionSurveyPatchRequest(IntentionSurveyCreateRequest):
 class IntentionEmailNotificationRequest(BaseModel):
     recipient_scope: IntentionEmailRecipientScope = "manual"
     recipient_user_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    direction_ids: list[UUID] = Field(default_factory=list, max_length=100)
     direction_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_recipients(self) -> "IntentionEmailNotificationRequest":
         if len(self.recipient_user_ids) != len(set(self.recipient_user_ids)):
             raise ValueError("邮件接收成员不得重复")
+        if len(self.direction_ids) != len(set(self.direction_ids)):
+            raise ValueError("邮件通知技术组不得重复")
+        has_directions = bool(self.direction_ids) or self.direction_id is not None
         if self.recipient_scope == "manual":
             if not self.recipient_user_ids:
                 raise ValueError("手动发送必须选择至少一名成员")
-            if self.direction_id is not None:
+            if has_directions:
                 raise ValueError("手动发送不得同时指定技术组")
         elif self.recipient_scope == "direction":
-            if self.direction_id is None:
-                raise ValueError("按技术组发送必须指定技术组")
+            if not has_directions:
+                raise ValueError("按技术组发送必须选择至少一个技术组")
+            if self.direction_ids and self.direction_id is not None:
+                raise ValueError("新旧技术组字段不得同时提交")
             if self.recipient_user_ids:
                 raise ValueError("按技术组发送不得同时指定成员")
-        elif self.recipient_user_ids or self.direction_id is not None:
+        elif self.recipient_user_ids or has_directions:
             raise ValueError("全部发送不得同时指定成员或技术组")
         return self
 
@@ -101,6 +128,33 @@ class IntentionEmailNotificationResponse(BaseModel):
     requested_count: int = Field(ge=1)
     queued_count: int = Field(ge=0)
     already_queued_count: int = Field(ge=0)
+
+
+class IntentionDirectionMapping(BaseModel):
+    option_id: UUID
+    direction_id: UUID
+
+
+class IntentionDirectionAssignmentRequest(BaseModel):
+    question_id: UUID
+    option_mappings: list[IntentionDirectionMapping] = Field(min_length=1, max_length=30)
+    confirm_overwrite: Literal[True]
+
+    @model_validator(mode="after")
+    def unique_options(self) -> "IntentionDirectionAssignmentRequest":
+        option_ids = [item.option_id for item in self.option_mappings]
+        if len(option_ids) != len(set(option_ids)):
+            raise ValueError("第一志愿选项映射不得重复")
+        return self
+
+
+class IntentionDirectionAssignmentResponse(BaseModel):
+    survey_id: UUID
+    question_id: UUID
+    eligible_response_count: int = Field(ge=1)
+    updated_count: int = Field(ge=0)
+    unchanged_count: int = Field(ge=0)
+    skipped_response_count: int = Field(ge=0)
 
 
 class IntentionOptionResponse(BaseModel):
@@ -238,6 +292,7 @@ class AdminIntentionSurvey(BaseModel):
     question_count: int
     responded_count: int
     max_submissions: int | None
+    audience: IntentionAudienceResponse
     created_at: datetime
     updated_at: datetime
     revision: int

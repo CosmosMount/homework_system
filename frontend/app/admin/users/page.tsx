@@ -12,6 +12,7 @@ import {
 type AdminUsersPageProps = Readonly<{
   searchParams: Promise<{
     activity?: string | string[];
+    direction_id?: string | string[];
     page?: string | string[];
     search?: string | string[];
   }>;
@@ -32,15 +33,18 @@ function parsePage(value: string | undefined): number {
 
 function adminUsersHref({
   activity,
+  directionId,
   page,
   search,
 }: Readonly<{
   activity: "inactive" | null;
+  directionId: string | null;
   page: number;
   search: string;
 }>): string {
   const params = new URLSearchParams();
   if (activity === "inactive") params.set("activity", activity);
+  if (directionId) params.set("direction_id", directionId);
   if (search) params.set("search", search);
   if (page > 1) params.set("page", String(page));
   const query = params.toString();
@@ -57,10 +61,15 @@ export default async function AdminUsersPage({
   ]);
   const activityValue = singleValue(filters.activity);
   const activity = activityValue === "inactive" ? "inactive" : null;
+  const requestedDirectionId = singleValue(filters.direction_id);
+  const directionId =
+    directions.find((direction) => direction.id === requestedDirectionId)?.id ??
+    null;
   const page = parsePage(singleValue(filters.page));
   const search = singleValue(filters.search)?.trim().slice(0, 200) ?? "";
   const userPage = await getAdminUsers({
     activity: activity ?? undefined,
+    directionId: directionId ?? undefined,
     page,
     pageSize: USER_PAGE_SIZE,
     search: search || undefined,
@@ -70,12 +79,13 @@ export default async function AdminUsersPage({
     redirect(
       adminUsersHref({
         activity,
+        directionId,
         page: totalPages,
         search,
       }),
     );
   }
-  const resultKey = `${activity ?? "all"}:${search}:${userPage.page}:${userPage.total}:${userPage.items.map((user) => `${user.id}:${user.revision}`).join(",")}`;
+  const resultKey = `${activity ?? "all"}:${directionId ?? "all-directions"}:${search}:${userPage.page}:${userPage.total}:${userPage.items.map((user) => `${user.id}:${user.revision}`).join(",")}`;
   return (
     <AppShell user={admin}>
       <AdminPageHeader
@@ -85,6 +95,7 @@ export default async function AdminUsersPage({
       />
       <UserAdminPanel
         activity={activity}
+        directionId={directionId ?? undefined}
         key={resultKey}
         directions={directions}
         initialTotal={userPage.total}

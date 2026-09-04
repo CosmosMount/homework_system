@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.intentions.models import (
@@ -11,6 +11,7 @@ from app.intentions.models import (
     IntentionResponse,
     IntentionResponseOption,
     IntentionSurvey,
+    IntentionSurveyDirection,
 )
 from app.users.models import Direction, User
 
@@ -22,6 +23,7 @@ class SurveyListRecord:
     responded_count: int
     has_response: bool
     submissions_used: int = 0
+    direction_ids: tuple[UUID, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +37,12 @@ class SurveyOptionCount:
 class SurveyRosterRecord:
     response: IntentionResponse
     user: User
+
+
+@dataclass(frozen=True, slots=True)
+class FirstChoiceDirectionRecord:
+    user: User
+    option_id: UUID
 
 
 class IntentionRepository:
@@ -56,6 +64,67 @@ class IntentionRepository:
     def add_response_option(self, option: IntentionResponseOption) -> None:
         self._session.add(option)
 
+    async def replace_audience(self, survey_id: UUID, direction_ids: Sequence[UUID]) -> None:
+        await self._session.execute(
+            delete(IntentionSurveyDirection).where(IntentionSurveyDirection.survey_id == survey_id)
+        )
+        self._session.add_all(
+            [
+                IntentionSurveyDirection(survey_id=survey_id, direction_id=direction_id)
+                for direction_id in direction_ids
+            ]
+        )
+
+    async def audience_direction_ids(self, survey_id: UUID) -> list[UUID]:
+        return list(
+            (
+                await self._session.scalars(
+                    select(IntentionSurveyDirection.direction_id)
+                    .where(IntentionSurveyDirection.survey_id == survey_id)
+                    .order_by(IntentionSurveyDirection.direction_id)
+                )
+            ).all()
+        )
+
+    async def _audience_direction_ids_for_surveys(
+        self, survey_ids: Sequence[UUID]
+    ) -> dict[UUID, tuple[UUID, ...]]:
+        if not survey_ids:
+            return {}
+        rows = (
+            await self._session.execute(
+                select(
+                    IntentionSurveyDirection.survey_id,
+                    IntentionSurveyDirection.direction_id,
+                )
+                .where(IntentionSurveyDirection.survey_id.in_(survey_ids))
+                .order_by(
+                    IntentionSurveyDirection.survey_id,
+                    IntentionSurveyDirection.direction_id,
+                )
+            )
+        ).all()
+        grouped: dict[UUID, list[UUID]] = {}
+        for survey_id, direction_id in rows:
+            grouped.setdefault(survey_id, []).append(direction_id)
+        return {survey_id: tuple(direction_ids) for survey_id, direction_ids in grouped.items()}
+
+    async def student_direction_is_targeted(
+        self, survey_id: UUID, direction_id: UUID | None
+    ) -> bool:
+        if direction_id is None:
+            return False
+        return bool(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(IntentionSurveyDirection)
+                .where(
+                    IntentionSurveyDirection.survey_id == survey_id,
+                    IntentionSurveyDirection.direction_id == direction_id,
+                )
+            )
+        )
+
     async def get_survey(
         self, survey_id: UUID, *, for_update: bool = False
     ) -> IntentionSurvey | None:
@@ -69,6 +138,7 @@ class IntentionRepository:
         self,
         *,
         student_user_id: UUID | None = None,
+        student_direction_id: UUID | None = None,
         open_only: bool = False,
     ) -> list[SurveyListRecord]:
         question_count = (
@@ -84,6 +154,18 @@ class IntentionRepository:
         filters = []
         if open_only:
             filters.append(IntentionSurvey.status == "open")
+        if student_user_id is not None:
+            audience_filter: ColumnElement[bool] = IntentionSurvey.all_students.is_(True)
+            if student_direction_id is not None:
+                audience_filter = or_(
+                    audience_filter,
+                    IntentionSurvey.id.in_(
+                        select(IntentionSurveyDirection.survey_id).where(
+                            IntentionSurveyDirection.direction_id == student_direction_id
+                        )
+                    ),
+                )
+            filters.append(audience_filter)
         rows = (
             await self._session.execute(
                 select(
@@ -113,6 +195,9 @@ class IntentionRepository:
                     )
                 ).all()
             }
+        directions_by_survey = await self._audience_direction_ids_for_surveys(
+            [row[0].id for row in rows]
+        )
         return [
             SurveyListRecord(
                 survey=row[0],
@@ -120,6 +205,7 @@ class IntentionRepository:
                 responded_count=int(row[2]),
                 has_response=row[0].id in student_responses,
                 submissions_used=student_responses.get(row[0].id, 0),
+                direction_ids=directions_by_survey.get(row[0].id, ()),
             )
             for row in rows
         ]
@@ -196,15 +282,15 @@ class IntentionRepository:
             grouped.setdefault(row.response_id, []).append(row)
         return grouped
 
-    async def active_student_count(self) -> int:
-        return int(
-            await self._session.scalar(
-                select(func.count())
-                .select_from(User)
-                .where(User.role == "student", User.status == "active")
-            )
-            or 0
+    async def active_student_count(self, *, direction_ids: Sequence[UUID] | None) -> int:
+        statement = (
+            select(func.count())
+            .select_from(User)
+            .where(User.role == "student", User.status == "active")
         )
+        if direction_ids is not None:
+            statement = statement.where(User.direction_id.in_(direction_ids))
+        return int(await self._session.scalar(statement) or 0)
 
     async def active_students_by_ids(self, user_ids: Sequence[UUID]) -> list[User]:
         if not user_ids:
@@ -219,16 +305,57 @@ class IntentionRepository:
             ).all()
         )
 
-    async def active_direction(self, direction_id: UUID) -> Direction | None:
-        result: Direction | None = await self._session.scalar(
-            select(Direction).where(Direction.id == direction_id, Direction.is_active.is_(True))
+    async def active_directions_by_ids(self, direction_ids: Sequence[UUID]) -> list[Direction]:
+        if not direction_ids:
+            return []
+        return list(
+            (
+                await self._session.scalars(
+                    select(Direction)
+                    .where(
+                        Direction.id.in_(direction_ids),
+                        Direction.is_active.is_(True),
+                    )
+                    .order_by(Direction.id)
+                    .with_for_update()
+                )
+            ).all()
         )
-        return result
 
-    async def active_students_for_email_scope(self, *, direction_id: UUID | None) -> list[User]:
+    async def active_student_first_choices(
+        self, survey_id: UUID, question_id: UUID
+    ) -> list[FirstChoiceDirectionRecord]:
+        rows = (
+            await self._session.execute(
+                select(User, IntentionResponseOption.option_id)
+                .select_from(User)
+                .join(IntentionResponse, IntentionResponse.user_id == User.id)
+                .join(
+                    IntentionResponseOption,
+                    IntentionResponseOption.response_id == IntentionResponse.id,
+                )
+                .join(
+                    IntentionOption,
+                    IntentionOption.id == IntentionResponseOption.option_id,
+                )
+                .where(
+                    IntentionResponse.survey_id == survey_id,
+                    IntentionOption.question_id == question_id,
+                    User.role == "student",
+                    User.status == "active",
+                )
+                .order_by(User.id)
+                .with_for_update(of=User)
+            )
+        ).all()
+        return [FirstChoiceDirectionRecord(user=row[0], option_id=row[1]) for row in rows]
+
+    async def active_students_for_email_scope(
+        self, *, direction_ids: Sequence[UUID] | None
+    ) -> list[User]:
         statement = select(User).where(User.role == "student", User.status == "active")
-        if direction_id is not None:
-            statement = statement.where(User.direction_id == direction_id)
+        if direction_ids is not None:
+            statement = statement.where(User.direction_id.in_(direction_ids))
         return list((await self._session.scalars(statement.order_by(User.id))).all())
 
     async def option_counts(self, survey_id: UUID) -> list[SurveyOptionCount]:

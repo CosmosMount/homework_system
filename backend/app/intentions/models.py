@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -42,6 +43,9 @@ class IntentionSurvey(TimestampRevisionMixin, Base):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="draft", server_default="draft"
     )
+    all_students: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
     max_submissions: Mapped[int | None] = mapped_column(Integer, nullable=True)
     starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -51,6 +55,22 @@ class IntentionSurvey(TimestampRevisionMixin, Base):
     )
     updated_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class IntentionSurveyDirection(Base):
+    __tablename__ = "intention_survey_directions"
+    __table_args__ = (Index("ix_intention_survey_directions_direction_id", "direction_id"),)
+
+    survey_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("intention_surveys.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    direction_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("directions.id", ondelete="RESTRICT"),
+        primary_key=True,
     )
 
 

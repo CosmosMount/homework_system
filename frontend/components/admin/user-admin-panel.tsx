@@ -56,15 +56,18 @@ function replaceUser(users: AdminUser[], nextUser: AdminUser): AdminUser[] {
 
 function usersHref({
   activity,
+  directionId,
   page,
   search,
 }: Readonly<{
   activity: "inactive" | null;
+  directionId: string;
   page?: number;
   search: string;
 }>): string {
   const params = new URLSearchParams();
   if (activity === "inactive") params.set("activity", activity);
+  if (directionId) params.set("direction_id", directionId);
   if (search) params.set("search", search);
   if (page !== undefined && page > 1) params.set("page", String(page));
   const query = params.toString();
@@ -75,6 +78,7 @@ export function UserAdminPanel({
   initialUsers,
   initialTotal,
   activity,
+  directionId,
   directions,
   page,
   pageSize,
@@ -83,6 +87,7 @@ export function UserAdminPanel({
   initialUsers: AdminUser[];
   initialTotal: number;
   activity: "inactive" | null;
+  directionId?: string;
   directions: Direction[];
   page?: number;
   pageSize?: number;
@@ -96,6 +101,7 @@ export function UserAdminPanel({
   const [error, setError] = useState<string | null>(null);
   const currentPage = page ?? 1;
   const currentPageSize = pageSize ?? Math.max(1, initialUsers.length || 20);
+  const currentDirectionId = directionId ?? "";
   const currentSearch = search ?? "";
   const totalPages = Math.max(1, Math.ceil(total / currentPageSize));
 
@@ -224,6 +230,7 @@ export function UserAdminPanel({
         router.replace(
           usersHref({
             activity,
+            directionId: currentDirectionId,
             page: nextTotalPages,
             search: currentSearch,
           }),
@@ -247,10 +254,35 @@ export function UserAdminPanel({
   return (
     <div className="mt-8">
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-        <form action="/admin/users" className="flex max-w-2xl items-end gap-2" method="get">
+        <form
+          action="/admin/users"
+          className="flex max-w-3xl flex-wrap items-end gap-2"
+          method="get"
+        >
           {activity === "inactive" ? (
             <input name="activity" type="hidden" value="inactive" />
           ) : null}
+          <label
+            className="block min-w-48 text-sm font-medium"
+            htmlFor="user-direction"
+          >
+            按技术组查看
+            <select
+              className={inputClassName}
+              defaultValue={currentDirectionId}
+              id="user-direction"
+              name="direction_id"
+              onChange={(event) => event.currentTarget.form?.requestSubmit()}
+            >
+              <option value="">全部技术组</option>
+              {directions.map((direction) => (
+                <option key={direction.id} value={direction.id}>
+                  {direction.name}
+                  {direction.is_active ? "" : "（停用）"}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="block min-w-0 flex-1 text-sm font-medium" htmlFor="user-search">
             搜索用户
             <input
@@ -269,7 +301,11 @@ export function UserAdminPanel({
           {currentSearch ? (
             <Link
               className="inline-flex min-h-11 items-center border border-[var(--color-border-strong)] px-4 text-sm no-underline"
-              href={usersHref({ activity, search: "" })}
+              href={usersHref({
+                activity,
+                directionId: currentDirectionId,
+                search: "",
+              })}
             >
               清除
             </Link>
@@ -279,14 +315,22 @@ export function UserAdminPanel({
           <Link
             aria-current={activity === null ? "page" : undefined}
             className="min-h-11 border border-[var(--color-border-strong)] px-4 py-2 text-sm"
-            href={usersHref({ activity: null, search: currentSearch })}
+            href={usersHref({
+              activity: null,
+              directionId: currentDirectionId,
+              search: currentSearch,
+            })}
           >
             全部账号
           </Link>
           <Link
             aria-current={activity === "inactive" ? "page" : undefined}
             className="min-h-11 border border-[var(--color-warning)] px-4 py-2 text-sm"
-            href={usersHref({ activity: "inactive", search: currentSearch })}
+            href={usersHref({
+              activity: "inactive",
+              directionId: currentDirectionId,
+              search: currentSearch,
+            })}
           >
             超过 10 天未进入
           </Link>
@@ -560,6 +604,7 @@ export function UserAdminPanel({
                 className="inline-flex min-h-11 items-center border border-[var(--color-border-strong)] px-4 text-sm no-underline"
                 href={usersHref({
                   activity,
+                  directionId: currentDirectionId,
                   page: currentPage - 1,
                   search: currentSearch,
                 })}
@@ -580,6 +625,7 @@ export function UserAdminPanel({
                 className="inline-flex min-h-11 items-center border border-[var(--color-border-strong)] px-4 text-sm no-underline"
                 href={usersHref({
                   activity,
+                  directionId: currentDirectionId,
                   page: currentPage + 1,
                   search: currentSearch,
                 })}

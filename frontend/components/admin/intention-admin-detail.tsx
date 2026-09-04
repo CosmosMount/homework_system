@@ -12,6 +12,7 @@ import { ApiError, apiFetch, csrfFetch } from "@/lib/api/client";
 import type {
   AdminIntentionSurvey,
   AdminIntentionSurveyDetail,
+  Direction,
 } from "@/lib/api/types";
 import { formatDateTime } from "@/lib/format";
 
@@ -31,6 +32,8 @@ type EditDraft = {
   maxSubmissions: string;
   startsAt: string;
   endsAt: string;
+  allStudents: boolean;
+  directionIds: string[];
   questions: QuestionDraft[];
 };
 
@@ -63,15 +66,19 @@ function makeEditDraft(detail: AdminIntentionSurveyDetail): EditDraft {
       detail.max_submissions === null ? "" : String(detail.max_submissions),
     startsAt: toLocalDateTime(detail.starts_at),
     endsAt: toLocalDateTime(detail.ends_at),
+    allStudents: detail.audience.all_students,
+    directionIds: detail.audience.direction_ids,
     questions: questionDrafts(detail),
   };
 }
 
 export function IntentionAdminDetail({
+  directions,
   disabled,
   onUpdated,
   survey,
 }: Readonly<{
+  directions: Direction[];
   disabled: boolean;
   onUpdated: (survey: AdminIntentionSurveyDetail) => void;
   survey: AdminIntentionSurvey;
@@ -133,6 +140,22 @@ export function IntentionAdminDetail({
     );
   }
 
+  function toggleAudienceDirection(directionId: string) {
+    if (!edit) return;
+    const selectedAlready = edit.directionIds.includes(directionId);
+    if (!selectedAlready && edit.directionIds.length >= 50) {
+      setError("问卷填写范围最多选择 50 个技术组。");
+      return;
+    }
+    setError(null);
+    setEdit({
+      ...edit,
+      directionIds: selectedAlready
+        ? edit.directionIds.filter((item) => item !== directionId)
+        : [...edit.directionIds, directionId],
+    });
+  }
+
   async function saveEdit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!edit) return;
@@ -163,6 +186,10 @@ export function IntentionAdminDetail({
       setError("最多提交次数必须是 1～100 的整数，留空表示不限次数。");
       return;
     }
+    if (!edit.allStudents && edit.directionIds.length === 0) {
+      setError("分技术组填写必须选择至少一个技术组。");
+      return;
+    }
 
     begin();
     try {
@@ -176,6 +203,10 @@ export function IntentionAdminDetail({
             description_markdown: edit.description,
             questions,
             max_submissions: maxSubmissions,
+            audience: {
+              all_students: edit.allStudents,
+              direction_ids: edit.allStudents ? [] : edit.directionIds,
+            },
             starts_at: edit.startsAt ? new Date(edit.startsAt).toISOString() : null,
             ends_at: edit.endsAt ? new Date(edit.endsAt).toISOString() : null,
           }),
@@ -193,6 +224,8 @@ export function IntentionAdminDetail({
   }
 
   const busy = disabled || pending;
+  const editable = survey.status !== "archived";
+  const answerStructureFrozen = survey.status !== "draft";
 
   return (
     <div className="mt-5">
@@ -205,7 +238,7 @@ export function IntentionAdminDetail({
         >
           {detail ? "刷新内容" : "查看内容"}
         </button>
-        {survey.status === "draft" ? (
+        {editable ? (
           <button
             className={commandButtonClassName}
             disabled={busy}
@@ -220,14 +253,16 @@ export function IntentionAdminDetail({
       {message ? <div className="mt-3"><FormMessage tone="success">{message}</FormMessage></div> : null}
       {error ? <div className="mt-3"><FormMessage>{error}</FormMessage></div> : null}
 
-      {edit && survey.status === "draft" ? (
+      {edit && editable ? (
         <form
           className="mt-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4 sm:p-5"
           onSubmit={saveEdit}
         >
           <h3 className="text-base font-semibold">编辑问卷</h3>
           <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
-            仅草稿允许修改；保存会整体替换题目与选项。
+            {answerStructureFrozen
+              ? "题目数量、题型和选项已冻结，已有回答不会删除；仍可修改题目文字和问卷设置。"
+              : "草稿保存会整体替换题目与选项。"}
           </p>
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <label className="block text-sm font-medium">
@@ -283,6 +318,72 @@ export function IntentionAdminDetail({
                 value={edit.description}
               />
             </label>
+            <fieldset className="lg:col-span-2">
+              <legend className="text-sm font-medium">编辑填写范围</legend>
+              <div className="mt-2 flex flex-wrap gap-4 text-sm">
+                <label className="flex items-center gap-2">
+                  <input
+                    checked={edit.allStudents}
+                    className="size-4 accent-[var(--color-accent)]"
+                    name={"edit-audience-" + survey.id}
+                    onChange={() => setEdit({ ...edit, allStudents: true })}
+                    type="radio"
+                  />
+                  全部学生填写
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    checked={!edit.allStudents}
+                    className="size-4 accent-[var(--color-accent)]"
+                    name={"edit-audience-" + survey.id}
+                    onChange={() => setEdit({ ...edit, allStudents: false })}
+                    type="radio"
+                  />
+                  指定技术组填写
+                </label>
+              </div>
+              {!edit.allStudents ? (
+                <div className="mt-3">
+                  <p className="mb-2 text-xs text-[var(--color-text-muted)]">
+                    已选择 {edit.directionIds.length} / 50 个技术组
+                  </p>
+                  {directions.some(
+                    (direction) =>
+                      !direction.is_active && edit.directionIds.includes(direction.id),
+                  ) ? (
+                    <p className="mb-2 text-xs text-[var(--color-danger)]">
+                      已停用的原受众不能继续保留，请取消选择后再保存。
+                    </p>
+                  ) : null}
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {directions
+                      .filter(
+                        (direction) =>
+                          direction.is_active || edit.directionIds.includes(direction.id),
+                      )
+                      .map((direction) => {
+                        const selected = edit.directionIds.includes(direction.id);
+                        return (
+                          <label
+                            className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] p-3 text-sm"
+                            key={direction.id}
+                          >
+                            <input
+                              aria-label={"编辑问卷受众：" + direction.name}
+                              checked={selected}
+                              className="size-4 accent-[var(--color-accent)]"
+                              onChange={() => toggleAudienceDirection(direction.id)}
+                              type="checkbox"
+                            />
+                            {direction.name}
+                            {!direction.is_active ? "（已停用）" : null}
+                          </label>
+                        );
+                      })}
+                  </div>
+                </div>
+              ) : null}
+            </fieldset>
           </div>
 
           <div className="mt-5 space-y-4">
@@ -317,6 +418,7 @@ export function IntentionAdminDetail({
                       onChange={(event) =>
                         updateQuestion(question.key, { options: event.target.value })
                       }
+                      readOnly={answerStructureFrozen}
                       required
                       value={question.options}
                     />
@@ -328,6 +430,7 @@ export function IntentionAdminDetail({
                       aria-label={"编辑第 " + (index + 1) + " 题允许多选"}
                       checked={question.allowMultiple}
                       className="size-4 accent-[var(--color-accent)]"
+                      disabled={answerStructureFrozen}
                       onChange={(event) =>
                         updateQuestion(question.key, {
                           allowMultiple: event.target.checked,
@@ -337,7 +440,7 @@ export function IntentionAdminDetail({
                     />
                     本题允许多选
                   </label>
-                  {edit.questions.length > 1 ? (
+                  {!answerStructureFrozen && edit.questions.length > 1 ? (
                     <button
                       className={commandButtonClassName}
                       onClick={() =>
@@ -359,27 +462,29 @@ export function IntentionAdminDetail({
           </div>
 
           <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              className={commandButtonClassName}
-              disabled={edit.questions.length >= 30}
-              onClick={() =>
-                setEdit({
-                  ...edit,
-                  questions: [
-                    ...edit.questions,
-                    {
-                      key: "new-" + nextEditQuestionId++,
-                      prompt: "第 " + (edit.questions.length + 1) + " 志愿",
-                      options: "",
-                      allowMultiple: false,
-                    },
-                  ],
-                })
-              }
-              type="button"
-            >
-              添加题目
-            </button>
+            {!answerStructureFrozen ? (
+              <button
+                className={commandButtonClassName}
+                disabled={edit.questions.length >= 30}
+                onClick={() =>
+                  setEdit({
+                    ...edit,
+                    questions: [
+                      ...edit.questions,
+                      {
+                        key: "new-" + nextEditQuestionId++,
+                        prompt: "第 " + (edit.questions.length + 1) + " 志愿",
+                        options: "",
+                        allowMultiple: false,
+                      },
+                    ],
+                  })
+                }
+                type="button"
+              >
+                添加题目
+              </button>
+            ) : null}
             <button className={buttonClassName} disabled={busy} type="submit">
               {pending ? "保存中…" : "保存修改"}
             </button>
@@ -395,7 +500,7 @@ export function IntentionAdminDetail({
         </form>
       ) : null}
 
-      {detail && (!edit || survey.status !== "draft") ? (
+      {detail && (!edit || !editable) ? (
         <section
           aria-label={detail.title + "问卷内容"}
           className="mt-5 rounded-xl border border-[var(--color-border)] p-4 sm:p-5"
@@ -406,6 +511,7 @@ export function IntentionAdminDetail({
             <div><dt className="inline font-medium">结束时间：</dt><dd className="inline">{detail.ends_at ? formatDateTime(detail.ends_at) : "不限"}</dd></div>
             <div><dt className="inline font-medium">提交限制：</dt><dd className="inline">{detail.max_submissions === null ? "不限次数" : "每人最多 " + detail.max_submissions + " 次"}</dd></div>
             <div><dt className="inline font-medium">当前版本：</dt><dd className="inline">{detail.revision}</dd></div>
+            <div className="sm:col-span-2"><dt className="inline font-medium">填写范围：</dt><dd className="inline">{detail.audience.all_students ? "全部学生" : detail.audience.direction_ids.map((directionId) => directions.find((item) => item.id === directionId)?.name ?? "未知技术组").join("、")}</dd></div>
           </dl>
           <div className="mt-4">
             <p className="text-sm font-medium">说明（Markdown）</p>
@@ -430,9 +536,13 @@ export function IntentionAdminDetail({
               </li>
             ))}
           </ol>
-          {survey.status !== "draft" ? (
+          {survey.status === "archived" ? (
             <p className="mt-4 text-xs text-[var(--color-text-muted)]">
-              已开放、关闭或归档的问卷只能查看，题目结构不可修改。
+              已归档问卷只能查看，不能再修改。
+            </p>
+          ) : survey.status !== "draft" ? (
+            <p className="mt-4 text-xs text-[var(--color-text-muted)]">
+              可修改标题、说明、题目文字、提交限制、时间窗口和填写范围；题目数量、题型和选项不可修改。
             </p>
           ) : null}
         </section>
