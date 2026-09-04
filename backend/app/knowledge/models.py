@@ -70,6 +70,7 @@ class KnowledgeNode(Base):
             name="node_type_allowed",
         ),
         UniqueConstraint("sync_run_id", "external_node_token"),
+        Index("ix_knowledge_nodes_asset_id", "asset_id"),
         Index("ix_knowledge_nodes_run_parent_order", "sync_run_id", "parent_id", "display_order"),
     )
 

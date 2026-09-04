@@ -411,6 +411,133 @@ describe("knowledge document renderer", () => {
     );
   });
 
+  it("renders image captions in single images and galleries", () => {
+    render(
+      <KnowledgeBlocks
+        blocks={[
+          {
+            id: "single-captioned-image",
+            type: "image",
+            asset_id: "single-captioned-asset",
+            file_name: "结构图.png",
+            caption: "系统结构示意",
+          },
+          {
+            id: "gallery-boundary",
+            type: "paragraph",
+            segments: [{ text: "装配步骤" }],
+          },
+          {
+            id: "gallery-captioned-image",
+            type: "image",
+            asset_id: "gallery-captioned-asset",
+            file_name: "装配图.png",
+            caption: "装配顺序",
+          },
+          { id: "plain-image", type: "image", asset_id: "plain-asset", file_name: "无说明图片.png" },
+        ]}
+        onOpenDocument={vi.fn()}
+        tokenToDocument={new Map()}
+      />,
+    );
+
+    const singleImage = screen.getByAltText("系统结构示意");
+    const singleCaption = screen.getByText("系统结构示意");
+    expect(singleCaption.tagName).toBe("FIGCAPTION");
+    expect(singleImage.closest("figure")).toContainElement(singleCaption);
+    expect(singleImage.closest("figure")).toHaveClass("my-8");
+
+    const galleryImage = screen.getByAltText("装配顺序");
+    const galleryCaption = screen.getByText("装配顺序");
+    expect(galleryCaption.tagName).toBe("FIGCAPTION");
+    expect(galleryImage.closest("figure")).toContainElement(galleryCaption);
+    expect(galleryImage.closest("figure")?.parentElement).toHaveClass(
+      "flex",
+      "flex-wrap",
+    );
+
+    const plainImage = screen.getByAltText("无说明图片.png");
+    expect(plainImage.closest("figure")?.parentElement).toBe(
+      galleryImage.closest("figure")?.parentElement,
+    );
+    expect(
+      plainImage.closest("figure")?.querySelector("figcaption"),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "查看原图：装配顺序",
+    }));
+    expect(
+      screen.getByRole("dialog", { name: "装配顺序 图片预览" }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+  });
+
+  it("renders Drive file references as protected downloads or explicit safe states", () => {
+    const openDocument = vi.fn();
+    render(
+      <KnowledgeBlocks
+        blocks={[{
+          id: "drive-files",
+          type: "paragraph",
+          segments: [
+            {
+              text: "训练说明.pdf",
+              file: true,
+              asset_id: "drive-file-asset",
+              file_name: "训练说明.pdf",
+              file_size: 2048,
+              mime_type: "application/pdf",
+            },
+            {
+              text: "工具.exe",
+              file: true,
+              asset_id: null,
+              file_name: "工具.exe",
+              href: "https://pnx.feishu.cn/file/executable-token",
+              unavailable_reason: "type_not_allowed",
+            },
+            {
+              text: "大模型.zip",
+              file: true,
+              asset_id: null,
+              file_name: "大模型.zip",
+              href: "https://pnx.feishu.cn/file/large-token",
+              unavailable_reason: "too_large",
+            },
+            {
+              text: "临时资料.pdf",
+              file: true,
+              asset_id: null,
+              file_name: "临时资料.pdf",
+              href: "https://pnx.feishu.cn/file/unavailable-token",
+              unavailable_reason: "unavailable",
+            },
+            { text: "下一篇", document_token: "next-token" },
+          ],
+        }]}
+        onOpenDocument={openDocument}
+        tokenToDocument={new Map([["next-token", "next-document"]])}
+      />,
+    );
+
+    const download = screen.getByRole("link", { name: "下载 训练说明.pdf" });
+    expect(download).toHaveAttribute(
+      "href",
+      "/api/v1/knowledge/assets/drive-file-asset/content",
+    );
+    expect(download).toHaveAttribute("download", "训练说明.pdf");
+    expect(screen.getByText("2.0 KB · application/pdf")).toBeInTheDocument();
+    expect(screen.getByText("文件类型不支持")).toBeInTheDocument();
+    expect(screen.getByText("文件超过同步上限")).toBeInTheDocument();
+    expect(screen.getByText("暂不可下载")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /在飞书查看/ }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "下一篇" }));
+    expect(openDocument).toHaveBeenCalledWith("next-document");
+  });
+
   it("keeps visible content as a boundary between image galleries", () => {
     render(
       <KnowledgeBlocks
@@ -433,13 +560,27 @@ describe("knowledge document renderer", () => {
     render(
       <KnowledgeBlocks
         allowFeishuSourceLinks
-        blocks={[{
-          id: "fallback-attachment",
-          type: "attachment",
-          asset_id: null,
-          file_name: "同步失败附件.pdf",
-          fallback_url: "https://pnx.feishu.cn/wiki/node-source",
-        }]}
+        blocks={[
+          {
+            id: "fallback-attachment",
+            type: "attachment",
+            asset_id: null,
+            file_name: "同步失败附件.pdf",
+            fallback_url: "https://pnx.feishu.cn/wiki/node-source",
+          },
+          {
+            id: "fallback-drive-file",
+            type: "paragraph",
+            segments: [{
+              text: "管理员资料.pdf",
+              file: true,
+              asset_id: null,
+              file_name: "管理员资料.pdf",
+              href: "https://pnx.feishu.cn/file/admin-source-token",
+              unavailable_reason: "unavailable",
+            }],
+          },
+        ]}
         onOpenDocument={vi.fn()}
         tokenToDocument={new Map()}
       />,
@@ -448,6 +589,12 @@ describe("knowledge document renderer", () => {
     expect(screen.getByRole("link", { name: "在飞书查看" })).toHaveAttribute(
       "href",
       "https://pnx.feishu.cn/wiki/node-source",
+    );
+    expect(
+      screen.getByRole("link", { name: "在飞书查看 管理员资料.pdf" }),
+    ).toHaveAttribute(
+      "href",
+      "https://pnx.feishu.cn/file/admin-source-token",
     );
   });
 });

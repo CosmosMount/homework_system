@@ -133,6 +133,12 @@ _TEXT_EXTENSIONS = {
     "txt",
 }
 _SHA256_BASE64 = re.compile(r"^[A-Za-z0-9+/]{43}=$")
+KNOWLEDGE_EXECUTABLE_MEDIA_TYPE = "application/vnd.microsoft.portable-executable"
+_PE32_MACHINES = {0x014C, 0x01C0, 0x01C4}
+_PE32_PLUS_MACHINES = {0x8664, 0xAA64}
+_PE_MACHINES = _PE32_MACHINES | _PE32_PLUS_MACHINES
+_PE_EXECUTABLE_IMAGE = 0x0002
+_PE_DLL = 0x2000
 
 
 class FileValidationError(Exception):
@@ -141,7 +147,7 @@ class FileValidationError(Exception):
         self.code = code
 
 
-def normalize_file_name(file_name: str) -> tuple[str, str]:
+def _normalized_file_name_parts(file_name: str) -> tuple[str, list[str]]:
     normalized = unicodedata.normalize("NFC", file_name).strip()
     if (
         not normalized
@@ -155,12 +161,34 @@ def normalize_file_name(file_name: str) -> tuple[str, str]:
     suffixes = [suffix.lower().lstrip(".") for suffix in PurePath(normalized).suffixes]
     if not suffixes:
         raise FileValidationError("FILE_TYPE_NOT_ALLOWED")
+    return normalized, suffixes
+
+
+def _safe_extension(suffixes: list[str]) -> str:
     if any(suffix in _DANGEROUS_SUFFIXES for suffix in suffixes):
         raise FileValidationError("FILE_TYPE_NOT_ALLOWED")
     extension = "tar.gz" if suffixes[-2:] == ["tar", "gz"] else suffixes[-1]
     if extension not in SAFE_EXTENSIONS:
         raise FileValidationError("FILE_TYPE_NOT_ALLOWED")
+    return extension
+
+
+def normalize_file_name(file_name: str) -> tuple[str, str]:
+    normalized, suffixes = _normalized_file_name_parts(file_name)
+    extension = _safe_extension(suffixes)
     return normalized, extension
+
+
+def normalize_knowledge_file_name(file_name: str) -> tuple[str, str]:
+    normalized, suffixes = _normalized_file_name_parts(file_name)
+    if suffixes[-1] != "exe":
+        return normalized, _safe_extension(suffixes)
+    preceding_suffixes = suffixes[:-1]
+    if any(
+        suffix in SAFE_EXTENSIONS or suffix in _DANGEROUS_SUFFIXES for suffix in preceding_suffixes
+    ):
+        raise FileValidationError("FILE_TYPE_NOT_ALLOWED")
+    return normalized, "exe"
 
 
 def detect_media_type(extension: str, inspection: ObjectInspection) -> str:
@@ -208,6 +236,51 @@ def detect_media_type(extension: str, inspection: ObjectInspection) -> str:
             raise FileValidationError("FILE_CONTENT_MISMATCH")
         detected = "text/plain"
     return detected or inspection.content_type or "application/octet-stream"
+
+
+def detect_knowledge_media_type(extension: str, inspection: ObjectInspection) -> str:
+    if extension != "exe":
+        return detect_media_type(extension, inspection)
+    first = inspection.first_bytes
+    if len(first) < 64 or not first.startswith(b"MZ"):
+        raise FileValidationError("FILE_CONTENT_MISMATCH")
+    pe_offset = int.from_bytes(first[0x3C:0x40], "little")
+    coff_offset = pe_offset + 4
+    optional_offset = coff_offset + 20
+    if (
+        pe_offset < 64
+        or optional_offset + 2 > len(first)
+        or first[pe_offset:coff_offset] != b"PE\0\0"
+    ):
+        raise FileValidationError("FILE_CONTENT_MISMATCH")
+    machine = int.from_bytes(first[coff_offset : coff_offset + 2], "little")
+    section_count = int.from_bytes(first[coff_offset + 2 : coff_offset + 4], "little")
+    optional_size = int.from_bytes(first[coff_offset + 16 : coff_offset + 18], "little")
+    characteristics = int.from_bytes(first[coff_offset + 18 : coff_offset + 20], "little")
+    optional_magic = int.from_bytes(first[optional_offset : optional_offset + 2], "little")
+    if (
+        machine not in _PE_MACHINES
+        or not 1 <= section_count <= 96
+        or optional_offset + optional_size > len(first)
+        or characteristics & _PE_EXECUTABLE_IMAGE == 0
+        or characteristics & _PE_DLL != 0
+    ):
+        raise FileValidationError("FILE_CONTENT_MISMATCH")
+    optional_header = {
+        0x010B: (0xE0, _PE32_MACHINES),
+        0x020B: (0xF0, _PE32_PLUS_MACHINES),
+    }.get(optional_magic)
+    if optional_header is None:
+        raise FileValidationError("FILE_CONTENT_MISMATCH")
+    minimum_optional_size, compatible_machines = optional_header
+    section_table_end = optional_offset + optional_size + section_count * 40
+    if (
+        optional_size < minimum_optional_size
+        or machine not in compatible_machines
+        or section_table_end > len(first)
+    ):
+        raise FileValidationError("FILE_CONTENT_MISMATCH")
+    return KNOWLEDGE_EXECUTABLE_MEDIA_TYPE
 
 
 class UploadService:

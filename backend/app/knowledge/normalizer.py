@@ -1,5 +1,6 @@
+import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
@@ -58,6 +59,10 @@ _CODE_LANGUAGES = {
     75: "TOML",
 }
 _FEISHU_DOCUMENT_PATH_MARKERS = {"wiki", "docx", "document", "docs"}
+_FEISHU_FILE_TOKEN = re.compile(r"^[A-Za-z0-9_-]{1,500}$")
+
+AssetUnavailableReason = Literal["type_not_allowed", "too_large", "unavailable"]
+AssetDownloadEndpoint = Literal["media", "file"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +72,7 @@ class AssetReference:
     file_name: str
     width: int | None = None
     height: int | None = None
+    download_endpoint: AssetDownloadEndpoint = "media"
 
 
 def safe_href(value: object) -> str | None:
@@ -79,17 +85,21 @@ def safe_href(value: object) -> str | None:
     return decoded[:2000]
 
 
+def _is_trusted_feishu_hostname(hostname: str) -> bool:
+    return (
+        hostname == "feishu.cn"
+        or hostname.endswith(".feishu.cn")
+        or hostname == "larksuite.com"
+        or hostname.endswith(".larksuite.com")
+    )
+
+
 def _document_token_from_href(href: str | None) -> str | None:
     if href is None:
         return None
     parts = urlsplit(href)
     hostname = (parts.hostname or "").lower()
-    if not (
-        hostname == "feishu.cn"
-        or hostname.endswith(".feishu.cn")
-        or hostname == "larksuite.com"
-        or hostname.endswith(".larksuite.com")
-    ):
+    if not _is_trusted_feishu_hostname(hostname):
         return None
     segments = [segment for segment in parts.path.split("/") if segment]
     marker_index = next(
@@ -108,6 +118,20 @@ def _document_token_from_href(href: str | None) -> str | None:
     return token[:500]
 
 
+def _drive_file_token_from_href(href: str | None) -> str | None:
+    if href is None:
+        return None
+    parts = urlsplit(href)
+    hostname = (parts.hostname or "").lower()
+    if not _is_trusted_feishu_hostname(hostname):
+        return None
+    segments = [segment for segment in parts.path.split("/") if segment]
+    if len(segments) != 2 or segments[0].lower() != "file":
+        return None
+    token = unquote(segments[1]).strip()
+    return token if _FEISHU_FILE_TOKEN.fullmatch(token) is not None else None
+
+
 def _clean_text(value: object, *, limit: int = 200_000) -> str:
     if not isinstance(value, str):
         return ""
@@ -120,6 +144,9 @@ def _rich_text(
     assets: dict[tuple[str, str], UUID],
     asset_names: dict[tuple[str, str], str],
     fallback_url: str,
+    asset_sizes: dict[tuple[str, str], int],
+    asset_media_types: dict[tuple[str, str], str],
+    asset_failures: dict[tuple[str, str], AssetUnavailableReason],
 ) -> list[dict[str, object]]:
     if not isinstance(container, dict):
         return []
@@ -133,6 +160,7 @@ def _rich_text(
         text = ""
         href: str | None = None
         document_token: str | None = None
+        file_key: tuple[str, str] | None = None
         is_equation = False
         style_source: object = {}
         text_run = raw.get("text_run")
@@ -147,13 +175,21 @@ def _rich_text(
                 link = style_source.get("link")
                 if isinstance(link, dict):
                     href = safe_href(link.get("url"))
-                    document_token = _document_token_from_href(href)
+                    drive_file_token = _drive_file_token_from_href(href)
+                    if drive_file_token is not None:
+                        file_key = (drive_file_token, "attachment")
+                    else:
+                        document_token = _document_token_from_href(href)
         elif isinstance(mention_doc, dict):
             text = _clean_text(mention_doc.get("title")) or "飞书文档"
-            token = mention_doc.get("token")
-            document_token = token if isinstance(token, str) and token else None
             href = safe_href(mention_doc.get("url"))
-            document_token = document_token or _document_token_from_href(href)
+            drive_file_token = _drive_file_token_from_href(href)
+            if drive_file_token is not None:
+                file_key = (drive_file_token, "attachment")
+            else:
+                token = mention_doc.get("token")
+                document_token = token if isinstance(token, str) and token else None
+                document_token = document_token or _document_token_from_href(href)
         elif isinstance(mention_user, dict):
             text = "@" + (_clean_text(mention_user.get("name")) or "成员")
         elif isinstance(equation, dict):
@@ -162,14 +198,19 @@ def _rich_text(
         elif isinstance(inline_file, dict):
             token = inline_file.get("file_token")
             if isinstance(token, str) and token:
-                key = (token, "attachment")
-                text = asset_names.get(key, "附件")
-                asset_id = assets.get(key)
+                file_key = (token, "attachment")
+                text = asset_names.get(file_key, "附件")
+                asset_id = assets.get(file_key)
                 href = (
                     f"/api/v1/knowledge/assets/{asset_id}/content"
                     if asset_id is not None
                     else fallback_url
                 )
+        if file_key is not None:
+            asset_id = assets.get(file_key)
+            text = asset_names.get(file_key, text or "附件")
+            if asset_id is not None:
+                href = f"/api/v1/knowledge/assets/{asset_id}/content"
         if not text:
             continue
         style = style_source if isinstance(style_source, dict) else {}
@@ -185,6 +226,20 @@ def _rich_text(
             segment["href"] = href
         if document_token is not None:
             segment["document_token"] = document_token
+        if file_key is not None:
+            asset_id = assets.get(file_key)
+            segment["file"] = True
+            segment["asset_id"] = str(asset_id) if asset_id is not None else None
+            segment["file_name"] = asset_names.get(file_key, text)
+            if asset_id is not None:
+                file_size = asset_sizes.get(file_key)
+                media_type = asset_media_types.get(file_key)
+                if isinstance(file_size, int) and file_size >= 0:
+                    segment["file_size"] = file_size
+                if isinstance(media_type, str) and media_type:
+                    segment["mime_type"] = media_type
+            else:
+                segment["unavailable_reason"] = asset_failures.get(file_key, "unavailable")
         if is_equation:
             segment["equation"] = True
         result.append(segment)
@@ -219,6 +274,7 @@ def discover_asset_references(blocks: list[dict[str, Any]]) -> list[AssetReferen
         file_name: str,
         width: object = None,
         height: object = None,
+        download_endpoint: AssetDownloadEndpoint = "media",
     ) -> None:
         if not isinstance(token, str) or not token or (token, kind) in seen:
             return
@@ -230,6 +286,7 @@ def discover_asset_references(blocks: list[dict[str, Any]]) -> list[AssetReferen
                 file_name=file_name,
                 width=width if isinstance(width, int) and width > 0 else None,
                 height=height if isinstance(height, int) and height > 0 else None,
+                download_endpoint=download_endpoint,
             )
         )
 
@@ -265,6 +322,28 @@ def discover_asset_references(blocks: list[dict[str, Any]]) -> list[AssetReferen
                 height=board.get("height"),
             )
         for element in _block_elements(block):
+            text_run = element.get("text_run")
+            mention_doc = element.get("mention_doc")
+            href: str | None = None
+            file_name = ""
+            if isinstance(text_run, dict):
+                file_name = _clean_text(text_run.get("content"), limit=255)
+                style = text_run.get("text_element_style")
+                link = style.get("link") if isinstance(style, dict) else None
+                if isinstance(link, dict):
+                    href = safe_href(link.get("url"))
+            elif isinstance(mention_doc, dict):
+                file_name = _clean_text(mention_doc.get("title"), limit=255)
+                href = safe_href(mention_doc.get("url"))
+            drive_file_token = _drive_file_token_from_href(href)
+            if drive_file_token is not None:
+                add_reference(
+                    drive_file_token,
+                    "attachment",
+                    file_name=file_name or "附件",
+                    download_endpoint="file",
+                )
+                continue
             inline_file = element.get("file")
             if not isinstance(inline_file, dict):
                 continue
@@ -290,9 +369,11 @@ def normalize_document(
     fallback_url: str,
     asset_sizes: dict[tuple[str, str], int] | None = None,
     asset_media_types: dict[tuple[str, str], str] | None = None,
+    asset_failures: dict[tuple[str, str], AssetUnavailableReason] | None = None,
 ) -> list[dict[str, Any]]:
     resolved_asset_sizes = asset_sizes or {}
     resolved_asset_media_types = asset_media_types or {}
+    resolved_asset_failures = asset_failures or {}
     by_id = {
         str(block["block_id"]): block
         for block in raw_blocks
@@ -342,6 +423,9 @@ def normalize_document(
                 assets=assets,
                 asset_names=asset_names,
                 fallback_url=fallback_url,
+                asset_sizes=resolved_asset_sizes,
+                asset_media_types=resolved_asset_media_types,
+                asset_failures=resolved_asset_failures,
             )
         if normalized_type == "heading":
             result["level"] = max(1, min(numeric_type - 2, 6))
@@ -392,7 +476,15 @@ def normalize_document(
                     result["file_size"] = file_size
                 if isinstance(media_type, str) and media_type:
                     result["mime_type"] = media_type
+            elif normalized_type == "attachment":
+                result["unavailable_reason"] = resolved_asset_failures.get(key, "unavailable")
             if isinstance(detail, dict):
+                if normalized_type == "image":
+                    raw_caption = detail.get("caption")
+                    if isinstance(raw_caption, dict):
+                        caption = _clean_text(raw_caption.get("content"), limit=20_000).strip()
+                        if caption:
+                            result["caption"] = caption
                 width = detail.get("width")
                 height = detail.get("height")
                 result["width"] = width if isinstance(width, int) and width > 0 else None

@@ -299,6 +299,15 @@ def test_announcement_mail_escapes_user_content_and_contains_no_attachment_url(
 
 
 def test_file_name_and_signature_validation_rejects_active_or_mismatched_files() -> None:
+    for file_name in (
+        "installer.exe",
+        "installer.pdf.exe",
+        "installer.zip.exe",
+        "installer.cmd.exe",
+        "installer.exe.exe",
+    ):
+        with pytest.raises(FileValidationError):
+            normalize_file_name(file_name)
     with pytest.raises(FileValidationError):
         normalize_file_name("notice.pdf.exe")
     with pytest.raises(FileValidationError):

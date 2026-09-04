@@ -1,11 +1,19 @@
 import json
 from datetime import UTC, datetime
+from io import BytesIO
 from uuid import UUID, uuid4
 
 import pytest
 
 from app.core.config import Settings
-from app.knowledge.feishu_client import FeishuClient, HttpResponse, KnowledgeSyncError
+from app.knowledge.feishu_client import (
+    FeishuAssetDownload,
+    FeishuClient,
+    HttpResponse,
+    HttpStreamResponse,
+    KnowledgeSyncError,
+    UrllibHttpTransport,
+)
 from app.knowledge.normalizer import (
     discover_asset_references,
     normalize_document,
@@ -100,6 +108,18 @@ class RecordingTransport:
                 json.dumps({"code": 0, "data": {"document": {"title": "接口中的标题"}}}).encode(),
             )
         raise AssertionError("unexpected Feishu URL: " + url)
+
+    def open_stream(
+        self,
+        *,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None,
+        max_bytes: int,
+    ) -> HttpStreamResponse:
+        self.requests.append((url, headers, body))
+        raise AssertionError("unexpected Feishu stream URL: " + url)
 
 
 def configured_settings() -> Settings:
@@ -229,6 +249,10 @@ async def test_feishu_client_paginates_until_page_token_is_empty() -> None:
 
 
 class AssetHeaderTransport(RecordingTransport):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stream_requests: list[tuple[str, dict[str, str], int]] = []
+
     def request(
         self,
         *,
@@ -255,15 +279,37 @@ class AssetHeaderTransport(RecordingTransport):
             max_bytes=max_bytes,
         )
 
+    def open_stream(
+        self,
+        *,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None,
+        max_bytes: int,
+    ) -> HttpStreamResponse:
+        self.requests.append((url, headers, body))
+        self.stream_requests.append((url, headers, max_bytes))
+        if "/board/v1/whiteboards/board-token/download_as_image" in url:
+            return HttpStreamResponse(200, {"content-type": "image/png"}, BytesIO(b"board"))
+        if "/drive/v1/medias/image-token/download" in url:
+            return HttpStreamResponse(200, {"content-type": "image/png"}, BytesIO(b"image"))
+        if "/drive/v1/medias/attachment-token/download" in url:
+            return HttpStreamResponse(200, {"content-type": "application/pdf"}, BytesIO(b"asset"))
+        if "/drive/v1/files/standalone-file-token/download" in url:
+            return HttpStreamResponse(200, {"content-type": "application/pdf"}, BytesIO(b"file"))
+        raise AssertionError("unexpected Feishu URL: " + url)
+
 
 @pytest.mark.asyncio
 async def test_feishu_client_requests_whiteboard_as_png_only() -> None:
     transport = AssetHeaderTransport()
     client = FeishuClient(configured_settings(), transport=transport)
 
-    await client.download_asset("board-token", "whiteboard")
-    await client.download_asset("image-token", "image")
-    file_content, file_type = await client.download_file("standalone-file-token")
+    board = await client.download_asset("board-token", "whiteboard")
+    image = await client.download_asset("image-token", "image")
+    attachment = await client.download_asset("attachment-token", "attachment")
+    file_download = await client.download_file("standalone-file-token")
 
     board_headers = next(
         headers for url, headers, _ in transport.requests if "/whiteboards/" in url
@@ -276,8 +322,106 @@ async def test_feishu_client_requests_whiteboard_as_png_only() -> None:
     )
     assert file_request[0].endswith("/drive/v1/files/standalone-file-token/download")
     assert "accept" not in file_request[1]
-    assert file_content == b"file"
-    assert file_type == "application/pdf"
+    assert await board.read() == b"board"
+    assert await image.read() == b"image"
+    assert await attachment.read() == b"asset"
+    assert await file_download.read() == b"file"
+    assert file_download.content_type == "application/pdf"
+    await board.close()
+    await image.close()
+    await attachment.close()
+    await file_download.close()
+    limits = {url: max_bytes for url, _, max_bytes in transport.stream_requests}
+    assert limits[next(url for url in limits if "/whiteboards/" in url)] == 52_428_800
+    assert limits[next(url for url in limits if "/medias/image-token/" in url)] == 52_428_800
+    assert (
+        limits[next(url for url in limits if "/medias/attachment-token/" in url)] == 1_073_741_824
+    )
+    assert limits[next(url for url in limits if "/files/" in url)] == 1_073_741_824
+
+
+class TrackingStreamBody:
+    def __init__(self, content: bytes) -> None:
+        self._body = BytesIO(content)
+        self.read_calls = 0
+        self.closed = False
+
+    def read(self, amt: int = -1) -> bytes:
+        self.read_calls += 1
+        return self._body.read(amt)
+
+    def close(self) -> None:
+        self.closed = True
+        self._body.close()
+
+
+@pytest.mark.asyncio
+async def test_feishu_asset_stream_accepts_exact_limit_and_closes_at_eof() -> None:
+    body = TrackingStreamBody(b"1234")
+    download = FeishuAssetDownload(
+        HttpStreamResponse(200, {"content-type": "application/pdf"}, body),
+        max_bytes=4,
+    )
+
+    assert await download.read(4) == b"1234"
+    assert await download.read(4) == b""
+    assert body.closed is True
+
+
+@pytest.mark.asyncio
+async def test_feishu_asset_stream_rejects_cumulative_overflow_and_empty_body() -> None:
+    oversized_body = TrackingStreamBody(b"12345")
+    oversized = FeishuAssetDownload(
+        HttpStreamResponse(200, {}, oversized_body),
+        max_bytes=4,
+    )
+
+    assert await oversized.read(3) == b"123"
+    with pytest.raises(KnowledgeSyncError) as oversized_error:
+        await oversized.read(3)
+    assert oversized_error.value.code == "FEISHU_RESPONSE_TOO_LARGE"
+    assert oversized_body.closed is True
+
+    empty_body = TrackingStreamBody(b"")
+    empty = FeishuAssetDownload(HttpStreamResponse(200, {}, empty_body), max_bytes=4)
+    with pytest.raises(KnowledgeSyncError) as empty_error:
+        await empty.read()
+    assert empty_error.value.code == "FEISHU_ASSET_EMPTY"
+    assert empty_body.closed is True
+
+
+class DeclaredLengthResponse(TrackingStreamBody):
+    def __init__(self, content: bytes, declared_length: int) -> None:
+        super().__init__(content)
+        self.status = 200
+        self.headers = {"Content-Length": str(declared_length)}
+
+
+class SingleResponseOpener:
+    def __init__(self, response: DeclaredLengthResponse) -> None:
+        self.response = response
+
+    def open(self, request: object, *, timeout: float) -> DeclaredLengthResponse:
+        return self.response
+
+
+def test_urllib_stream_rejects_declared_oversize_without_reading_body() -> None:
+    response = DeclaredLengthResponse(b"not-read", declared_length=5)
+    transport = UrllibHttpTransport()
+    transport._opener = SingleResponseOpener(response)  # type: ignore[assignment]
+
+    with pytest.raises(KnowledgeSyncError) as exc_info:
+        transport.open_stream(
+            method="GET",
+            url="https://open.feishu.cn/open-apis/drive/v1/files/token/download",
+            headers={},
+            body=None,
+            max_bytes=4,
+        )
+
+    assert exc_info.value.code == "FEISHU_RESPONSE_TOO_LARGE"
+    assert response.read_calls == 0
+    assert response.closed is True
 
 
 @pytest.mark.asyncio
@@ -398,6 +542,152 @@ def test_normalizer_rejects_unsafe_links_and_localizes_known_assets() -> None:
     assert normalized[3]["asset_id"] == str(board_id)
     assert safe_href("http://example.edu") is None
     assert safe_href("javascript:alert(1)") is None
+
+
+def test_normalizer_preserves_non_empty_image_captions_as_text() -> None:
+    captioned_image_id = uuid4()
+    plain_image_id = uuid4()
+    long_caption_image_id = uuid4()
+    blocks = [
+        {
+            "block_id": "page",
+            "block_type": 1,
+            "children": ["captioned-image", "plain-image", "long-caption-image"],
+        },
+        {
+            "block_id": "captioned-image",
+            "block_type": 27,
+            "image": {
+                "token": "captioned-image-token",
+                "width": 960,
+                "height": 540,
+                "caption": {"content": "  系统结构\x00示意  "},
+            },
+        },
+        {
+            "block_id": "plain-image",
+            "block_type": 27,
+            "image": {
+                "token": "plain-image-token",
+                "caption": {"content": "   "},
+            },
+        },
+        {
+            "block_id": "long-caption-image",
+            "block_type": 27,
+            "image": {
+                "token": "long-caption-image-token",
+                "caption": {"content": "x" * 20_001},
+            },
+        },
+    ]
+
+    normalized = normalize_document(
+        blocks,
+        assets={
+            ("captioned-image-token", "image"): captioned_image_id,
+            ("plain-image-token", "image"): plain_image_id,
+            ("long-caption-image-token", "image"): long_caption_image_id,
+        },
+        asset_names={},
+        fallback_url="https://pnx.feishu.cn/wiki/source",
+    )
+
+    assert normalized[0]["caption"] == "系统结构示意"
+    assert normalized[0]["width"] == 960
+    assert normalized[0]["height"] == 540
+    assert "caption" not in normalized[1]
+    assert normalized[2]["caption"] == "x" * 20_000
+
+
+def test_normalizer_discovers_and_localizes_trusted_drive_file_links() -> None:
+    mention_asset_id = uuid4()
+    blocks = [
+        {
+            "block_id": "page",
+            "block_type": 1,
+            "children": ["text"],
+        },
+        {
+            "block_id": "text",
+            "block_type": 2,
+            "text": {
+                "elements": [
+                    {
+                        "mention_doc": {
+                            "title": "训练说明.pdf",
+                            "token": "not-a-document-token",
+                            "url": "https://pnx.feishu.cn/file/drive-mention-token?from=docx",
+                        }
+                    },
+                    {
+                        "text_run": {
+                            "content": "数据集.zip",
+                            "text_element_style": {
+                                "link": {"url": "https://pnx.larksuite.com/file/drive-link-token"}
+                            },
+                        }
+                    },
+                    {
+                        "text_run": {
+                            "content": "非受信文件链接",
+                            "text_element_style": {
+                                "link": {
+                                    "url": "https://feishu.cn.example.edu/file/untrusted-token"
+                                }
+                            },
+                        }
+                    },
+                    {
+                        "mention_doc": {
+                            "title": "下一篇",
+                            "token": "next-document-token",
+                            "url": "https://pnx.feishu.cn/docx/next-document-token",
+                        }
+                    },
+                ]
+            },
+        },
+    ]
+
+    references = discover_asset_references(blocks)
+    normalized = normalize_document(
+        blocks,
+        assets={("drive-mention-token", "attachment"): mention_asset_id},
+        asset_names={
+            ("drive-mention-token", "attachment"): "训练说明.pdf",
+            ("drive-link-token", "attachment"): "数据集.zip",
+        },
+        fallback_url="https://pnx.feishu.cn/wiki/source",
+        asset_sizes={("drive-mention-token", "attachment"): 2048},
+        asset_media_types={
+            ("drive-mention-token", "attachment"): "application/pdf",
+        },
+        asset_failures={("drive-link-token", "attachment"): "too_large"},
+    )
+
+    assert [
+        (reference.token, reference.kind, reference.download_endpoint) for reference in references
+    ] == [
+        ("drive-mention-token", "attachment", "file"),
+        ("drive-link-token", "attachment", "file"),
+    ]
+    segments = normalized[0]["segments"]
+    assert isinstance(segments, list)
+    assert segments[0]["file"] is True
+    assert segments[0]["asset_id"] == str(mention_asset_id)
+    assert segments[0]["href"] == (f"/api/v1/knowledge/assets/{mention_asset_id}/content")
+    assert segments[0]["file_name"] == "训练说明.pdf"
+    assert segments[0]["file_size"] == 2048
+    assert segments[0]["mime_type"] == "application/pdf"
+    assert "document_token" not in segments[0]
+    assert segments[1]["file"] is True
+    assert segments[1]["asset_id"] is None
+    assert segments[1]["unavailable_reason"] == "too_large"
+    assert segments[1]["href"] == "https://pnx.larksuite.com/file/drive-link-token"
+    assert "file" not in segments[2]
+    assert segments[2]["href"] == ("https://feishu.cn.example.edu/file/untrusted-token")
+    assert segments[3]["document_token"] == "next-document-token"
 
 
 def test_normalizer_preserves_inline_and_display_equations() -> None:
@@ -648,12 +938,17 @@ def test_normalizer_skips_unlocalized_visuals_but_keeps_attachment_fallbacks() -
         assets={},
         asset_names={},
         fallback_url=fallback_url,
+        asset_failures={("missing-file", "attachment"): "type_not_allowed"},
     )
 
     assert [block["type"] for block in normalized] == ["attachment", "paragraph"]
     assert normalized[0]["asset_id"] is None
     assert normalized[0]["fallback_url"] == fallback_url
+    assert normalized[0]["unavailable_reason"] == "type_not_allowed"
     assert normalized[1]["segments"][0]["href"] == fallback_url
+    assert normalized[1]["segments"][0]["file"] is True
+    assert normalized[1]["segments"][0]["asset_id"] is None
+    assert normalized[1]["segments"][0]["unavailable_reason"] == "type_not_allowed"
 
 
 class RecordingKnowledgeSync:

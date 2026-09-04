@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     feishu_knowledge_max_documents: int = Field(default=500, ge=1, le=5_000)
     feishu_knowledge_max_assets: int = Field(default=2_000, ge=1, le=10_000)
     feishu_knowledge_max_asset_bytes: int = Field(default=52_428_800, ge=1, le=209_715_200)
+    feishu_knowledge_max_file_bytes: int = Field(
+        default=1_073_741_824,
+        ge=1,
+        le=2_147_483_648,
+    )
 
     global_max_upload_bytes: int = Field(default=2_147_483_648, ge=1)
     upload_part_size_bytes: int = Field(default=16_777_216, ge=5_242_880)

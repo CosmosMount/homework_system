@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+from io import BytesIO
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, call
@@ -12,7 +13,12 @@ import app.knowledge.bootstrap as bootstrap_module
 import app.knowledge.service as knowledge_service_module
 from app.core.config import Settings
 from app.knowledge.bootstrap import bootstrap_active_run
-from app.knowledge.feishu_client import FeishuClient, KnowledgeSyncError
+from app.knowledge.feishu_client import (
+    FeishuAssetDownload,
+    FeishuClient,
+    HttpStreamResponse,
+    KnowledgeSyncError,
+)
 from app.knowledge.models import KnowledgeAsset
 from app.knowledge.normalizer import AssetReference
 from app.knowledge.service import KnowledgeSynchronizer
@@ -211,6 +217,13 @@ def configured_settings() -> Settings:
     )
 
 
+def asset_download(content: bytes, content_type: str) -> FeishuAssetDownload:
+    return FeishuAssetDownload(
+        HttpStreamResponse(200, {"content-type": content_type}, BytesIO(content)),
+        max_bytes=1024,
+    )
+
+
 @pytest.mark.asyncio
 async def test_synchronizer_matches_reference_document_and_asset_order(
     monkeypatch: pytest.MonkeyPatch,
@@ -240,9 +253,8 @@ async def test_synchronizer_matches_reference_document_and_asset_order(
         reference: AssetReference,
         *,
         now: datetime,
-        standalone_file: bool = False,
     ) -> KnowledgeAsset:
-        source = "file" if standalone_file else "media"
+        source = reference.download_endpoint
         client.calls.append(f"asset:{source}:{reference.kind}:{reference.token}")
         return KnowledgeAsset(
             id=uuid4(),
@@ -294,11 +306,16 @@ async def test_drive_downloads_wait_350ms_while_whiteboard_bypasses_queue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     object_store = SimpleNamespace(
-        import_bytes=AsyncMock(return_value=SimpleNamespace(size_bytes=8, sha256="0" * 64))
+        import_stream=AsyncMock(return_value=SimpleNamespace(size_bytes=8, sha256="0" * 64))
     )
     client = SimpleNamespace(
-        download_asset=AsyncMock(return_value=(b"\x89PNG\r\n\x1a\n", "image/png")),
-        download_file=AsyncMock(return_value=(b"%PDF-1.7\nfile", "application/pdf")),
+        download_asset=AsyncMock(
+            side_effect=[
+                asset_download(b"\x89PNG\r\n\x1a\n", "image/png"),
+                asset_download(b"\x89PNG\r\n\x1a\n", "image/png"),
+            ]
+        ),
+        download_file=AsyncMock(return_value=asset_download(b"%PDF-1.7\nfile", "application/pdf")),
     )
     sleep = AsyncMock()
     monkeypatch.setattr(asyncio, "sleep", sleep)
@@ -321,9 +338,13 @@ async def test_drive_downloads_wait_350ms_while_whiteboard_bypasses_queue(
     )
     await synchronizer._prepare_asset(
         cast(FeishuClient, client),
-        AssetReference(token="standalone-token", kind="attachment", file_name="资料.pdf"),
+        AssetReference(
+            token="standalone-token",
+            kind="attachment",
+            file_name="资料.pdf",
+            download_endpoint="file",
+        ),
         now=now,
-        standalone_file=True,
     )
 
     assert sleep.await_args_list == [call(0.35), call(0.35)]
@@ -362,7 +383,6 @@ async def test_visual_assets_match_promise_all_while_documents_remain_serial(
         reference: AssetReference,
         *,
         now: datetime,
-        standalone_file: bool = False,
     ) -> KnowledgeAsset:
         if reference.kind == "attachment":
             events.append("attachment")

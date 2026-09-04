@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -25,6 +25,7 @@ from app.knowledge.models import (
 )
 from app.knowledge.normalizer import (
     AssetReference,
+    AssetUnavailableReason,
     discover_asset_references,
     normalize_document,
 )
@@ -43,11 +44,28 @@ from app.knowledge.schemas import (
 from app.notifications.models import OutboxJob
 from app.notifications.repository import OutboxRepository
 from app.uploads.object_store import MinioObjectStore, ObjectInspection, ObjectStoreError
-from app.uploads.service import FileValidationError, detect_media_type, normalize_file_name
+from app.uploads.service import (
+    KNOWLEDGE_EXECUTABLE_MEDIA_TYPE,
+    FileValidationError,
+    detect_knowledge_media_type,
+    normalize_knowledge_file_name,
+)
 
 logger = logging.getLogger(__name__)
 _PROGRESS_LOG_INTERVAL = 10
 _DRIVE_DOWNLOAD_DELAY_SECONDS = 0.35
+_ASSET_SNIFF_BYTES = 64 * 1024
+_ASSET_STREAM_READ_BYTES = 1024 * 1024
+
+
+def _asset_unavailable_reason(
+    error: KnowledgeSyncError | FileValidationError | ObjectStoreError,
+) -> AssetUnavailableReason:
+    if isinstance(error, FileValidationError) and error.code == "FILE_TYPE_NOT_ALLOWED":
+        return "type_not_allowed"
+    if isinstance(error, KnowledgeSyncError) and error.code == "FEISHU_RESPONSE_TOO_LARGE":
+        return "too_large"
+    return "unavailable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,6 +338,11 @@ class KnowledgeService:
                 object_key=asset.object_key,
                 file_name=asset.file_name,
                 expires_seconds=300,
+                content_type=(
+                    "application/octet-stream"
+                    if asset.media_type == KNOWLEDGE_EXECUTABLE_MEDIA_TYPE
+                    else None
+                ),
             )
         except ObjectStoreError as exc:
             raise ApplicationError(
@@ -401,14 +424,12 @@ class KnowledgeSynchronizer:
         reference: AssetReference,
         *,
         now: datetime,
-        standalone_file: bool = False,
     ) -> KnowledgeAsset:
         if reference.kind == "whiteboard":
             return await self._download_and_store_asset(
                 client,
                 reference,
                 now=now,
-                standalone_file=standalone_file,
             )
         async with self._drive_download_lock:
             await asyncio.sleep(_DRIVE_DOWNLOAD_DELAY_SECONDS)
@@ -416,7 +437,6 @@ class KnowledgeSynchronizer:
                 client,
                 reference,
                 now=now,
-                standalone_file=standalone_file,
             )
 
     async def _download_and_store_asset(
@@ -425,34 +445,54 @@ class KnowledgeSynchronizer:
         reference: AssetReference,
         *,
         now: datetime,
-        standalone_file: bool,
     ) -> KnowledgeAsset:
-        content, reported_type = (
+        download = (
             await client.download_file(reference.token)
-            if standalone_file
+            if reference.download_endpoint == "file"
             else await client.download_asset(reference.token, reference.kind)
         )
-        asset_id = uuid7()
-        if reference.kind in {"image", "whiteboard"}:
-            extension, media_type = self._image_type(content)
-            file_name = (
-                "白板." + extension if reference.kind == "whiteboard" else "知识库图片." + extension
+        try:
+            first_buffer = bytearray()
+            while len(first_buffer) < _ASSET_SNIFF_BYTES:
+                chunk = await download.read(_ASSET_SNIFF_BYTES - len(first_buffer))
+                if not chunk:
+                    break
+                first_buffer.extend(chunk)
+            first_chunk = bytes(first_buffer)
+            asset_id = uuid7()
+            if reference.kind in {"image", "whiteboard"}:
+                extension, media_type = self._image_type(first_chunk)
+                file_name = (
+                    "白板." + extension
+                    if reference.kind == "whiteboard"
+                    else "知识库图片." + extension
+                )
+            else:
+                file_name, extension = normalize_knowledge_file_name(reference.file_name)
+                inspection = ObjectInspection(
+                    size_bytes=len(first_chunk),
+                    sha256="",
+                    first_bytes=first_chunk,
+                    content_type=(download.content_type or "").split(";", 1)[0].strip() or None,
+                )
+                media_type = detect_knowledge_media_type(extension, inspection)
+            object_key = f"knowledge/{asset_id}/{uuid7()}.{extension}"
+
+            async def content_chunks() -> AsyncIterator[bytes]:
+                yield first_chunk
+                while True:
+                    chunk = await download.read(_ASSET_STREAM_READ_BYTES)
+                    if not chunk:
+                        return
+                    yield chunk
+
+            stored = await self._object_store.import_stream(
+                object_key,
+                content_chunks(),
+                content_type=media_type,
             )
-        else:
-            file_name, extension = normalize_file_name(reference.file_name)
-            inspection = ObjectInspection(
-                size_bytes=len(content),
-                sha256="",
-                first_bytes=content[:32],
-                content_type=(reported_type or "").split(";", 1)[0].strip() or None,
-            )
-            media_type = detect_media_type(extension, inspection)
-        object_key = f"knowledge/{asset_id}/{uuid7()}.{extension}"
-        stored = await self._object_store.import_bytes(
-            object_key,
-            content,
-            content_type=media_type,
-        )
+        finally:
+            await download.close()
         return KnowledgeAsset(
             id=asset_id,
             external_asset_token=reference.token,
@@ -483,6 +523,7 @@ class KnowledgeSynchronizer:
         raw_nodes: list[dict[str, Any]],
         documents: list[_PreparedDocument],
         assets: dict[tuple[str, str], KnowledgeAsset],
+        asset_failures: dict[tuple[str, str], AssetUnavailableReason],
         new_assets: list[KnowledgeAsset],
         now: datetime,
     ) -> None:
@@ -573,6 +614,7 @@ class KnowledgeSynchronizer:
                         fallback_url=prepared.source_url,
                         asset_sizes={key: value.size_bytes for key, value in assets.items()},
                         asset_media_types={key: value.media_type for key, value in assets.items()},
+                        asset_failures=asset_failures,
                     ),
                     display_order=prepared.display_order,
                     created_at=now,
@@ -626,32 +668,35 @@ class KnowledgeSynchronizer:
             documents: list[_PreparedDocument] = []
             all_references: dict[tuple[str, str], AssetReference] = {}
             assets: dict[tuple[str, str], KnowledgeAsset] = {}
+            asset_failures: dict[tuple[str, str], AssetUnavailableReason] = {}
             new_assets: list[KnowledgeAsset] = []
 
             async def prepare_reference(
                 reference: AssetReference,
-                *,
-                standalone_file: bool = False,
             ) -> tuple[tuple[str, str], KnowledgeAsset | None]:
                 key = (reference.token, reference.kind)
                 if key in assets:
+                    asset_failures.pop(key, None)
                     return key, assets[key]
                 try:
                     asset = await self._prepare_asset(
                         client,
                         reference,
                         now=now,
-                        standalone_file=standalone_file,
                     )
-                except (KnowledgeSyncError, FileValidationError, ObjectStoreError):
+                except (KnowledgeSyncError, FileValidationError, ObjectStoreError) as exc:
+                    unavailable_reason = _asset_unavailable_reason(exc)
+                    asset_failures[key] = unavailable_reason
                     logger.warning(
                         "knowledge_asset_fallback",
                         extra={
                             "event": "knowledge_asset_fallback",
                             "asset_kind": reference.kind,
+                            "unavailable_reason": unavailable_reason,
                         },
                     )
                     return key, None
+                asset_failures.pop(key, None)
                 return key, asset
 
             stage = "documents"
@@ -709,6 +754,7 @@ class KnowledgeSynchronizer:
                     token=cast(str, node["obj_token"]),
                     kind="attachment",
                     file_name=str(node.get("title") or "附件")[:255],
+                    download_endpoint="file",
                 )
                 for node in raw_nodes
                 if node.get("obj_type") == "file" and isinstance(node.get("obj_token"), str)
@@ -721,7 +767,7 @@ class KnowledgeSynchronizer:
                 stage = "assets"
                 assets.update(await self._read_existing_assets(standalone_file_references))
                 for reference in standalone_file_references:
-                    key, asset = await prepare_reference(reference, standalone_file=True)
+                    key, asset = await prepare_reference(reference)
                     if asset is None or key in assets:
                         continue
                     assets[key] = asset
@@ -733,6 +779,7 @@ class KnowledgeSynchronizer:
                 raw_nodes=raw_nodes,
                 documents=documents,
                 assets=assets,
+                asset_failures=asset_failures,
                 new_assets=new_assets,
                 now=self._clock(),
             )

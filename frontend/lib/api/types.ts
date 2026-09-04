@@ -891,6 +891,11 @@ export type KnowledgeOverview = {
   documents: KnowledgeDocumentSummary[];
 };
 
+export type KnowledgeAssetUnavailableReason =
+  | "type_not_allowed"
+  | "too_large"
+  | "unavailable";
+
 export type KnowledgeRichSegment = {
   text: string;
   equation?: boolean;
@@ -901,6 +906,12 @@ export type KnowledgeRichSegment = {
   inline_code?: boolean;
   href?: string;
   document_token?: string;
+  file?: boolean;
+  asset_id?: string | null;
+  file_name?: string;
+  file_size?: number;
+  mime_type?: string;
+  unavailable_reason?: KnowledgeAssetUnavailableReason;
 };
 
 export type KnowledgeTableCell = {
@@ -940,9 +951,11 @@ export type KnowledgeBlock = {
   text_color?: number | string;
   asset_id?: string | null;
   file_name?: string;
+  caption?: string;
   fallback_url?: string;
   file_size?: number;
   mime_type?: string;
+  unavailable_reason?: KnowledgeAssetUnavailableReason;
   width?: number | null;
   height?: number | null;
   children?: KnowledgeBlock[];

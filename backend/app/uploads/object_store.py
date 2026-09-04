@@ -1,6 +1,8 @@
 import asyncio
+import base64
 import hashlib
-from collections.abc import Sequence
+from collections.abc import AsyncIterable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
@@ -29,6 +31,8 @@ class S3Client(Protocol):
     def create_bucket(self, **kwargs: object) -> dict[str, object]: ...
 
     def create_multipart_upload(self, **kwargs: object) -> dict[str, object]: ...
+
+    def upload_part(self, **kwargs: object) -> dict[str, object]: ...
 
     def generate_presigned_url(self, *args: object, **kwargs: object) -> str: ...
 
@@ -171,6 +175,38 @@ class MinioObjectStore:
         if not isinstance(upload_id, str) or not upload_id:
             raise ObjectStoreError("INVALID_MULTIPART_RESPONSE")
         return upload_id
+
+    async def upload_part(
+        self,
+        *,
+        object_key: str,
+        upload_id: str,
+        part_number: int,
+        content: bytes,
+    ) -> ObjectPart:
+        checksum = base64.b64encode(hashlib.sha256(content).digest()).decode("ascii")
+        try:
+            response = await asyncio.to_thread(
+                self._client.upload_part,
+                Bucket=self._bucket,
+                Key=object_key,
+                UploadId=upload_id,
+                PartNumber=part_number,
+                Body=content,
+                ContentLength=len(content),
+                ChecksumSHA256=checksum,
+            )
+        except (BotoCoreError, ClientError, OSError) as exc:
+            raise ObjectStoreError("MULTIPART_PART_FAILED") from exc
+        etag = response.get("ETag")
+        if not isinstance(etag, str) or not etag:
+            raise ObjectStoreError("INVALID_MULTIPART_RESPONSE")
+        return ObjectPart(
+            part_number=part_number,
+            etag=etag,
+            checksum_sha256=checksum,
+            size_bytes=len(content),
+        )
 
     def _public_url(self, internal_url: str) -> str:
         parts = urlsplit(internal_url)
@@ -429,6 +465,79 @@ class MinioObjectStore:
             content_type=content_type,
         )
 
+    async def import_stream(
+        self,
+        object_key: str,
+        chunks: AsyncIterable[bytes],
+        *,
+        content_type: str,
+        part_size_bytes: int = 16 * 1024 * 1024,
+    ) -> ObjectInspection:
+        if part_size_bytes < 5 * 1024 * 1024:
+            raise ValueError("multipart part size must be at least 5 MiB")
+        upload_id = await self.create_multipart(
+            object_key=object_key,
+            media_type=content_type,
+        )
+        digest = hashlib.sha256()
+        first_bytes = b""
+        size_bytes = 0
+        buffer = bytearray()
+        parts: list[ObjectPart] = []
+        try:
+            async for chunk in chunks:
+                if not isinstance(chunk, bytes):
+                    raise ObjectStoreError("INVALID_IMPORT_STREAM")
+                if not chunk:
+                    continue
+                if not first_bytes:
+                    first_bytes = chunk[:32]
+                digest.update(chunk)
+                size_bytes += len(chunk)
+                buffer.extend(chunk)
+                while len(buffer) >= part_size_bytes:
+                    part_content = bytes(buffer[:part_size_bytes])
+                    del buffer[:part_size_bytes]
+                    parts.append(
+                        await self.upload_part(
+                            object_key=object_key,
+                            upload_id=upload_id,
+                            part_number=len(parts) + 1,
+                            content=part_content,
+                        )
+                    )
+            if size_bytes == 0:
+                raise ObjectStoreError("OBJECT_IMPORT_EMPTY")
+            if buffer:
+                parts.append(
+                    await self.upload_part(
+                        object_key=object_key,
+                        upload_id=upload_id,
+                        part_number=len(parts) + 1,
+                        content=bytes(buffer),
+                    )
+                )
+            await self.complete_multipart(
+                object_key=object_key,
+                upload_id=upload_id,
+                parts=parts,
+            )
+        except BaseException:
+            with suppress(BaseException):
+                await asyncio.shield(
+                    self.abort_multipart(
+                        object_key=object_key,
+                        upload_id=upload_id,
+                    )
+                )
+            raise
+        return ObjectInspection(
+            size_bytes=size_bytes,
+            sha256=digest.hexdigest(),
+            first_bytes=first_bytes,
+            content_type=content_type,
+        )
+
     async def abort_multipart(self, *, object_key: str, upload_id: str) -> None:
         try:
             await asyncio.to_thread(
@@ -459,16 +568,20 @@ class MinioObjectStore:
         object_key: str,
         file_name: str,
         expires_seconds: int,
+        content_type: str | None = None,
     ) -> str:
         disposition = f"attachment; filename*=UTF-8''{quote(file_name, safe='')}"
+        parameters: dict[str, object] = {
+            "Bucket": self._bucket,
+            "Key": object_key,
+            "ResponseContentDisposition": disposition,
+        }
+        if content_type is not None:
+            parameters["ResponseContentType"] = content_type
         try:
             internal_url = self._client.generate_presigned_url(
                 "get_object",
-                Params={
-                    "Bucket": self._bucket,
-                    "Key": object_key,
-                    "ResponseContentDisposition": disposition,
-                },
+                Params=parameters,
                 ExpiresIn=expires_seconds,
                 HttpMethod="GET",
             )

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
@@ -29,6 +30,19 @@ class HttpResponse:
     body: bytes
 
 
+class HttpStreamBody(Protocol):
+    def read(self, amt: int = -1) -> bytes: ...
+
+    def close(self) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class HttpStreamResponse:
+    status: int
+    headers: dict[str, str]
+    body: HttpStreamBody
+
+
 @dataclass(frozen=True, slots=True)
 class _WikiTarget:
     is_space: bool
@@ -45,6 +59,16 @@ class HttpTransport(Protocol):
         body: bytes | None,
         max_bytes: int,
     ) -> HttpResponse: ...
+
+    def open_stream(
+        self,
+        *,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None,
+        max_bytes: int,
+    ) -> HttpStreamResponse: ...
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -101,6 +125,95 @@ class UrllibHttpTransport:
         except (TimeoutError, URLError, OSError) as exc:
             raise KnowledgeSyncError("FEISHU_NETWORK_UNAVAILABLE", permanent=False) from exc
 
+    def open_stream(
+        self,
+        *,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None,
+        max_bytes: int,
+    ) -> HttpStreamResponse:
+        parts = urlsplit(url)
+        if parts.scheme != "https" or parts.hostname != "open.feishu.cn":
+            raise KnowledgeSyncError("FEISHU_ENDPOINT_REJECTED", permanent=True)
+        request = Request(url, data=body, headers=headers, method=method)
+        try:
+            response = self._opener.open(request, timeout=self._timeout_seconds)
+            response_headers = {key.lower(): value for key, value in response.headers.items()}
+            declared_length = response_headers.get("content-length", "").strip()
+            if declared_length.isdecimal() and int(declared_length) > max_bytes:
+                with suppress(Exception):
+                    response.close()
+                raise KnowledgeSyncError("FEISHU_RESPONSE_TOO_LARGE", permanent=True)
+            return HttpStreamResponse(
+                status=int(response.status),
+                headers=response_headers,
+                body=response,
+            )
+        except HTTPError as exc:
+            status = int(exc.code)
+            with suppress(Exception):
+                exc.close()
+            raise KnowledgeSyncError(
+                "FEISHU_RATE_LIMITED"
+                if status == 429
+                else "FEISHU_SERVICE_UNAVAILABLE"
+                if status >= 500
+                else "FEISHU_REQUEST_REJECTED",
+                permanent=status not in {408, 425, 429} and status < 500,
+            ) from exc
+        except KnowledgeSyncError:
+            raise
+        except (TimeoutError, URLError, OSError) as exc:
+            raise KnowledgeSyncError("FEISHU_NETWORK_UNAVAILABLE", permanent=False) from exc
+
+
+class FeishuAssetDownload:
+    def __init__(self, response: HttpStreamResponse, *, max_bytes: int) -> None:
+        self.content_type = response.headers.get("content-type")
+        self._body = response.body
+        self._max_bytes = max_bytes
+        self._bytes_read = 0
+        self._closed = False
+
+    async def read(self, size: int = 1024 * 1024) -> bytes:
+        if size <= 0:
+            raise ValueError("stream read size must be positive")
+        if self._closed:
+            return b""
+        read_size = min(size, self._max_bytes - self._bytes_read + 1)
+        try:
+            chunk = await asyncio.to_thread(self._body.read, read_size)
+        except (TimeoutError, URLError, OSError) as exc:
+            await self.close()
+            raise KnowledgeSyncError("FEISHU_NETWORK_UNAVAILABLE", permanent=False) from exc
+        if not isinstance(chunk, bytes):
+            await self.close()
+            raise KnowledgeSyncError("FEISHU_INVALID_RESPONSE", permanent=False)
+        if not chunk:
+            await self.close()
+            if self._bytes_read == 0:
+                raise KnowledgeSyncError("FEISHU_ASSET_EMPTY", permanent=True)
+            return b""
+        self._bytes_read += len(chunk)
+        if self._bytes_read > self._max_bytes:
+            await self.close()
+            raise KnowledgeSyncError("FEISHU_RESPONSE_TOO_LARGE", permanent=True)
+        return chunk
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await asyncio.to_thread(self._body.close)
+        except Exception:
+            logger.warning(
+                "feishu_asset_response_close_failed",
+                extra={"event": "feishu_asset_response_close_failed"},
+            )
+
 
 class FeishuClient:
     def __init__(
@@ -146,6 +259,33 @@ class FeishuClient:
             body=payload,
             max_bytes=max_bytes,
         )
+
+    async def _open_download(
+        self,
+        *,
+        path: str,
+        max_bytes: int,
+        accept: str | None,
+    ) -> FeishuAssetDownload:
+        headers = {"authorization": "Bearer " + await self.tenant_token()}
+        if accept is not None:
+            headers["accept"] = accept
+        response = await asyncio.to_thread(
+            self._transport.open_stream,
+            method="GET",
+            url=_FEISHU_API_ORIGIN + path,
+            headers=headers,
+            body=None,
+            max_bytes=max_bytes,
+        )
+        download = FeishuAssetDownload(response, max_bytes=max_bytes)
+        if response.status < 200 or response.status >= 300:
+            await download.close()
+            raise KnowledgeSyncError(
+                "FEISHU_ASSET_UNAVAILABLE",
+                permanent=response.status < 500,
+            )
+        return download
 
     @staticmethod
     def _decode_json(response: HttpResponse) -> dict[str, Any]:
@@ -319,38 +459,30 @@ class FeishuClient:
         title = raw_document.get("title")
         return title if isinstance(title, str) and title else "未命名文档"
 
-    async def download_asset(self, token: str, kind: str) -> tuple[bytes, str | None]:
+    async def download_asset(self, token: str, kind: str) -> FeishuAssetDownload:
         safe_token = quote(token, safe="")
         path = (
             f"/open-apis/board/v1/whiteboards/{safe_token}/download_as_image"
             if kind == "whiteboard"
             else f"/open-apis/drive/v1/medias/{safe_token}/download"
         )
-        response = await self._request(
-            method="GET",
+        return await self._open_download(
             path=path,
-            max_bytes=self._settings.feishu_knowledge_max_asset_bytes,
+            max_bytes=(
+                self._settings.feishu_knowledge_max_file_bytes
+                if kind == "attachment"
+                else self._settings.feishu_knowledge_max_asset_bytes
+            ),
             accept="image/png" if kind == "whiteboard" else None,
         )
-        if response.status < 200 or response.status >= 300:
-            raise KnowledgeSyncError("FEISHU_ASSET_UNAVAILABLE", permanent=response.status < 500)
-        if not response.body:
-            raise KnowledgeSyncError("FEISHU_ASSET_EMPTY", permanent=True)
-        return response.body, response.headers.get("content-type")
 
-    async def download_file(self, token: str) -> tuple[bytes, str | None]:
+    async def download_file(self, token: str) -> FeishuAssetDownload:
         safe_token = quote(token, safe="")
-        response = await self._request(
-            method="GET",
+        return await self._open_download(
             path=f"/open-apis/drive/v1/files/{safe_token}/download",
-            max_bytes=self._settings.feishu_knowledge_max_asset_bytes,
+            max_bytes=self._settings.feishu_knowledge_max_file_bytes,
             accept=None,
         )
-        if response.status < 200 or response.status >= 300:
-            raise KnowledgeSyncError("FEISHU_ASSET_UNAVAILABLE", permanent=response.status < 500)
-        if not response.body:
-            raise KnowledgeSyncError("FEISHU_ASSET_EMPTY", permanent=True)
-        return response.body, response.headers.get("content-type")
 
     def source_url(self, node_token: str) -> str:
         configured = self._settings.feishu_wiki_url
