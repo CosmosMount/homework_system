@@ -339,3 +339,27 @@
 - Worker 对 `intention_open_email` 在实际发送前重新锁定 `processing` 行，并在同一事务内发送和标记成功；与问卷删除的活动任务 DELETE 正确串行。Frontend 已加入永久删除确认，成功即时移除问卷卡片和本地统计/名单/二维码缓存，失败或取消保留。
 - 定向后端问卷/通知/OpenAPI 102 项、前端问卷 26 项通过；完整后端 392 项、Ruff、175 文件格式和 154 文件严格 Mypy，完整前端 25 文件/137 项、ESLint、严格 TypeScript与 Next.js 生产构建全部通过，`git diff --check` 通过。
 - 已同步 INT-010、INT-T27、ADR-058 及项目概览、信息架构、页面、系统架构、API、数据库、安全邮件、测试、变更、任务和基线记录。本功能无新依赖、数据库迁移或生产数据写入，未构建或部署镜像，也未调用真实问卷 DELETE。
+
+## 2026-09-04 问卷桌面操作单行与删除功能部署计划
+
+### 背景、必要性与边界
+
+- 当前问卷卡片操作区统一使用 `flex-wrap`，桌面宽度下按钮仍会自动换行，不符合管理员希望集中查看全部问卷操作的要求。移动端和平板仍需允许换行，保证 360 px 宽度下所有操作可完成。
+- 只调整管理员问卷卡片的操作容器：基础样式继续换行，`lg` 桌面断点改为 `flex-nowrap`，并增加可访问的操作分组名称。问卷状态、按钮显示条件、DELETE 行为、权限、API、数据库和 Worker 均不改变。
+- 本次部署包含已完成并提交的管理员永久删除问卷 Backend/Worker/Frontend，以及上述前端布局修复；继续使用生产现有 `20260904_0019`，不新增迁移或依赖，不调用真实问卷 DELETE。
+
+### 实现、验证与发布
+
+- 前端组件测试断言操作区在窄屏保留 `flex-wrap`、桌面具有 `lg:flex-nowrap`，并确认当前状态下所有问卷命令按钮属于同一分组；运行问卷前端定向测试、完整 Vitest、ESLint、严格 TypeScript、Next.js 生产构建和 `git diff --check`。
+- 复用管理员永久删除问卷已通过的 102 项定向后端、392 项完整后端及静态质量门结果；发布前再次核对提交、OpenAPI DELETE/204、0019 head、六服务健康、运行镜像/容器和安全聚合。
+- 创建并验证新的部署前备份，将当前 `questionnaire-live-edit-20260904` Backend/Worker 与 Frontend 镜像固化为回滚目标。构建固定标签候选后，先替换 Backend/Worker，健康后再替换 Frontend/Nginx；PostgreSQL、MinIO、持久卷和网络不得重建。
+- 发布后检查六服务 healthy、重启 0，登录及全部健康入口为 200，问卷管理页匿名为 307，管理列表、详情和虚假 DELETE 匿名为 401；运行 OpenAPI 必须包含 DELETE/204，Frontend 产物必须同时包含删除文案和桌面 `flex-nowrap` 标记。验收不携带管理员 Session，不调用问卷删除、修改、状态、邮件、方向配置、同步、上传或认证写接口。
+- 任一应用健康、权限、产物或日志门失败时，按 Backend/Worker、Frontend/Nginx 顺序恢复部署前镜像；本轮无数据库结构变化，不降级或恢复生产数据库。
+
+### 部署结果
+
+- 桌面单行修复提交 `81a5d06`；前端问卷定向 27 项、完整 25 文件/138 项及 ESLint、严格 TypeScript、Next.js 生产构建、`git diff --check` 通过。删除能力继续复用后端定向 102 项、完整 392 项和全部静态门。
+- 从生产基线隔离构建固定候选 `questionnaire-delete-layout-20260904`，明确排除知识库图片说明；Backend/Worker 与 Frontend 镜像分别为 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`、`sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8`，均以 `appuser` 运行。
+- 新备份 `pnx-backup-20260904T052330Z-daily` 已在独立空卷恢复 3,115 个对象，缺失、大小、哈希差异为 0，RTO 150 秒；隔离资源已清理，部署前镜像已固化为 `questionnaire-delete-layout-rollback-20260904`。
+- `.env` 已切换固定标签并使用 `--no-build` 两阶段上线；六服务 healthy、重启 0，健康入口、匿名 307/401、OpenAPI DELETE/204、前端删除文案与桌面单行标记、`0019` head/无漂移和业务聚合均通过。PostgreSQL/MinIO 容器、卷、网络未重建，未调用真实问卷 DELETE 或其他业务写接口。
+- Compose 依赖自动执行的幂等 migrate 两次正常退出且无新 DDL；后端替换的短窗口出现 6 次旧上游连接失败，服务稳定后四个应用错误与 Nginx 5xx 为 0，无需回滚。

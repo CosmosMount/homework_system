@@ -515,3 +515,11 @@ Markdown 预览与蓝白主题修复完成时，新增管理员作业编辑回�
 - 前端问卷定向 26 项通过；新增覆盖取消确认不请求、确认后发送 DELETE、成功卡片即时消失且其他问卷保留，以及请求失败时卡片与统一错误提示保留。
 - 完整后端 392 项 Pytest、Ruff、175 个 Python 文件格式检查和 154 个 `app + tests` 严格 Mypy通过；完整前端 25 文件/137 项 Vitest、ESLint、严格 TypeScript 与 Next.js 生产构建通过，`git diff --check` 通过。
 - 本功能复用 `20260904_0019` 现有表、外键和 Outbox，无迁移或依赖；验证未连接或修改运行 PostgreSQL/MinIO，未调用生产真实 DELETE、SMTP 或其他写接口，也未构建或部署 Docker。
+
+## 2026-09-04 管理员删除问卷与桌面操作单行部署验证结果
+
+- 桌面操作组新增回归后，前端问卷定向 27 项、完整 25 文件/138 项 Vitest、ESLint、严格 TypeScript、Next.js 16.3.2 生产构建及 `git diff --check` 通过；移动端保留 `flex-wrap`，桌面产物包含 `lg:flex-nowrap`，删除按钮保持 `whitespace-nowrap`。
+- 固定候选 Backend/Worker `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`、Frontend `sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8` 以 `appuser` 运行；OpenAPI 116 条路径，管理员问卷 DELETE 声明 204，Frontend 包含“删除问卷”和桌面单行标记。
+- 新备份从空 PostgreSQL/MinIO 卷恢复 3,115 个对象，引用缺失、大小、哈希差异均为 0，RTO 150 秒；两阶段无构建替换后六服务 healthy、重启 0，五个健康入口 200，问卷页面匿名 307，管理列表和虚假 DELETE 匿名 401。
+- Alembic 保持 `20260904_0019 (head)` 且无漂移；Compose 依赖自动执行的幂等 migrate 容器以 0 退出、没有新 DDL。PostgreSQL/MinIO 容器 ID 不变，用户、问卷、回答、邮件和删除审计聚合与发布前一致。
+- 后端切换窗口 05:33:21～05:33:24 有 6 次正在浏览知识库的上游连接超时/拒绝；服务稳定后四个应用错误与 Nginx 5xx 均为 0。验收未携带管理员 Session，未调用真实 DELETE 或其他业务写接口。

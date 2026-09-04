@@ -761,3 +761,11 @@
 - `questionnaire-live-edit-20260904` 已按 Backend/Worker、Frontend/Nginx 两阶段上线，镜像分别为 `sha256:5f2a114bd60c31bc52d0b6c17e3d24ca5e3912fb6797e45d687074096e8e33c6` 与 `sha256:cc1e3a67d372627219b78a8ade5bfef0df0babe7c35ad76747493350921b83ce`；六服务 healthy、重启 0，PostgreSQL/MinIO 容器和卷未重建。
 - 健康、匿名 307/401、运行 OpenAPI 116 路径、前端产物、0019 两外键/两索引、Alembic 漂移、业务聚合与四服务日志全部通过。未携带管理员 Session、未调用真实 PATCH；回答增长来自真实学生业务流量。
 - 隔离候选继续排除知识库图片说明。兼容回滚 Backend/Frontend 镜像为 `sha256:f79df018…`、`sha256:5a058b07…`，保留 0019 受众授权，只撤回本轮编辑能力，数据库不得降级。
+
+# 2026-09-04：管理员永久删除问卷与桌面操作单行部署完成
+
+- 任意状态问卷已支持真实管理员二次确认永久删除；同事务清理活动问卷邮件、回答选择和问卷根记录，现有外键继续级联删除受众、问题、选项与回答。管理卡片在移动端允许换行，桌面 `lg` 起全部当前操作保持一行且文字不换行。
+- 后端删除能力定向 102 项、完整 392 项及静态门通过；布局回归后前端问卷定向 27 项、完整 25 文件/138 项、ESLint、严格 TypeScript、Next.js 生产构建和 `git diff --check` 通过。
+- 新备份 `pnx-backup-20260904T052330Z-daily` 从空卷恢复成功，3,115 个对象无引用缺失、大小或哈希差异；固定标签 `questionnaire-delete-layout-20260904` 已两阶段无构建上线，Backend/Worker 为 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`，Frontend 为 `sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8`。
+- 六服务 healthy、重启 0，OpenAPI DELETE/204、前端产物、健康与匿名权限门通过；`20260904_0019` 无漂移，PostgreSQL/MinIO 未重建，业务聚合不变。验收未携带管理员 Session、未调用真实 DELETE 或其他业务写接口。
+- 回滚标签 `questionnaire-delete-layout-rollback-20260904` 指向部署前 Backend/Worker `sha256:5f2a114b…` 与 Frontend `sha256:cc1e3a67…`；本轮无新迁移，应用回滚不降级数据库。

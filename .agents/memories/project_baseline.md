@@ -467,3 +467,11 @@
 - 管理端取消确认不请求，成功后立即从本地列表及统计/名单/二维码缓存移除；后端不存在资源统一 404。本功能复用生产已上线的 `20260904_0019`，无新依赖、字段或迁移。
 - 定向后端 102 项、前端 26 项及完整后端 392 项、完整前端 25 文件/137 项、Ruff、175 文件格式、154 文件严格 Mypy、ESLint、严格 TypeScript、生产构建和 `git diff --check` 全部通过。
 - 源码尚未部署；当前生产仍为 `questionnaire-live-edit-20260904`，本轮未调用运行环境真实 DELETE，也未修改 PostgreSQL/MinIO 数据。
+
+## 2026-09-04 管理员删除问卷与桌面操作单行部署后基线
+
+- 当前固定标签为 `questionnaire-delete-layout-20260904`；Backend/Worker 镜像 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`，Frontend `sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8`。六服务 healthy、重启 0，PostgreSQL/MinIO 容器仍为 `bfa750f66ab0…`、`331150f34f37…`。
+- 生产 OpenAPI 116 条路径并包含管理员问卷 DELETE/204；Frontend 产物包含删除文案和桌面不换行样式。问卷操作区移动端可换行，桌面 `lg` 起全部当前按钮保持单行。
+- Alembic 为 `20260904_0019 (head)` 且无漂移；用户/激活学生/已分组学生为 `183/167/142`，问卷/受众关联/问题/选项/回答/选择为 `12/6/18/64/623/1133`，问卷删除审计和账号清理 Outbox 均为 0，邮件 sent 487。
+- 新备份 `pnx-backup-20260904T052330Z-daily` 已从空卷恢复并对账 3,115 个对象，缺失、大小、哈希差异为 0，RTO 150 秒。回滚标签 `questionnaire-delete-layout-rollback-20260904` 指向部署前 Backend/Worker `sha256:5f2a114b…` 与 Frontend `sha256:cc1e3a67…`，应用回滚不降级数据库。
+- 运行验收未携带管理员 Session、未调用真实问卷 DELETE 或其他业务写接口；切换窗口 6 次旧上游连接失败结束后，稳定期四个应用错误与 Nginx 5xx 均为 0。知识库图片说明仍未进入生产候选。

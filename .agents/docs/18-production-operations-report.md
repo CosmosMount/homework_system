@@ -865,3 +865,21 @@
 - 部署前后用户/激活学生/已分组学生保持 `184/168/143`，问卷/问题/选项和状态保持 `12/18/64`、`archived:2/closed:3/open:7`；作业固定受众 116、`intention.update` 审计 3、问卷邮件 sent 487、账号清理 Outbox 0 均不变。回答/选择由 `592/1101` 增至 `603/1112`，时间与未认证部署命令确认属于真实学生业务提交。验收未携带管理员 Session，未调用真实 PATCH、状态、邮件、方向配置、飞书同步、删除或上传。
 - Backend、Worker、Frontend、Nginx 全部新容器严重错误关键词为 0。专用兼容回滚镜像分别为 Backend/Worker `sha256:f79df018b95d1eaeca450d376325bae1a19d8d81c5841934bd437af5580e410e`、Frontend `sha256:5a058b0715d7b9648fbee00b3ddd710fa6174aa920a1d283b491bc9821a25627`；它们保留 0019 技术组受众和既有功能，只撤回开放后编辑，应用回滚不得降级数据库。
 - 新加密归档和临时 GPG 私钥仍同机位于 `/tmp`，只适合作为短期恢复材料；必须迁移到受控异机介质并分离保存。
+
+## 2026-09-04 管理员删除问卷与桌面操作单行部署
+
+### 隔离候选、备份与回滚
+
+- 为避免把尚未授权部署的知识库图片说明带入生产，Backend 候选以 `questionnaire-live-edit-20260904` 生产镜像为基线，仅覆盖问卷删除所需 5 个文件；Frontend 从当前提交导出并替换为生产知识库组件。固定候选 `questionnaire-delete-layout-20260904` 的 Backend/Worker 镜像为 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`，Frontend 为 `sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8`，均为 `appuser`。
+- 发布前 OpenPGP 每日增量备份 `pnx-backup-20260904T052330Z-daily` 为 4,300,838,956 字节，数据库 dump 25,167,729 字节，对象库存 3,115 个/6,414,684,531 字节、增量对象 230 个/4,376,519,936 字节；外部 SHA-256、内部元数据与 0600 权限通过。
+- 独立 `pnx-restore-questionnaire-delete-20260904` 从空 PostgreSQL/MinIO 卷恢复成功，3,115 个对象的引用缺失、大小及 SHA-256 差异均为 0，RPO 312 秒、RTO 150 秒；1,875 个历史未跟踪对象保持既有告警。隔离容器、网络、卷及明文临时目录已清理。
+- 回滚标签 `questionnaire-delete-layout-rollback-20260904` 固定为部署前 Backend/Worker `sha256:5f2a114bd60c31bc52d0b6c17e3d24ca5e3912fb6797e45d687074096e8e33c6`、Frontend `sha256:cc1e3a67d372627219b78a8ade5bfef0df0babe7c35ad76747493350921b83ce`；本轮不新增迁移，回滚不降级数据库。
+
+### 两阶段发布与运行验收
+
+- `.env` 固定为 `APP_IMAGE_TAG=questionnaire-delete-layout-20260904`，所有 Compose 更新均使用 `--no-build`。先替换 Backend/Worker，健康后再替换 Frontend；Nginx 配置和容器保持。Compose 依赖自动运行的幂等 migrate 容器两次均以 0 退出，数据库仍为 `20260904_0019 (head)`，`alembic check` 无新操作。
+- 最终 Backend、Worker、Frontend、Nginx 容器为 `155be2248a39…`、`50d3732426d4…`、`9bf0345699db…`、`dc752c2dff1f…`；PostgreSQL/MinIO 仍为 `bfa750f66ab0…`、`331150f34f37…`，没有重建数据容器、卷或网络。六服务 healthy、重启 0。
+- `/login`、`/health/live`、`/health/ready`、`/health/worker`、`/nginx-health` 均为 200；`/admin/intentions`、`/intentions` 匿名为 307，管理列表和虚假问卷 DELETE 匿名为 401。运行 OpenAPI 为 116 条路径并包含 DELETE/204，Frontend 产物包含“删除问卷”和 `lg:flex-nowrap`。
+- 发布前后用户/激活学生/已分组学生保持 `183/167/142`，问卷/受众关联/问题/选项/回答/选择保持 `12/6/18/64/623/1133`，状态保持 `archived:2/closed:3/open:7/draft:0`；问卷邮件 sent 487、删除审计 0、账号清理 Outbox 0。验收未携带管理员 Session，未调用真实 DELETE、PATCH、状态、邮件、方向配置、同步、上传或认证写接口。
+- 后端切换时 05:33:21～05:33:24，Nginx 记录 6 次一名正在浏览知识库的请求连接旧上游超时/拒绝；05:34 起 Backend、Worker、Frontend、Nginx 严重错误和 Nginx 5xx 均为 0，当前 `ready` 为 200。
+- 新加密归档与临时 GPG 私钥仍同机位于 `/tmp`，只适合作为短期恢复材料；必须迁移到受控异机介质并分离保存。
