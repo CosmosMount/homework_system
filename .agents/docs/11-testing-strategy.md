@@ -523,3 +523,10 @@ Markdown 预览与蓝白主题修复完成时，新增管理员作业编辑回�
 - 新备份从空 PostgreSQL/MinIO 卷恢复 3,115 个对象，引用缺失、大小、哈希差异均为 0，RTO 150 秒；两阶段无构建替换后六服务 healthy、重启 0，五个健康入口 200，问卷页面匿名 307，管理列表和虚假 DELETE 匿名 401。
 - Alembic 保持 `20260904_0019 (head)` 且无漂移；Compose 依赖自动执行的幂等 migrate 容器以 0 退出、没有新 DDL。PostgreSQL/MinIO 容器 ID 不变，用户、问卷、回答、邮件和删除审计聚合与发布前一致。
 - 后端切换窗口 05:33:21～05:33:24 有 6 次正在浏览知识库的上游连接超时/拒绝；服务稳定后四个应用错误与 Nginx 5xx 均为 0。验收未携带管理员 Session，未调用真实 DELETE 或其他业务写接口。
+
+## 2026-09-04 问卷查看与编辑按钮同行热修验证结果
+
+- 回归测试先复现旧实现：主操作组虽然具有 `lg:flex-nowrap`，但“查看内容”和“编辑问卷”仍在详情组件自己的下一行，因此测试准确失败。修复后所有当前可用命令归入同一个可访问操作组，并逐个断言 `shrink-0 whitespace-nowrap`。
+- 前端问卷定向 27/27、完整 25 文件/138 项 Vitest、ESLint、严格 TypeScript、Next.js 16.3.2 生产构建及 `git diff --check` 通过；移动端继续允许换行，桌面 `lg` 起操作组与按钮文字均不换行。
+- 隔离候选以 `appuser` 在无网络、只读、去 Linux capabilities 容器中健康，且继续排除未授权部署的知识库图片说明。固定标签 `questionnaire-actions-row-20260904` 已只替换 Frontend/Nginx，Frontend 镜像为 `sha256:3ba9fa4315a59833d093f6c992d8248a1ba3aa599108dce62091e2fe214e2650`；Backend/Worker 保持 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`。
+- 六服务 healthy、重启 0，`/login`、`/health/ready`、`/nginx-health` 为 200，管理问卷页匿名为 307；Alembic 保持 `20260904_0019 (head)`。发布窗口 Frontend/Nginx 错误及 Nginx 5xx 为 0，未使用管理员 Session、未执行业务写入或迁移。

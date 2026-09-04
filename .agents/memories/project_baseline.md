@@ -475,3 +475,11 @@
 - Alembic 为 `20260904_0019 (head)` 且无漂移；用户/激活学生/已分组学生为 `183/167/142`，问卷/受众关联/问题/选项/回答/选择为 `12/6/18/64/623/1133`，问卷删除审计和账号清理 Outbox 均为 0，邮件 sent 487。
 - 新备份 `pnx-backup-20260904T052330Z-daily` 已从空卷恢复并对账 3,115 个对象，缺失、大小、哈希差异为 0，RTO 150 秒。回滚标签 `questionnaire-delete-layout-rollback-20260904` 指向部署前 Backend/Worker `sha256:5f2a114b…` 与 Frontend `sha256:cc1e3a67…`，应用回滚不降级数据库。
 - 运行验收未携带管理员 Session、未调用真实问卷 DELETE 或其他业务写接口；切换窗口 6 次旧上游连接失败结束后，稳定期四个应用错误与 Nginx 5xx 均为 0。知识库图片说明仍未进入生产候选。
+
+## 2026-09-04 问卷查看与编辑按钮同行热修后基线
+
+- 管理员问卷卡片当前使用唯一操作组，状态、二维码、统计、名单、删除、“查看内容”和“编辑问卷”全部在桌面 `lg` 起保持一行；所有命令按钮禁止收缩和文字换行，移动端仍可换行。代码提交为 `fd9311f`。
+- 当前固定标签为 `questionnaire-actions-row-20260904`；Frontend 镜像为 `sha256:3ba9fa4315a59833d093f6c992d8248a1ba3aa599108dce62091e2fe214e2650`，Backend/Worker 保持 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`。候选继续排除知识库图片说明。
+- 前端问卷定向 27/27、完整 25 文件/138 项、ESLint、严格 TypeScript、Next.js 16.3.2 生产构建与 `git diff --check` 通过；隔离候选以 `appuser` 在无网络、只读、去 capabilities 容器中健康。
+- 六服务 healthy、重启 0，关键健康入口和匿名守卫正常，Alembic 为 `20260904_0019 (head)`；发布窗口 Frontend/Nginx 错误及 Nginx 5xx 为 0。未使用管理员 Session，未执行业务写入或数据库迁移。
+- 回滚标签 `questionnaire-actions-row-rollback-20260904` 指向 Backend `sha256:d668cd…`、Frontend `sha256:41ea63…`；本热修不涉及数据迁移。

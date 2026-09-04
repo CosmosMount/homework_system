@@ -883,3 +883,17 @@
 - 发布前后用户/激活学生/已分组学生保持 `183/167/142`，问卷/受众关联/问题/选项/回答/选择保持 `12/6/18/64/623/1133`，状态保持 `archived:2/closed:3/open:7/draft:0`；问卷邮件 sent 487、删除审计 0、账号清理 Outbox 0。验收未携带管理员 Session，未调用真实 DELETE、PATCH、状态、邮件、方向配置、同步、上传或认证写接口。
 - 后端切换时 05:33:21～05:33:24，Nginx 记录 6 次一名正在浏览知识库的请求连接旧上游超时/拒绝；05:34 起 Backend、Worker、Frontend、Nginx 严重错误和 Nginx 5xx 均为 0，当前 `ready` 为 200。
 - 新加密归档与临时 GPG 私钥仍同机位于 `/tmp`，只适合作为短期恢复材料；必须迁移到受控异机介质并分离保存。
+
+## 2026-09-04 问卷查看与编辑按钮同行热修部署
+
+### 候选与定向替换
+
+- 用户现场复核确认上一版 Frontend 的主操作组已单行，但“查看内容”和“编辑问卷”仍由详情组件在下一行渲染。本次只调整两个管理问卷组件及对应测试，代码提交 `fd9311f`；Backend、Worker、API、数据库与业务规则不变。
+- 候选继续排除未授权部署的知识库图片说明，并以 `appuser` 在无网络、只读根文件系统、去 Linux capabilities 的容器中通过健康检查。固定标签为 `questionnaire-actions-row-20260904`，Frontend 镜像 `sha256:3ba9fa4315a59833d093f6c992d8248a1ba3aa599108dce62091e2fe214e2650`；Backend/Worker 保持上一版 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`。
+- 回滚标签 `questionnaire-actions-row-rollback-20260904` 分别指向 Backend `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6` 与 Frontend `sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8`；本轮无迁移，回滚不涉及数据库。
+
+### 验证与运行状态
+
+- 旧实现下新增回归准确失败，修复后问卷定向 27/27、完整前端 25 文件/138 项 Vitest、ESLint、严格 TypeScript、Next.js 16.3.2 生产构建和 `git diff --check` 全部通过。测试确认所有当前命令处于同一 `lg:flex-nowrap` 操作组，且逐个具有 `shrink-0 whitespace-nowrap`。
+- `.env` 已固定为 `APP_IMAGE_TAG=questionnaire-actions-row-20260904`，只替换 Frontend 并刷新 Nginx；Backend、Worker、PostgreSQL 与 MinIO 保持。六服务 healthy、重启 0，`/login`、`/health/ready`、`/nginx-health` 均为 200，`/admin/intentions` 匿名为 307。
+- Alembic 保持 `20260904_0019 (head)`；发布窗口 Frontend/Nginx 错误和 Nginx 5xx 均为 0。验收未携带管理员 Session，未调用问卷 DELETE、PATCH、状态、邮件、方向配置或其他业务写接口，未运行迁移，也未修改 PostgreSQL/MinIO 数据。

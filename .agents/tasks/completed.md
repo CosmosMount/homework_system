@@ -769,3 +769,10 @@
 - 新备份 `pnx-backup-20260904T052330Z-daily` 从空卷恢复成功，3,115 个对象无引用缺失、大小或哈希差异；固定标签 `questionnaire-delete-layout-20260904` 已两阶段无构建上线，Backend/Worker 为 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`，Frontend 为 `sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8`。
 - 六服务 healthy、重启 0，OpenAPI DELETE/204、前端产物、健康与匿名权限门通过；`20260904_0019` 无漂移，PostgreSQL/MinIO 未重建，业务聚合不变。验收未携带管理员 Session、未调用真实 DELETE 或其他业务写接口。
 - 回滚标签 `questionnaire-delete-layout-rollback-20260904` 指向部署前 Backend/Worker `sha256:5f2a114b…` 与 Frontend `sha256:cc1e3a67…`；本轮无新迁移，应用回滚不降级数据库。
+
+# 2026-09-04：问卷查看与编辑按钮桌面同行热修完成
+
+- 根因是上一轮只为主操作容器设置桌面单行，“查看内容”和“编辑问卷”仍由详情组件在独立下一行渲染。现已把全部卡片命令放进唯一可访问操作组，桌面 `lg` 起操作组不换行且每个按钮禁止收缩和文字换行，移动端保持可换行。
+- 新增精确回归并确认旧实现失败、修复后通过；前端问卷定向 27/27、完整 25 文件/138 项、ESLint、严格 TypeScript、Next.js 16.3.2 生产构建及 `git diff --check` 全部通过。代码独立提交为 `fd9311f`。
+- 固定标签 `questionnaire-actions-row-20260904` 已只替换 Frontend/Nginx；Frontend 镜像为 `sha256:3ba9fa4315a59833d093f6c992d8248a1ba3aa599108dce62091e2fe214e2650`，Backend/Worker 保持 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`。六服务 healthy、重启 0，关键健康、匿名守卫、`20260904_0019 (head)` 和稳定期日志均正常。
+- 本热修无 API、数据库、依赖或迁移变化；未使用管理员 Session、未执行问卷或其他业务写入。知识库图片说明继续排除，Frontend 回滚镜像为 `sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8`。

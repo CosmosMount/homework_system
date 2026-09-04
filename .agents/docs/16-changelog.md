@@ -1062,3 +1062,16 @@
 - 固定标签 `questionnaire-delete-layout-20260904` 已按 Backend/Worker、Frontend/Nginx 两阶段无构建上线；镜像分别为 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6` 与 `sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8`。六服务 healthy、重启 0，运行 OpenAPI、Frontend 产物、健康入口和匿名权限门通过。
 - 新加密每日备份 `pnx-backup-20260904T052330Z-daily` 完成空卷恢复和对象引用对账；3,115 个对象无缺失、大小或哈希差异，RTO 150 秒。Alembic 保持 `20260904_0019 (head)` 且无漂移，PostgreSQL/MinIO 未重建。
 - 用户、问卷、回答、选项关联、邮件及删除审计聚合保持一致；验收没有管理员 Session，未调用真实问卷 DELETE 或其他业务写接口。后端切换产生 6 次瞬时知识库上游连接失败，稳定后应用错误与 Nginx 5xx 均为 0。
+
+## 2026-09-04：问卷查看与编辑按钮桌面同行热修
+
+### Fixed
+
+- 修正上一版只让主操作区单行、但详情组件仍把“查看内容”和“编辑问卷”另起一行的问题。卡片现在只有一个操作组，状态、二维码、统计、名单、删除、查看内容和编辑问卷全部在桌面 `lg` 断点保持同一行；每个按钮禁止收缩及文字换行，移动端仍可响应式换行。
+- 新增精确组件回归，确认“查看内容”和“编辑问卷”也属于同一可访问操作组，并逐个验证桌面不收缩、不换行。代码独立提交为 `fd9311f`。
+
+### Validation and production deployment
+
+- 前端问卷定向 27/27、完整 25 文件/138 项 Vitest、ESLint、严格 TypeScript、Next.js 16.3.2 生产构建和 `git diff --check` 全部通过；隔离候选以 `appuser` 在无网络、只读、去 capabilities 环境健康，并继续排除知识库图片说明。
+- 固定标签 `questionnaire-actions-row-20260904` 已只替换 Frontend/Nginx；Frontend 镜像为 `sha256:3ba9fa4315a59833d093f6c992d8248a1ba3aa599108dce62091e2fe214e2650`，Backend/Worker 保持 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`。六服务 healthy、重启 0，健康、匿名守卫、`20260904_0019 (head)` 和稳定期日志均正常。
+- 本热修无 API、数据库、依赖或迁移变化，未使用管理员 Session、未执行问卷或其他业务写入。Frontend 回滚镜像为 `sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8`。

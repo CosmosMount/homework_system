@@ -363,3 +363,12 @@
 - 新备份 `pnx-backup-20260904T052330Z-daily` 已在独立空卷恢复 3,115 个对象，缺失、大小、哈希差异为 0，RTO 150 秒；隔离资源已清理，部署前镜像已固化为 `questionnaire-delete-layout-rollback-20260904`。
 - `.env` 已切换固定标签并使用 `--no-build` 两阶段上线；六服务 healthy、重启 0，健康入口、匿名 307/401、OpenAPI DELETE/204、前端删除文案与桌面单行标记、`0019` head/无漂移和业务聚合均通过。PostgreSQL/MinIO 容器、卷、网络未重建，未调用真实问卷 DELETE 或其他业务写接口。
 - Compose 依赖自动执行的幂等 migrate 两次正常退出且无新 DDL；后端替换的短窗口出现 6 次旧上游连接失败，服务稳定后四个应用错误与 Nginx 5xx 为 0，无需回滚。
+
+## 2026-09-04 问卷查看与编辑按钮同行热修结果
+
+- 用户现场复核发现上一轮只约束了状态、二维码、统计、名单和删除按钮；详情组件仍以独立容器渲染“查看内容”和“编辑问卷”，所以这两个按钮主动落到下一行。根因是操作组的组件边界，而不是按钮文字或 Tailwind 桌面断点失效。
+- `IntentionAdminDetail` 现接收并渲染卡片主操作作为子内容，由它提供唯一的可访问操作组；移动端继续 `flex-wrap`，桌面使用 `lg:flex-nowrap`，全部按钮统一 `shrink-0 whitespace-nowrap`。没有修改按钮显示条件、交互、API、权限、数据库或 Worker。
+- 新回归把“查看内容”和“编辑问卷”纳入同一操作组断言，并验证每个桌面命令都禁止收缩和文字换行。前端问卷定向 27/27、完整 25 文件/138 项、ESLint、严格 TypeScript、Next.js 16.3.2 生产构建与 `git diff --check` 全部通过；代码独立提交为 `fd9311f`。
+- 隔离候选继续排除知识库图片说明，以 `appuser` 在无网络、只读、去 capabilities 容器中健康。固定标签 `questionnaire-actions-row-20260904` 已只替换 Frontend/Nginx，Frontend 镜像为 `sha256:3ba9fa4315a59833d093f6c992d8248a1ba3aa599108dce62091e2fe214e2650`；Backend/Worker 保持 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`。
+- 六服务 healthy、重启 0，健康入口和匿名守卫正常，Alembic 保持 `20260904_0019 (head)`；发布窗口 Frontend/Nginx 错误与 Nginx 5xx 为 0。未携带管理员 Session，未执行问卷 DELETE/PATCH 或其他业务写入，也未运行数据库迁移。
+- Frontend 回滚标签 `questionnaire-actions-row-rollback-20260904` 指向上一版 `sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8`；Backend 回滚标签同名指向保持不变的 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`。
