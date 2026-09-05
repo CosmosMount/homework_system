@@ -54,4 +54,5 @@
 - 生产数据库从 `20260904_0019` 一次升级到 `20260904_0020 (head)`，`alembic check` 无漂移；旧 3 个赛事队伍和 8 个成员进入 legacy 表，新独立队伍表为 0/0。用户、作业、受众、提交、版本、Outbox 和知识库聚合保持 `190/3/457/35/37/843/27/5316/4784/1284`。
 - 固定标签 `unified-assignment-teams-20260906` 已按 Backend/Worker、Frontend/Nginx 两阶段上线；镜像分别为 `sha256:9c2701a53ab1301874b4ebd87fdd92bf2213d4123b4f0accfc502600f333f12e` 与 `sha256:2b908afcfcaee84ca2f288c1c52fba3d8c9f3fea20b745081aaf2fd139168506`。六服务 healthy、重启 0，PostgreSQL/MinIO 容器与数据卷未重建。
 - 运行 OpenAPI 为 98 条路径，包含 `/api/v1/teams` 与 `/api/v1/admin/teams`，赛事 API 为 0；登录、ready 和 Nginx health 为 200，管理页面/API 匿名为 307/401，四个应用容器部署窗口严重错误与 5xx 均为 0。验收未携带管理员 Session，也未调用真实管理写接口。
+- 部署稳定期内真实管理员在 `2026-09-05 17:00:36Z` 与 `17:04:33Z` 完成两次 `submission.feedback_upsert`；同时间戳各产生一条 `submission_feedback_email`，Worker 均已投递为 `sent`。核对只读取任务类型、状态、动作与时间，不读取收件人、评语或邮件正文。
 - 目标级深度审计确认 PNX 范围内只保留最终备份三件套和状态/锁文件；除首轮删除的 48 个旧归档文件与 73 个旧应用标签外，进一步删除 13 份独立旧数据库快照、旧 MinIO 副本、明文恢复解包、Stage 6/测试伪备份，以及 3 个无标签旧 Backend 构建。13 个 `.orig` 内容均已存在于 Git 历史，另三组源码备份已确认由当前实现覆盖或属于退役赛事模块，均已删除；工作树无未提交或未合并开发内容。

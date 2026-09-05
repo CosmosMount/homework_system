@@ -12,6 +12,7 @@
 - 定向回归后端 42 项、前端 21 项通过；统一候选完整后端 389 项、前端 25 文件/143 项、Ruff、155 文件格式、155 文件严格 Mypy、ESLint、严格 TypeScript、Next.js 生产构建和 `git diff --check` 通过。无新依赖或本功能数据库迁移；统一部署包含既有 `20260904_0020` 独立队伍迁移。
 - `unified-assignment-teams-20260906` 已两阶段部署，Backend/Worker 与 Frontend 镜像分别为 `sha256:9c2701a53ab1…`、`sha256:2b908afcfcae…`；六服务 healthy、重启 0，运行 OpenAPI 为 98 条路径，独立队伍 API 已启用且赛事 API 为 0。
 - 生产 Alembic 已升级到 `20260904_0020 (head)` 且无模型漂移，旧 3 个赛事队伍和 8 个成员完整进入 legacy 表，新队伍表从空表开始；其余核心聚合无部署写入。PostgreSQL/MinIO 容器与数据卷未重建。
+- 部署后两次真实 `submission.feedback_upsert` 均在同一时间戳创建 `submission_feedback_email`，Worker 已投递为 `sent`；脱敏验收未读取评语、邮件正文或收件人。
 - 最终完整加密备份 `pnx-backup-20260905T163853Z-weekly` 已完成原样空卷恢复、3,291 对象逐项对账及恢复副本升级复核；目标级深度清理同时移除旧归档、13 份独立数据库快照、旧 MinIO/恢复/测试备份、73 个旧应用标签和 3 个无标签旧构建。当前 PNX 只保留该备份三件套与统一 Backend/Frontend 镜像。
 
 ## 2026-09-05
