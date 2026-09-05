@@ -7,15 +7,16 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 import app.announcements.models  # noqa: F401
 import app.assignments.models  # noqa: F401
-import app.competitions.models  # noqa: F401
 import app.help_requests.models  # noqa: F401
 import app.intentions.models  # noqa: F401
 import app.knowledge.models  # noqa: F401
 import app.submissions.models  # noqa: F401
+import app.teams.models  # noqa: F401
 from app.audit.models import AuditLog  # noqa: F401
 from app.auth.models import AuthSecurityEvent, OneTimeToken, Session  # noqa: F401
 from app.core.config import get_settings
 from app.database.base import Base
+from app.database.migration_policy import include_schema_object
 from app.health.models import WorkerHeartbeat  # noqa: F401
 from app.notifications.models import OutboxJob, StudentNotification  # noqa: F401
 from app.uploads.models import StoredFile, UploadPart, UploadSession  # noqa: F401
@@ -37,13 +38,19 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=include_schema_object,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection: Any) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        include_object=include_schema_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

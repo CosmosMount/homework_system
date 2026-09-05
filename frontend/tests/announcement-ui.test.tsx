@@ -82,7 +82,7 @@ describe("announcement UI", () => {
         unreadCounts={{
           announcements: 2,
           assignments: 3,
-          competitions: 0,
+          teams: 0,
           help_requests: 1,
         }}
         user={student}

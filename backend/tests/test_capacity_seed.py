@@ -61,17 +61,13 @@ async def test_capacity_seed_builds_exact_idempotent_synthetic_dataset(
     assert len(dataset.student_notifications) == 30_000
     assert len(dataset.assignments) == 40
     assert len(dataset.assignment_audience_users) == 12_000
-    assert len(dataset.competitions) == 10
     assert len(dataset.teams) == 100
     assert len(dataset.team_members) == 300
-    assert len(dataset.submissions) == 12_090
-    assert len(dataset.submission_versions) == 24_180
+    assert len(dataset.submissions) == 12_000
+    assert len(dataset.submission_versions) == 24_000
     assert len(dataset.audit_logs) == 1
 
-    allowed_extension_rows = [
-        *dataset.assignments,
-        *dataset.competition_tasks,
-    ]
+    allowed_extension_rows = dataset.assignments
     assert all(
         all(
             not str(extension).startswith(".")
@@ -88,7 +84,7 @@ async def test_capacity_seed_builds_exact_idempotent_synthetic_dataset(
     )
     assert {row["password_hash"] for row in dataset.users} == {"$argon2id$synthetic-capacity-hash"}
     assert dataset.teams[-1]["status"] == "forming"
-    assert dataset.competitions[-1]["status"] == "registration_open"
+    assert dataset.teams[-1]["max_members"] == 5
 
 
 @pytest.mark.asyncio

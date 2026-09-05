@@ -66,7 +66,7 @@ export function TeamDirectoryPanel({
               <div>
                 <h3 className="font-medium">{team.name}</h3>
                 <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-                  {team.member_count} / {team.max_team_size} 人
+                  {team.member_count} / {team.max_members} 人
                 </p>
               </div>
               <span
@@ -79,8 +79,8 @@ export function TeamDirectoryPanel({
             </div>
             <p className="mt-3 text-xs text-[var(--color-text-muted)]">
               {team.can_join
-                ? "报名期内可通过邀请码加入"
-                : "当前不可加入，可查看队伍状态或等待管理员安排"}
+                ? "可通过队长提供的邀请码加入"
+                : "队伍已满或当前不可加入"}
             </p>
           </article>
         ))}
@@ -88,7 +88,7 @@ export function TeamDirectoryPanel({
 
       {initialTeams.items.length === 0 ? (
         <p className="mt-5 rounded-xl border border-dashed border-[var(--color-border-strong)] p-8 text-center text-[var(--color-text-muted)]">
-          暂无匹配队伍。报名后可以创建队伍、输入邀请码或申请自动分配。
+          暂无匹配队伍。你可以直接创建队伍、输入邀请码或申请自动分配。
         </p>
       ) : null}
 

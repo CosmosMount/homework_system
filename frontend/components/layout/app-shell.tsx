@@ -19,7 +19,7 @@ export function AppShell({
   const resolvedUnreadCounts = unreadCounts ?? {
     announcements: unreadCount,
     assignments: 0,
-    competitions: 0,
+    teams: 0,
     help_requests: 0,
   };
   return (

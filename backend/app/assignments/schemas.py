@@ -204,6 +204,7 @@ class AssignmentSubmissionAdminItem(BaseModel):
     latest_version_number: int | None
     last_submitted_at: datetime | None
     has_feedback: bool
+    in_current_audience: bool
 
 
 class AssignmentSubmissionAdminPage(BaseModel):

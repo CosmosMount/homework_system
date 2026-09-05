@@ -39,6 +39,7 @@ export function AdminTeamCorrectionPanel({
       user.status === "active" &&
       !currentIds.has(user.id),
   );
+  const mutable = team.status === "forming";
 
   function begin(): boolean {
     if (!reason.trim()) {
@@ -49,10 +50,6 @@ export function AdminTeamCorrectionPanel({
     setMessage(null);
     setError(null);
     return true;
-  }
-
-  function mergeTeam(result: Team) {
-    setTeam((current) => ({ ...result, submissions: current.submissions }));
   }
 
   async function addMember() {
@@ -72,7 +69,7 @@ export function AdminTeamCorrectionPanel({
           }),
         },
       );
-      mergeTeam(result);
+      setTeam(result);
       setAddUserId("");
       setReason("");
       setMessage("成员已补录并写入审计。");
@@ -98,7 +95,7 @@ export function AdminTeamCorrectionPanel({
           body: JSON.stringify({ reason: reason.trim() }),
         },
       );
-      mergeTeam(result);
+      setTeam(result);
       setReason("");
       setMessage("成员已移除并写入审计。");
       router.refresh();
@@ -126,7 +123,7 @@ export function AdminTeamCorrectionPanel({
           }),
         },
       );
-      mergeTeam(result);
+      setTeam(result);
       setNewCaptainId("");
       setReason("");
       setMessage("队长已变更并写入审计。");
@@ -138,45 +135,9 @@ export function AdminTeamCorrectionPanel({
     }
   }
 
-  async function reasonAction(action: "waive-min-size" | "disqualify") {
-    if (!begin()) return;
-    if (
-      action === "disqualify" &&
-      !window.confirm("确认取消整支队伍参赛资格？该队将不能继续参赛。")
-    ) {
-      setPending(false);
-      return;
-    }
-    try {
-      const result = await csrfFetch<Team>(
-        "/admin/teams/" + team.id + "/" + action,
-        {
-          method: "POST",
-          body: JSON.stringify({ reason: reason.trim() }),
-        },
-      );
-      mergeTeam(result);
-      setReason("");
-      setMessage(
-        action === "waive-min-size"
-          ? "最小人数已豁免并写入审计。"
-          : "队伍已取消资格并写入审计。",
-      );
-      router.refresh();
-    } catch (nextError) {
-      setError(errorMessage(nextError));
-    } finally {
-      setPending(false);
-    }
-  }
-
   async function deleteTeam() {
     if (!begin()) return;
-    if (
-      !window.confirm(
-        `确认删除队伍“${team.name}”？没有历史团队提交时将永久删除；已有历史提交时会保留不可变记录，但学生端不再显示，当前成员将全部退出。`,
-      )
-    ) {
+    if (!window.confirm("确认永久删除当前队伍？全部成员将退出，且此操作不可撤销。")) {
       setPending(false);
       return;
     }
@@ -186,14 +147,13 @@ export function AdminTeamCorrectionPanel({
         body: JSON.stringify({ reason: reason.trim() }),
       });
       router.replace("/admin/competitions");
+      router.refresh();
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
       setPending(false);
     }
   }
-
-  const mutable = !["dissolved", "archived"].includes(team.status);
 
   return (
     <div className="mt-8 grid gap-8 xl:grid-cols-[minmax(0,1fr)_23rem]">
@@ -206,16 +166,10 @@ export function AdminTeamCorrectionPanel({
             <div>
               <h2 className="text-2xl font-semibold">{team.name}</h2>
               <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-                {team.member_count} 人 · 要求 {team.min_team_size}–
-                {team.max_team_size} 人
+                {team.member_count} / {team.max_members} 人
               </p>
             </div>
-            <span
-              className={
-                "border px-2 py-1 font-mono text-xs " +
-                statusTagClass(team.status)
-              }
-            >
+            <span className={"border px-2 py-1 font-mono text-xs " + statusTagClass(team.status)}>
               {teamStatusLabel(team.status)}
             </span>
           </div>
@@ -235,7 +189,7 @@ export function AdminTeamCorrectionPanel({
                     ) : null}
                   </p>
                   <p className="mt-1 font-mono text-xs text-[var(--color-text-muted)]">
-                    {member.student_id} · {formatDateTime(member.joined_at)}
+                    {member.student_number} · {formatDateTime(member.joined_at)}
                     {member.added_by_admin ? " · 管理员补录" : ""}
                   </p>
                 </div>
@@ -253,7 +207,6 @@ export function AdminTeamCorrectionPanel({
             ))}
           </div>
         </section>
-
       </div>
 
       <aside>
@@ -277,7 +230,7 @@ export function AdminTeamCorrectionPanel({
               onChange={(event) => setAddUserId(event.target.value)}
               value={addUserId}
             >
-              <option value="">请选择已报名学生</option>
+              <option value="">请选择激活学生</option>
               {candidates.map((user) => (
                 <option key={user.id} value={user.id}>
                   {user.full_name} · {user.student_number}
@@ -319,34 +272,12 @@ export function AdminTeamCorrectionPanel({
           >
             变更队长
           </button>
-          {!team.min_size_waived ? (
-            <button
-              className="min-h-11 w-full border border-[var(--color-warning)] px-5 text-[var(--color-warning)]"
-              disabled={!mutable || pending}
-              onClick={() => reasonAction("waive-min-size")}
-              type="button"
-            >
-              豁免最小人数
-            </button>
-          ) : null}
-          {team.status !== "disqualified" ? (
-            <button
-              className="min-h-11 w-full border border-[var(--color-danger)] px-5 text-[var(--color-danger)]"
-              disabled={!mutable || pending}
-              onClick={() => reasonAction("disqualify")}
-              type="button"
-            >
-              取消队伍资格
-            </button>
-          ) : null}
         </section>
 
         <section className="mt-4 space-y-3 border border-[var(--color-danger)] bg-[var(--color-surface)] p-5">
-          <h2 className="text-lg font-semibold text-[var(--color-danger)]">
-            删除队伍
-          </h2>
+          <h2 className="text-lg font-semibold text-[var(--color-danger)]">删除队伍</h2>
           <p className="text-sm leading-6 text-[var(--color-text-secondary)]">
-            无历史团队提交时永久删除；已有历史提交时保留不可变版本、评语和附件，但队伍会退出学生端显示并释放全部当前成员。
+            删除后全部成员都会退出；独立队伍没有赛事作品或历史提交需要保留。
           </p>
           <button
             className="min-h-11 w-full bg-[var(--color-danger)] px-5 font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"

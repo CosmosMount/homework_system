@@ -56,6 +56,7 @@ class AdminSubmissionRecord:
     submission: Submission | None
     latest_version: SubmissionVersion | None
     has_feedback: bool
+    in_current_audience: bool
 
 
 class AssignmentRepository:
@@ -151,6 +152,41 @@ class AssignmentRepository:
                 )
                 for user in users
             ]
+        )
+
+    async def audience_user_ids(self, assignment_id: UUID) -> set[UUID]:
+        return set(
+            (
+                await self._session.scalars(
+                    select(AssignmentAudienceUser.user_id).where(
+                        AssignmentAudienceUser.assignment_id == assignment_id
+                    )
+                )
+            ).all()
+        )
+
+    async def replace_audience_snapshot(
+        self,
+        *,
+        assignment_id: UUID,
+        users: Sequence[User],
+        created_at: datetime,
+    ) -> tuple[int, int]:
+        previous_user_ids = await self.audience_user_ids(assignment_id)
+        current_user_ids = {user.id for user in users}
+        await self._session.execute(
+            delete(AssignmentAudienceUser).where(
+                AssignmentAudienceUser.assignment_id == assignment_id
+            )
+        )
+        self.add_audience_snapshot(
+            assignment_id=assignment_id,
+            users=users,
+            created_at=created_at,
+        )
+        return (
+            len(current_user_ids - previous_user_ids),
+            len(previous_user_ids - current_user_ids),
         )
 
     async def add_open_assignment_audiences_for_student(
@@ -443,8 +479,15 @@ class AssignmentRepository:
         target_count = await self.actual_audience_count(assignment_id)
         submitted_count = int(
             await self._session.scalar(
-                select(func.count())
+                select(func.count(func.distinct(Submission.id)))
                 .select_from(Submission)
+                .join(
+                    AssignmentAudienceUser,
+                    and_(
+                        AssignmentAudienceUser.assignment_id == assignment_id,
+                        AssignmentAudienceUser.user_id == Submission.owner_user_id,
+                    ),
+                )
                 .where(Submission.assignment_id == assignment_id)
             )
             or 0
@@ -458,22 +501,33 @@ class AssignmentRepository:
                     SubmissionVersion.submission_id == Submission.id,
                 )
                 .join(Feedback, Feedback.version_id == SubmissionVersion.id)
+                .join(
+                    AssignmentAudienceUser,
+                    and_(
+                        AssignmentAudienceUser.assignment_id == assignment_id,
+                        AssignmentAudienceUser.user_id == Submission.owner_user_id,
+                    ),
+                )
                 .where(Submission.assignment_id == assignment_id)
             )
             or 0
         )
-        last_submitted_at = await self._session.scalar(
-            select(func.max(SubmissionVersion.submitted_at))
-            .select_from(SubmissionVersion)
-            .join(Submission, Submission.id == SubmissionVersion.submission_id)
-            .where(Submission.assignment_id == assignment_id)
-        )
+        last_submitted_at = await self.last_submitted_at(assignment_id)
         return AssignmentStats(
             target_count=target_count,
             submitted_count=submitted_count,
             feedback_submission_count=feedback_submission_count,
             last_submitted_at=last_submitted_at,
         )
+
+    async def last_submitted_at(self, assignment_id: UUID) -> datetime | None:
+        result: datetime | None = await self._session.scalar(
+            select(func.max(SubmissionVersion.submitted_at))
+            .select_from(SubmissionVersion)
+            .join(Submission, Submission.id == SubmissionVersion.submission_id)
+            .where(Submission.assignment_id == assignment_id)
+        )
+        return result
 
     async def submissions_for_admin(
         self,
@@ -489,11 +543,18 @@ class AssignmentRepository:
         feedback_exists = exists().where(
             Feedback.version_id == SubmissionVersion.id,
         )
-        filters: list[ColumnElement[bool]] = [AssignmentAudienceUser.assignment_id == assignment_id]
+        in_current_audience = AssignmentAudienceUser.user_id.is_not(None)
+        filters: list[ColumnElement[bool]] = [or_(in_current_audience, Submission.id.is_not(None))]
         if cohort_id is not None:
-            filters.append(AssignmentAudienceUser.cohort_id_at_publish == cohort_id)
+            filters.append(
+                func.coalesce(AssignmentAudienceUser.cohort_id_at_publish, User.cohort_id)
+                == cohort_id
+            )
         if direction_id is not None:
-            filters.append(AssignmentAudienceUser.direction_id_at_publish == direction_id)
+            filters.append(
+                func.coalesce(AssignmentAudienceUser.direction_id_at_publish, User.direction_id)
+                == direction_id
+            )
         if submission_status == "submitted":
             filters.append(Submission.id.is_not(None))
         elif submission_status == "unsubmitted":
@@ -504,9 +565,21 @@ class AssignmentRepository:
             filters.append(~feedback_exists)
 
         base = (
-            select(User, Submission, SubmissionVersion, feedback_exists.label("has_feedback"))
-            .select_from(AssignmentAudienceUser)
-            .join(User, User.id == AssignmentAudienceUser.user_id)
+            select(
+                User,
+                Submission,
+                SubmissionVersion,
+                feedback_exists.label("has_feedback"),
+                in_current_audience.label("in_current_audience"),
+            )
+            .select_from(User)
+            .outerjoin(
+                AssignmentAudienceUser,
+                and_(
+                    AssignmentAudienceUser.assignment_id == assignment_id,
+                    AssignmentAudienceUser.user_id == User.id,
+                ),
+            )
             .outerjoin(
                 Submission,
                 and_(
@@ -537,6 +610,7 @@ class AssignmentRepository:
                     submission=row[1],
                     latest_version=row[2],
                     has_feedback=bool(row[3]),
+                    in_current_audience=bool(row[4]),
                 )
                 for row in rows
             ],

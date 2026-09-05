@@ -43,31 +43,13 @@ class Submission(Base):
             unique=True,
             postgresql_where=text("assignment_id IS NOT NULL"),
         ),
-        Index(
-            "uq_submissions_competition_task_owner",
-            "competition_task_id",
-            "owner_team_id",
-            unique=True,
-            postgresql_where=text("competition_task_id IS NOT NULL"),
-        ),
-        CheckConstraint(
-            "(assignment_id IS NOT NULL AND competition_task_id IS NULL "
-            "AND owner_user_id IS NOT NULL AND owner_team_id IS NULL) OR "
-            "(assignment_id IS NULL AND competition_task_id IS NOT NULL "
-            "AND owner_user_id IS NULL AND owner_team_id IS NOT NULL)",
-            name="owner_target_pair",
-        ),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid7)
+    # 0020 保留历史赛事提交列；所有当前服务查询都会排除 assignment_id 为空的行。
     assignment_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("assignments.id", ondelete="RESTRICT"),
-        nullable=True,
-    )
-    competition_task_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("competition_tasks.id", ondelete="RESTRICT"),
         nullable=True,
     )
     owner_user_id: Mapped[UUID | None] = mapped_column(
@@ -75,9 +57,12 @@ class Submission(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True,
     )
+    competition_task_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=True,
+    )
     owner_team_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("teams.id", ondelete="RESTRICT"),
         nullable=True,
     )
     latest_version_id: Mapped[UUID | None] = mapped_column(

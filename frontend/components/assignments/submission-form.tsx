@@ -24,24 +24,13 @@ function errorMessage(error: unknown): string {
 type VersionSubmissionFormProps = Readonly<{
   allowedExtensions: string[];
   maxTotalBytes: number;
-}> &
-  (
-    | Readonly<{ assignmentId: string }>
-    | Readonly<{ competitionId: string; taskId: string }>
-  );
+  assignmentId: string;
+}>;
 
 export function AssignmentSubmissionForm(props: VersionSubmissionFormProps) {
-  const { allowedExtensions, maxTotalBytes } = props;
-  const isCompetition = "competitionId" in props;
-  const contextId = isCompetition ? props.taskId : props.assignmentId;
-  const resourceLabel = isCompetition ? "赛题" : "作业";
-  const submitPath = isCompetition
-    ? "/competitions/" +
-      props.competitionId +
-      "/tasks/" +
-      props.taskId +
-      "/submission-versions"
-    : "/assignments/" + props.assignmentId + "/submission-versions";
+  const { allowedExtensions, assignmentId, maxTotalBytes } = props;
+  const resourceLabel = "作业";
+  const submitPath = "/assignments/" + assignmentId + "/submission-versions";
   const router = useRouter();
   const [textMarkdown, setTextMarkdown] = useState("");
   const [externalUrl, setExternalUrl] = useState("");
@@ -88,13 +77,7 @@ export function AssignmentSubmissionForm(props: VersionSubmissionFormProps) {
       setError("附件合计超过本" + resourceLabel + "上限。");
       return;
     }
-    if (
-      !window.confirm(
-        isCompetition
-          ? "确认代表整个团队创建正式版本？版本不可修改或删除，之后的更正需要创建新版本。"
-          : "确认创建正式版本？正式版本不可修改或删除，之后的更正需要创建新版本。",
-      )
-    ) {
+    if (!window.confirm("确认创建正式版本？正式版本不可修改或删除，之后的更正需要创建新版本。")) {
       return;
     }
 
@@ -110,19 +93,7 @@ export function AssignmentSubmissionForm(props: VersionSubmissionFormProps) {
         }),
       });
       setMessage("正式版本 v" + created.version_number + " 已创建。");
-      router.push(
-        isCompetition
-          ? "/competitions/" +
-              props.competitionId +
-              "/tasks/" +
-              props.taskId +
-              "#version-" +
-              created.version_id
-          : "/assignments/" +
-              props.assignmentId +
-              "/submissions/" +
-              created.submission_id,
-      );
+      router.push("/assignments/" + assignmentId + "/submissions/" + created.submission_id);
       router.refresh();
     } catch (nextError) {
       setError(errorMessage(nextError));
@@ -139,11 +110,10 @@ export function AssignmentSubmissionForm(props: VersionSubmissionFormProps) {
             NEW IMMUTABLE VERSION
           </p>
           <h2 className="mt-2 text-2xl font-semibold">
-            {isCompetition ? "代表团队创建正式版本" : "创建正式版本"}
+            创建正式版本
           </h2>
           <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
             可提交 Markdown 文本、HTTP(S) 外部链接或附件，至少选择一种。
-            {isCompetition ? " 本次提交代表整个团队。" : null}
           </p>
         </div>
         {message ? <FormMessage tone="success">{message}</FormMessage> : null}
@@ -174,16 +144,19 @@ export function AssignmentSubmissionForm(props: VersionSubmissionFormProps) {
 
       <MultipartUploader
         accept={accept}
-        contextId={contextId}
+        contextId={assignmentId}
         description={
-          "允许扩展名：" +
+          "可一次选择多张图片或其他允许类型附件。允许扩展名：" +
           allowedExtensions.join(", ") +
           "。刷新后重新选择同一文件可恢复分片。"
         }
         heading={"上传" + resourceLabel + "附件"}
         maxBytes={maxTotalBytes}
+        maxSelectedBytes={Math.max(maxTotalBytes - totalBytes, 0)}
+        maxSelectedFiles={Math.max(100 - files.length, 0)}
+        multiple
         onCompleted={addCompletedFile}
-        purpose={isCompetition ? "competition_submission" : "assignment_submission"}
+        purpose="assignment_submission"
       />
 
       {files.length ? (
@@ -227,5 +200,3 @@ export function AssignmentSubmissionForm(props: VersionSubmissionFormProps) {
     </form>
   );
 }
-
-export const CompetitionSubmissionForm = AssignmentSubmissionForm;

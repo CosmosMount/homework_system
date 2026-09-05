@@ -94,10 +94,6 @@ export function SubmissionReview({
   }
 
   async function toggleExcellent() {
-    if (submission.assignment_id === null) {
-      setError("赛事团队版本不能标记为优秀作业。");
-      return;
-    }
     setPending(true);
     setMessage(null);
     setError(null);
@@ -169,25 +165,19 @@ export function SubmissionReview({
                 正式版本 v{selected.version_number}
               </h2>
             </div>
-            {submission.assignment_id !== null ? (
-              <button
-                className={
-                  "min-h-11 border px-4 text-sm " +
-                  (excellentIds.has(selected.id)
-                    ? "border-[var(--color-danger)] text-[var(--color-danger)]"
-                    : "border-[var(--color-info)] text-[var(--color-info)]")
-                }
-                disabled={pending}
-                onClick={toggleExcellent}
-                type="button"
-              >
-                {excellentIds.has(selected.id) ? "取消优秀标记" : "标记为优秀"}
-              </button>
-            ) : (
-              <span className="font-mono text-xs text-[var(--color-text-muted)]">
-                TEAM SUBMISSION · NO SHOWCASE
-              </span>
-            )}
+            <button
+              className={
+                "min-h-11 border px-4 text-sm " +
+                (excellentIds.has(selected.id)
+                  ? "border-[var(--color-danger)] text-[var(--color-danger)]"
+                  : "border-[var(--color-info)] text-[var(--color-info)]")
+              }
+              disabled={pending}
+              onClick={toggleExcellent}
+              type="button"
+            >
+              {excellentIds.has(selected.id) ? "取消优秀标记" : "标记为优秀"}
+            </button>
           </div>
 
           {selected.text_html ? (
@@ -233,7 +223,7 @@ export function SubmissionReview({
         <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
           <h2 className="text-xl font-semibold">私密评语</h2>
           <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-            创建或修订后只通知个人提交者或当前团队成员“有新评语”，提醒和邮件不包含正文。
+            创建或修订后只通知个人提交者“有新评语”，提醒和邮件不包含正文。
           </p>
           {selected.feedback ? (
             <div className="mt-5 border-l-2 border-[var(--color-info)] bg-[var(--color-bg)] p-4">

@@ -13,13 +13,11 @@ from app.assignments.service import AssignmentService
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
 from app.auth.service import AuthenticatedContext, context_effective_role, context_is_admin
-from app.competitions.policy import task_submission_is_open
-from app.competitions.repository import CompetitionRepository
 from app.core.errors import ApplicationError
 from app.core.identifiers import uuid7
 from app.core.markdown import render_markdown
-from app.notifications.models import StudentNotification
-from app.notifications.repository import StudentNotificationRepository
+from app.notifications.models import OutboxJob, StudentNotification
+from app.notifications.repository import OutboxRepository, StudentNotificationRepository
 from app.submissions.models import (
     Feedback,
     IdempotencyRecord,
@@ -38,6 +36,7 @@ from app.submissions.schemas import (
 )
 from app.uploads.models import StoredFile
 from app.uploads.repository import UploadRepository
+from app.users.repository import UserRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,10 +55,11 @@ class SubmissionService:
     ) -> None:
         self._session = session
         self._assignments = AssignmentRepository(session)
-        self._competitions = CompetitionRepository(session)
         self._submissions = SubmissionRepository(session)
         self._uploads = UploadRepository(session)
         self._notifications = StudentNotificationRepository(session)
+        self._outbox = OutboxRepository(session)
+        self._users = UserRepository(session)
         self._audit = AuditRepository(session)
         self._clock = clock or (lambda: datetime.now(UTC))
 
@@ -178,69 +178,6 @@ class SubmissionService:
             )
         return ordered, total_bytes
 
-    async def _validate_competition_files(
-        self,
-        *,
-        competition_task_id: UUID,
-        actor_user_id: UUID,
-        allowed_extensions: Sequence[str],
-        max_total_bytes: int,
-        file_ids: Sequence[UUID],
-    ) -> tuple[list[StoredFile], int]:
-        if not file_ids:
-            return [], 0
-        files = await self._uploads.get_files(file_ids, for_update=True)
-        by_id = {file.id: file for file in files}
-        if set(by_id) != set(file_ids):
-            raise self._not_found()
-        ordered = [by_id[file_id] for file_id in file_ids]
-        total_bytes = 0
-        for file in ordered:
-            if (
-                file.owner_user_id != actor_user_id
-                or file.purpose != "competition_submission"
-                or file.status != "available"
-                or file.deleted_at is not None
-            ):
-                raise ApplicationError(
-                    status_code=409,
-                    code="FILE_NOT_AVAILABLE",
-                    message="附件尚未完成校验或不能用于当前赛题。",
-                )
-            upload_session = await self._uploads.get_session_by_file(file.id)
-            if (
-                upload_session is None
-                or upload_session.context_type != "competition_task"
-                or upload_session.context_id != competition_task_id
-            ):
-                raise ApplicationError(
-                    status_code=409,
-                    code="FILE_CONTEXT_MISMATCH",
-                    message="附件不属于当前赛题。",
-                )
-            if file.extension not in allowed_extensions:
-                raise ApplicationError(
-                    status_code=415,
-                    code="FILE_TYPE_NOT_ALLOWED",
-                    message="附件类型不在当前赛题白名单内。",
-                )
-            if await self._uploads.bound_announcement_id(
-                file.id
-            ) is not None or await self._submissions.file_is_bound(file.id):
-                raise ApplicationError(
-                    status_code=409,
-                    code="FILE_ALREADY_BOUND",
-                    message="附件已经绑定其他正式资源。",
-                )
-            total_bytes += file.size_bytes
-        if total_bytes > max_total_bytes:
-            raise ApplicationError(
-                status_code=413,
-                code="SUBMISSION_SIZE_EXCEEDED",
-                message="本版本附件合计超过赛题上限。",
-            )
-        return ordered, total_bytes
-
     async def _existing_idempotent_response(
         self,
         *,
@@ -331,9 +268,7 @@ class SubmissionService:
             submission = Submission(
                 id=uuid7(),
                 assignment_id=assignment_id,
-                competition_task_id=None,
                 owner_user_id=context.user.id,
-                owner_team_id=None,
                 latest_version_id=None,
                 created_at=now,
                 updated_at=now,
@@ -426,196 +361,6 @@ class SubmissionService:
             ) from exc
         return response
 
-    async def create_competition_version(
-        self,
-        competition_id: UUID,
-        task_id: UUID,
-        payload: SubmissionVersionCreateRequest,
-        *,
-        context: AuthenticatedContext,
-        idempotency_key: str,
-        request_id: str,
-        ip_prefix: str,
-    ) -> SubmissionVersionCreatedResponse:
-        if context_effective_role(context) != "student":
-            raise ApplicationError(
-                status_code=403,
-                code="FORBIDDEN",
-                message="管理员不能代队伍创建正式赛事版本。",
-            )
-        endpoint_key = f"competitions/{competition_id}/tasks/{task_id}/submission-versions"
-        request_hash = self._request_hash(payload)
-        replay = await self._existing_idempotent_response(
-            user_id=context.user.id,
-            endpoint_key=endpoint_key,
-            idempotency_key=idempotency_key,
-            request_hash=request_hash,
-            for_update=False,
-        )
-        if replay is not None:
-            return replay
-
-        competition = await self._competitions.get_competition(competition_id, for_update=True)
-        task = await self._competitions.get_task(
-            task_id,
-            competition_id=competition_id,
-            for_update=True,
-        )
-        team = await self._competitions.team_for_user(
-            competition_id,
-            context.user.id,
-            for_update=True,
-        )
-        if competition is None or task is None or team is None or competition.published_at is None:
-            await self._session.rollback()
-            raise self._not_found()
-        if team.captain_user_id != context.user.id:
-            await self._session.rollback()
-            raise ApplicationError(
-                status_code=403,
-                code="TEAM_CAPTAIN_REQUIRED",
-                message="只有当前队长可以代表团队创建正式版本。",
-            )
-        now = self._clock()
-        if not task_submission_is_open(competition, task, team, now):
-            await self._session.rollback()
-            if team.status == "invalid":
-                raise ApplicationError(
-                    status_code=409,
-                    code="TEAM_INVALID",
-                    message="队伍人数不满足规则，不能提交。",
-                )
-            if team.status == "disqualified":
-                raise ApplicationError(
-                    status_code=409,
-                    code="TEAM_DISQUALIFIED",
-                    message="队伍已被取消资格，不能提交。",
-                )
-            if team.status != "locked":
-                raise ApplicationError(
-                    status_code=409,
-                    code="TEAM_NOT_LOCKED",
-                    message="队伍尚未锁定为有效队伍。",
-                )
-            raise ApplicationError(
-                status_code=409,
-                code="COMPETITION_SUBMISSION_CLOSED",
-                message="当前不在赛事或赛题的有效提交期。",
-            )
-
-        _, total_bytes = await self._validate_competition_files(
-            competition_task_id=task.id,
-            actor_user_id=context.user.id,
-            allowed_extensions=task.allowed_extensions,
-            max_total_bytes=task.max_total_bytes,
-            file_ids=payload.file_ids,
-        )
-        submission = await self._submissions.get_for_competition_team(
-            task.id,
-            team.id,
-            for_update=True,
-        )
-        if submission is None:
-            submission = Submission(
-                id=uuid7(),
-                assignment_id=None,
-                competition_task_id=task.id,
-                owner_user_id=None,
-                owner_team_id=team.id,
-                latest_version_id=None,
-                created_at=now,
-                updated_at=now,
-            )
-            self._submissions.add_submission(submission)
-            await self._session.flush()
-            version_number = 1
-        else:
-            latest = await self._submissions.latest_version(submission)
-            version_number = 1 if latest is None else latest.version_number + 1
-
-        version = SubmissionVersion(
-            id=uuid7(),
-            submission_id=submission.id,
-            version_number=version_number,
-            submitted_by=context.user.id,
-            text_markdown=payload.text_markdown,
-            text_html=(
-                render_markdown(payload.text_markdown)
-                if payload.text_markdown is not None
-                else None
-            ),
-            external_url=payload.external_url,
-            total_file_bytes=total_bytes,
-            idempotency_key=idempotency_key,
-            submitted_at=now,
-        )
-        self._submissions.add_version(version)
-        self._submissions.add_version_files(
-            version_id=version.id,
-            file_ids=payload.file_ids,
-        )
-        submission.latest_version_id = version.id
-        submission.updated_at = now
-        response = SubmissionVersionCreatedResponse(
-            submission_id=submission.id,
-            version_id=version.id,
-            version_number=version.version_number,
-            submitted_at=version.submitted_at,
-            total_file_bytes=version.total_file_bytes,
-        )
-        self._submissions.add_idempotency(
-            IdempotencyRecord(
-                id=uuid7(),
-                user_id=context.user.id,
-                endpoint_key=endpoint_key,
-                idempotency_key=idempotency_key,
-                request_hash=request_hash,
-                response_status=201,
-                response_body=response.model_dump(mode="json"),
-                resource_id=version.id,
-                expires_at=now + timedelta(days=7),
-                created_at=now,
-            )
-        )
-        self._add_audit(
-            actor_user_id=context.user.id,
-            action="competition_submission.version_create",
-            target_id=version.id,
-            request_id=request_id,
-            ip_prefix=ip_prefix,
-            change_summary={
-                "competition_id": str(competition.id),
-                "competition_task_id": str(task.id),
-                "team_id": str(team.id),
-                "submission_id": str(submission.id),
-                "version_number": version.version_number,
-                "attachment_count": len(payload.file_ids),
-                "total_file_bytes": total_bytes,
-                "has_text": payload.text_markdown is not None,
-                "has_external_url": payload.external_url is not None,
-            },
-            now=now,
-        )
-        try:
-            await self._session.commit()
-        except IntegrityError as exc:
-            await self._session.rollback()
-            replay = await self._existing_idempotent_response(
-                user_id=context.user.id,
-                endpoint_key=endpoint_key,
-                idempotency_key=idempotency_key,
-                request_hash=request_hash,
-                for_update=False,
-            )
-            if replay is not None:
-                return replay
-            raise ApplicationError(
-                status_code=409,
-                code="STATE_CONFLICT",
-                message="正式版本发生并发冲突，请刷新后重试。",
-            ) from exc
-        return response
-
     @staticmethod
     def _feedback_response(feedback: Feedback) -> FeedbackResponse:
         return FeedbackResponse(
@@ -660,19 +405,7 @@ class SubmissionService:
         submission: Submission,
         context: AuthenticatedContext,
     ) -> bool:
-        if context_is_admin(context):
-            return True
-        if submission.assignment_id is not None:
-            return submission.owner_user_id == context.user.id
-        if submission.owner_team_id is None:
-            return False
-        return (
-            await self._competitions.current_member(
-                submission.owner_team_id,
-                context.user.id,
-            )
-            is not None
-        )
+        return context_is_admin(context) or submission.owner_user_id == context.user.id
 
     async def get_submission(
         self,
@@ -683,6 +416,8 @@ class SubmissionService:
         submission = await self._submissions.get_by_id(submission_id)
         if (
             submission is None
+            or submission.assignment_id is None
+            or submission.owner_user_id is None
             or submission.latest_version_id is None
             or not await self._can_read_submission(submission, context)
         ):
@@ -691,9 +426,7 @@ class SubmissionService:
         return SubmissionResponse(
             id=submission.id,
             assignment_id=submission.assignment_id,
-            competition_task_id=submission.competition_task_id,
             owner_user_id=submission.owner_user_id,
-            owner_team_id=submission.owner_team_id,
             latest_version_id=submission.latest_version_id,
             versions=[await self._version_response(version) for version in versions],
         )
@@ -707,31 +440,6 @@ class SubmissionService:
         submission = await self._submissions.get_for_assignment_owner(
             assignment_id,
             context.user.id,
-        )
-        if submission is None:
-            raise self._not_found()
-        return await self.get_submission(submission.id, context=context)
-
-    async def get_competition_submission(
-        self,
-        competition_id: UUID,
-        task_id: UUID,
-        *,
-        context: AuthenticatedContext,
-    ) -> SubmissionResponse:
-        task = await self._competitions.get_task(
-            task_id,
-            competition_id=competition_id,
-        )
-        team = await self._competitions.team_for_user(
-            competition_id,
-            context.user.id,
-        )
-        if task is None or team is None:
-            raise self._not_found()
-        submission = await self._submissions.get_for_competition_team(
-            task.id,
-            team.id,
         )
         if submission is None:
             raise self._not_found()
@@ -768,7 +476,12 @@ class SubmissionService:
             version_id,
             submission_id=submission_id,
         )
-        if submission is None or version is None:
+        if (
+            submission is None
+            or submission.assignment_id is None
+            or submission.owner_user_id is None
+            or version is None
+        ):
             raise self._not_found()
         feedback = await self._submissions.feedback_for_version(
             version_id,
@@ -807,30 +520,14 @@ class SubmissionService:
             feedback.revision += 1
 
         event_key = f"feedback:{feedback.id}:revision:{feedback.revision}"
-        if submission.assignment_id is not None:
-            assignment = await self._assignments.get_by_id(submission.assignment_id)
-            title = assignment.title if assignment is not None else "作业"
-            recipient_ids = (
-                [submission.owner_user_id] if submission.owner_user_id is not None else []
-            )
-            target_url = f"/assignments/{submission.assignment_id}/submissions/{submission.id}"
-        else:
-            task = (
-                await self._competitions.get_task(submission.competition_task_id)
-                if submission.competition_task_id is not None
-                else None
-            )
-            competition = (
-                await self._competitions.get_competition(task.competition_id)
-                if task is not None
-                else None
-            )
-            if task is None or competition is None or submission.owner_team_id is None:
-                await self._session.rollback()
-                raise self._not_found()
-            title = f"{competition.name} · {task.title}"
-            recipient_ids = await self._competitions.current_member_ids(submission.owner_team_id)
-            target_url = f"/competitions/{competition.id}/tasks/{task.id}"
+        assignment = await self._assignments.get_by_id(submission.assignment_id)
+        owner = await self._users.get_by_id(submission.owner_user_id)
+        if assignment is None or owner is None:
+            await self._session.rollback()
+            raise self._not_found()
+        title = assignment.title
+        recipient_ids = [submission.owner_user_id]
+        target_url = f"/assignments/{submission.assignment_id}/submissions/{submission.id}"
         self._notifications.add_all(
             [
                 StudentNotification(
@@ -847,6 +544,32 @@ class SubmissionService:
                 )
                 for user_id in recipient_ids
             ]
+        )
+        self._outbox.add(
+            OutboxJob(
+                id=uuid7(),
+                job_type="submission_feedback_email",
+                event_key=f"{event_key}:email",
+                payload={
+                    "recipient": owner.email,
+                    "full_name": owner.full_name,
+                    "assignment_id": str(submission.assignment_id),
+                    "submission_id": str(submission.id),
+                    "title": title,
+                    "target_url": target_url,
+                },
+                secret_payload_ciphertext=None,
+                status="pending",
+                available_at=now,
+                attempt_count=0,
+                max_attempts=8,
+                locked_by=None,
+                locked_at=None,
+                last_error_code=None,
+                last_error_summary=None,
+                created_at=now,
+                sent_at=None,
+            )
         )
         self._add_audit(
             actor_user_id=audit.actor.user.id,

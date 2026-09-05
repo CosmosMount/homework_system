@@ -9,7 +9,10 @@ vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => nextHeaders);
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 
-import { getOptionalUser } from "@/lib/api/server";
+import {
+  getAdminAssignmentSubmissions,
+  getOptionalUser,
+} from "@/lib/api/server";
 
 const userResponse = {
   id: "01900000-0000-7000-8000-000000000001",
@@ -67,5 +70,40 @@ describe("服务端 API 来源 IP 转发", () => {
     const forwardedHeaders = new Headers(init.headers);
     expect(forwardedHeaders.get("cookie")).toBe("pnx_session=test-session");
     expect(forwardedHeaders.has("x-forwarded-for")).toBe(false);
+  });
+
+  it("读取管理员作业提交名单的全部分页", async () => {
+    nextHeaders.headers.mockResolvedValue(new Headers());
+    const fetchMock = vi.fn().mockImplementation((input: string | URL | Request) => {
+      const url = new URL(String(input));
+      const page = Number(url.searchParams.get("page"));
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            items: [{ user_id: `student-${page}` }],
+            page,
+            page_size: 100,
+            total: 205,
+          }),
+          {
+            headers: { "content-type": "application/json" },
+            status: 200,
+          },
+        ),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await getAdminAssignmentSubmissions("assignment-1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.items.map((item) => item.user_id)).toEqual([
+      "student-1",
+      "student-2",
+      "student-3",
+    ]);
+    expect(
+      fetchMock.mock.calls.map(([input]) => new URL(String(input)).searchParams.get("page")),
+    ).toEqual(["1", "2", "3"]);
   });
 });

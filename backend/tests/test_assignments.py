@@ -11,8 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.assignments.models import Assignment, AssignmentAudienceUser, AssignmentExtension
 from app.assignments.policy import can_submit_assignment
-from app.assignments.repository import AssignmentRepository
-from app.assignments.schemas import AssignmentCreateRequest
+from app.assignments.repository import AssignmentRepository, AssignmentStats
+from app.assignments.schemas import (
+    AssignmentCreateRequest,
+    AssignmentPatchRequest,
+)
 from app.assignments.service import AssignmentAuditContext, AssignmentService
 from app.auth.service import AuthenticatedContext
 from app.core.errors import ApplicationError
@@ -55,6 +58,62 @@ def make_assignment(
         updated_at=now,
         revision=1,
     )
+
+
+def make_patch_request(
+    assignment: Assignment,
+    *,
+    deadline: datetime | None = None,
+    title: str | None = None,
+    audience: dict[str, object] | None = None,
+) -> AssignmentPatchRequest:
+    return AssignmentPatchRequest(
+        revision=assignment.revision,
+        title=title or assignment.title,
+        description_markdown=assignment.description_markdown,
+        training_url=assignment.training_url,
+        submission_instructions=assignment.submission_instructions,
+        audience=audience or {"all_students": True},
+        allowed_extensions=list(assignment.allowed_extensions),
+        max_total_bytes=assignment.max_total_bytes,
+        publish_at=assignment.publish_at,
+        deadline=deadline or assignment.deadline,
+    )
+
+
+def make_patch_service(
+    assignment: Assignment,
+    *,
+    now: datetime,
+    last_submitted_at: datetime | None,
+) -> tuple[AssignmentService, AsyncMock, SimpleNamespace, SimpleNamespace, Mock]:
+    session = AsyncMock(spec=AsyncSession)
+    service = AssignmentService(cast(AsyncSession, session), clock=lambda: now)
+    repository = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=assignment),
+        audience_ids=AsyncMock(return_value=(set(), set())),
+        replace_audience=AsyncMock(),
+        replace_audience_snapshot=AsyncMock(return_value=(0, 0)),
+        last_submitted_at=AsyncMock(return_value=last_submitted_at),
+        actual_audience_count=AsyncMock(return_value=1),
+        stats=AsyncMock(
+            return_value=AssignmentStats(
+                target_count=1,
+                submitted_count=1 if last_submitted_at is not None else 0,
+                feedback_submission_count=0,
+                last_submitted_at=last_submitted_at,
+            )
+        ),
+    )
+    outbox = SimpleNamespace(
+        get_by_event_key=AsyncMock(return_value=None),
+        add=Mock(),
+    )
+    audit_repository = Mock()
+    service._assignments = cast(AssignmentRepository, repository)
+    service._outbox = cast(OutboxRepository, outbox)
+    service._audit = audit_repository
+    return service, session, repository, outbox, audit_repository
 
 
 def make_extension(assignment: Assignment, deadline: datetime) -> AssignmentExtension:
@@ -123,6 +182,249 @@ def test_assignment_schema_normalizes_extensions_and_rejects_invalid_times() -> 
                 "deadline": now,
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_patch_published_assignment_allows_safe_deadline_shortening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC)
+    assignment = make_assignment(
+        status="published",
+        deadline=now + timedelta(days=2),
+    )
+    new_deadline = now + timedelta(days=1)
+    last_submitted_at = now + timedelta(hours=12)
+    service, session, repository, outbox, audit_repository = make_patch_service(
+        assignment,
+        now=now,
+        last_submitted_at=last_submitted_at,
+    )
+    monkeypatch.setattr(
+        "app.assignments.service.validate_audience",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "app.assignments.service.active_students_for_audience",
+        AsyncMock(return_value=[]),
+    )
+    admin = cast(User, SimpleNamespace(id=uuid4()))
+
+    response = await service.patch(
+        assignment.id,
+        make_patch_request(assignment, deadline=new_deadline, title="修正后的作业"),
+        audit=AssignmentAuditContext(
+            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+            request_id="update-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    assert response.title == "修正后的作业"
+    assert assignment.title == "修正后的作业"
+    assert assignment.deadline == new_deadline
+    assert assignment.revision == 2
+    repository.last_submitted_at.assert_awaited_once_with(assignment.id)
+    session.commit.assert_awaited_once()
+    close_job = outbox.add.call_args.args[0]
+    assert close_job.job_type == "close_assignment"
+    assert close_job.available_at == new_deadline
+    audit = audit_repository.add.call_args.args[0]
+    assert audit.change_summary["changed_fields"] == ["title", "deadline"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["published", "closed"])
+async def test_patch_existing_assignment_replaces_current_audience_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+) -> None:
+    now = datetime.now(UTC)
+    assignment = make_assignment(
+        status=status,
+        deadline=now + timedelta(days=2),
+        closed_at=now if status == "closed" else None,
+    )
+    service, session, repository, _outbox, audit_repository = make_patch_service(
+        assignment,
+        now=now,
+        last_submitted_at=None,
+    )
+    direction_id = uuid4()
+    target_users = [
+        cast(User, SimpleNamespace(id=uuid4(), cohort_id=None, direction_id=direction_id))
+    ]
+    monkeypatch.setattr("app.assignments.service.validate_audience", AsyncMock())
+    monkeypatch.setattr(
+        "app.assignments.service.active_students_for_audience",
+        AsyncMock(return_value=target_users),
+    )
+    repository.replace_audience_snapshot.return_value = (1, 2)
+    repository.audience_ids.side_effect = [
+        (set(), set()),
+        (set(), {direction_id}),
+    ]
+    admin = cast(User, SimpleNamespace(id=uuid4()))
+
+    await service.patch(
+        assignment.id,
+        make_patch_request(
+            assignment,
+            audience={
+                "all_students": False,
+                "direction_ids": [direction_id],
+                "match": "intersection",
+            },
+        ),
+        audit=AssignmentAuditContext(
+            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+            request_id="audience-update-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    assert not assignment.all_students
+    repository.replace_audience.assert_awaited_once_with(
+        assignment.id,
+        cohort_ids=[],
+        direction_ids=[direction_id],
+    )
+    repository.replace_audience_snapshot.assert_awaited_once_with(
+        assignment_id=assignment.id,
+        users=target_users,
+        created_at=now,
+    )
+    audit = audit_repository.add.call_args.args[0]
+    assert audit.change_summary == {
+        "changed_fields": ["audience"],
+        "audience_added": 1,
+        "audience_removed": 2,
+        "audience_target_count": 1,
+    }
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_patch_published_assignment_rejects_deadline_before_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC)
+    assignment = make_assignment(
+        status="published",
+        deadline=now + timedelta(days=2),
+    )
+    last_submitted_at = now + timedelta(hours=36)
+    service, session, repository, outbox, _audit = make_patch_service(
+        assignment,
+        now=now,
+        last_submitted_at=last_submitted_at,
+    )
+    monkeypatch.setattr(
+        "app.assignments.service.validate_audience",
+        AsyncMock(),
+    )
+    admin = cast(User, SimpleNamespace(id=uuid4()))
+
+    with pytest.raises(ApplicationError) as exc_info:
+        await service.patch(
+            assignment.id,
+            make_patch_request(assignment, deadline=now + timedelta(days=1)),
+            audit=AssignmentAuditContext(
+                actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+                request_id="rejected-update-request",
+                ip_prefix="127.0.0.0/24",
+            ),
+        )
+
+    assert exc_info.value.code == "STATE_CONFLICT"
+    assert exc_info.value.message == "截止时间不能早于已有正式提交时间。"
+    assert assignment.deadline == now + timedelta(days=2)
+    assert assignment.title == "测试作业"
+    assert assignment.revision == 1
+    repository.last_submitted_at.assert_awaited_once_with(assignment.id)
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+    outbox.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_patch_automatically_closed_assignment_reopens_only_for_future_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC)
+    old_deadline = now - timedelta(days=1)
+    assignment = make_assignment(
+        status="closed",
+        deadline=old_deadline,
+        closed_at=old_deadline,
+    )
+    new_deadline = now + timedelta(days=1)
+    service, session, _repository, outbox, _audit = make_patch_service(
+        assignment,
+        now=now,
+        last_submitted_at=old_deadline,
+    )
+    monkeypatch.setattr("app.assignments.service.validate_audience", AsyncMock())
+    monkeypatch.setattr(
+        "app.assignments.service.active_students_for_audience",
+        AsyncMock(return_value=[]),
+    )
+    admin = cast(User, SimpleNamespace(id=uuid4()))
+
+    response = await service.patch(
+        assignment.id,
+        make_patch_request(assignment, deadline=new_deadline),
+        audit=AssignmentAuditContext(
+            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+            request_id="reopen-update-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    assert response.status == "published"
+    assert assignment.closed_at is None
+    close_job = outbox.add.call_args.args[0]
+    assert close_job.available_at == new_deadline
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_patch_early_closed_assignment_keeps_manual_close_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC)
+    assignment = make_assignment(
+        status="closed",
+        deadline=now + timedelta(days=2),
+        closed_at=now - timedelta(hours=1),
+    )
+    new_deadline = now + timedelta(days=3)
+    service, session, _repository, outbox, _audit = make_patch_service(
+        assignment,
+        now=now,
+        last_submitted_at=now - timedelta(hours=2),
+    )
+    monkeypatch.setattr("app.assignments.service.validate_audience", AsyncMock())
+    monkeypatch.setattr(
+        "app.assignments.service.active_students_for_audience",
+        AsyncMock(return_value=[]),
+    )
+    admin = cast(User, SimpleNamespace(id=uuid4()))
+
+    response = await service.patch(
+        assignment.id,
+        make_patch_request(assignment, deadline=new_deadline),
+        audit=AssignmentAuditContext(
+            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
+            request_id="closed-update-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    assert response.status == "closed"
+    assert assignment.closed_at == now - timedelta(hours=1)
+    outbox.add.assert_not_called()
+    session.commit.assert_awaited_once()
 
 
 def make_extension_mail_job() -> OutboxJob:
@@ -300,6 +602,99 @@ async def test_student_view_preview_uses_live_audience_without_changing_snapshot
     snapshot_sql = str(session.statement)
     assert "assignment_audience_users" in snapshot_sql
     assert "assignment_directions" not in snapshot_sql
+
+
+@pytest.mark.asyncio
+async def test_admin_submission_query_includes_current_audience_and_historical_submitters() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    session.scalar.return_value = 0
+    rows = Mock()
+    rows.all.return_value = []
+    session.execute.return_value = rows
+    repository = AssignmentRepository(cast(AsyncSession, session))
+
+    records, total = await repository.submissions_for_admin(
+        uuid4(),
+        page=1,
+        page_size=100,
+        cohort_id=None,
+        direction_id=None,
+        submission_status=None,
+        feedback_status=None,
+    )
+
+    assert records == []
+    assert total == 0
+    statement = session.execute.await_args.args[0]
+    sql = str(statement)
+    assert "LEFT OUTER JOIN assignment_audience_users" in sql
+    assert "LEFT OUTER JOIN submissions" in sql
+    assert "assignment_audience_users.user_id IS NOT NULL OR submissions.id IS NOT NULL" in sql
+
+
+@pytest.mark.asyncio
+async def test_replace_audience_snapshot_reports_added_and_removed_users() -> None:
+    assignment_id = uuid4()
+    retained_user_id = uuid4()
+    removed_user_id = uuid4()
+    added_user_id = uuid4()
+    created_at = datetime.now(UTC)
+    session = AsyncMock(spec=AsyncSession)
+    existing = Mock()
+    existing.all.return_value = [retained_user_id, removed_user_id]
+    session.scalars.return_value = existing
+    repository = AssignmentRepository(cast(AsyncSession, session))
+    users = [
+        cast(
+            User,
+            SimpleNamespace(id=retained_user_id, cohort_id=None, direction_id=None),
+        ),
+        cast(
+            User,
+            SimpleNamespace(id=added_user_id, cohort_id=None, direction_id=None),
+        ),
+    ]
+
+    result = await repository.replace_audience_snapshot(
+        assignment_id=assignment_id,
+        users=users,
+        created_at=created_at,
+    )
+
+    assert result == (1, 1)
+    delete_sql = str(session.execute.await_args.args[0])
+    assert "DELETE FROM assignment_audience_users" in delete_sql
+    snapshots = session.add_all.call_args.args[0]
+    assert {snapshot.user_id for snapshot in snapshots} == {
+        retained_user_id,
+        added_user_id,
+    }
+    assert all(snapshot.assignment_id == assignment_id for snapshot in snapshots)
+    assert all(snapshot.created_at == created_at for snapshot in snapshots)
+
+
+@pytest.mark.asyncio
+async def test_assignment_stats_count_only_current_audience_submissions_and_feedback() -> None:
+    assignment_id = uuid4()
+    last_submitted_at = datetime.now(UTC)
+    session = AsyncMock(spec=AsyncSession)
+    session.scalar.side_effect = [2, 1, 1, last_submitted_at]
+    repository = AssignmentRepository(cast(AsyncSession, session))
+
+    stats = await repository.stats(assignment_id)
+
+    assert stats == AssignmentStats(
+        target_count=2,
+        submitted_count=1,
+        feedback_submission_count=1,
+        last_submitted_at=last_submitted_at,
+    )
+    submitted_sql = str(session.scalar.await_args_list[1].args[0])
+    feedback_sql = str(session.scalar.await_args_list[2].args[0])
+    assert "JOIN assignment_audience_users" in submitted_sql
+    assert "assignment_audience_users.user_id = submissions.owner_user_id" in submitted_sql
+    assert "JOIN assignment_audience_users" in feedback_sql
+    assert "assignment_audience_users.user_id = submissions.owner_user_id" in feedback_sql
 
 
 @pytest.mark.asyncio

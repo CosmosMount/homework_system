@@ -41,6 +41,26 @@ function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "操作失败，请稍后重试。";
 }
 
+async function assignmentAdminFetch<T>(
+  path: string,
+  init: RequestInit,
+): Promise<T> {
+  try {
+    return await csrfFetch<T>(path, init);
+  } catch (error) {
+    if (
+      !(error instanceof ApiError) ||
+      error.code !== "FORBIDDEN" ||
+      (path !== "/admin/assignments" &&
+        !path.startsWith("/admin/assignments/"))
+    ) {
+      throw error;
+    }
+    await csrfFetch("/auth/student-view", { method: "DELETE" });
+    return csrfFetch<T>(path, init);
+  }
+}
+
 function ExtensionControls({
   assignmentId,
   userId,
@@ -59,7 +79,7 @@ function ExtensionControls({
     setPending(true);
     setMessage(null);
     try {
-      const result = await csrfFetch<AssignmentExtension>(
+      const result = await assignmentAdminFetch<AssignmentExtension>(
         "/admin/assignments/" +
           assignmentId +
           "/extensions/" +
@@ -88,7 +108,7 @@ function ExtensionControls({
     setPending(true);
     setMessage(null);
     try {
-      await csrfFetch(
+      await assignmentAdminFetch(
         "/admin/assignments/" +
           assignmentId +
           "/extensions/" +
@@ -162,6 +182,67 @@ function ExtensionControls({
         ) : null}
       </div>
     </details>
+  );
+}
+
+function SubmissionGroup({
+  assignmentId,
+  emptyMessage,
+  items,
+  title,
+}: Readonly<{
+  assignmentId: string;
+  emptyMessage: string;
+  items: AssignmentSubmissionAdminItem[];
+  title: string;
+}>) {
+  return (
+    <section>
+      <h3 className="text-base font-semibold">
+        {title} <span className="font-mono text-xs">({items.length})</span>
+      </h3>
+      {items.length === 0 ? (
+        <p className="mt-3 text-sm text-[var(--color-text-muted)]">
+          {emptyMessage}
+        </p>
+      ) : (
+        <div className="mt-3 space-y-3">
+          {items.map((item) => (
+            <article
+              className="border border-[var(--color-border)] p-4"
+              key={item.user_id}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium">{item.full_name}</p>
+                  <p className="mt-1 font-mono text-xs text-[var(--color-text-muted)]">
+                    {item.student_number}
+                  </p>
+                </div>
+                {item.submission_id ? (
+                  <Link
+                    className="text-sm text-[var(--color-info)]"
+                    href={"/admin/submissions/" + item.submission_id}
+                  >
+                    查看 v{item.latest_version_number} →
+                  </Link>
+                ) : (
+                  <span className="text-sm text-[var(--color-text-muted)]">
+                    未提交
+                  </span>
+                )}
+              </div>
+              {item.in_current_audience ? (
+                <ExtensionControls
+                  assignmentId={assignmentId}
+                  userId={item.user_id}
+                />
+              ) : null}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -251,6 +332,8 @@ export function AssignmentEditor({
   }
 
   function payload(revision?: number): Record<string, unknown> {
+    const lockedConfiguration =
+      assignment !== null && assignment.status !== "draft";
     return {
       ...(revision === undefined ? {} : { revision }),
       title: title.trim(),
@@ -263,9 +346,15 @@ export function AssignmentEditor({
         direction_ids: allStudents ? [] : directionIds,
         match: legacyAudienceMatch,
       },
-      allowed_extensions: extensionList(),
-      max_total_bytes: Number(maxTotalBytes),
-      publish_at: apiDateTime(publishAt),
+      allowed_extensions: lockedConfiguration
+        ? assignment.allowed_extensions
+        : extensionList(),
+      max_total_bytes: lockedConfiguration
+        ? assignment.max_total_bytes
+        : Number(maxTotalBytes),
+      publish_at: lockedConfiguration
+        ? assignment.publish_at
+        : apiDateTime(publishAt),
       deadline: apiDateTime(deadline),
     };
   }
@@ -273,7 +362,7 @@ export function AssignmentEditor({
   async function persist(): Promise<AssignmentAdmin> {
     if (!validate()) throw new Error("FORM_INVALID");
     const current = assignment;
-    const saved = await csrfFetch<AssignmentAdmin>(
+    const saved = await assignmentAdminFetch<AssignmentAdmin>(
       current === null
         ? "/admin/assignments"
         : "/admin/assignments/" + current.id,
@@ -295,8 +384,9 @@ export function AssignmentEditor({
     setMessage(null);
     setError(null);
     try {
+      const savingDraft = assignment === null || assignment.status === "draft";
       await persist();
-      setMessage("作业草稿已保存。");
+      setMessage(savingDraft ? "作业草稿已保存。" : "作业已更新。");
       router.refresh();
     } catch (nextError) {
       if (!(nextError instanceof Error) || nextError.message !== "FORM_INVALID") {
@@ -314,7 +404,7 @@ export function AssignmentEditor({
     setError(null);
     try {
       const saved = await persist();
-      const result = await csrfFetch<AssignmentAdmin>(
+      const result = await assignmentAdminFetch<AssignmentAdmin>(
         "/admin/assignments/" + saved.id + "/publish",
         {
           method: "POST",
@@ -344,7 +434,7 @@ export function AssignmentEditor({
     setMessage(null);
     setError(null);
     try {
-      const result = await csrfFetch<AssignmentAdmin>(
+      const result = await assignmentAdminFetch<AssignmentAdmin>(
         "/admin/assignments/" + assignment.id + "/close",
         { method: "POST" },
       );
@@ -369,7 +459,7 @@ export function AssignmentEditor({
     setMessage(null);
     setError(null);
     try {
-      await csrfFetch(
+      await assignmentAdminFetch(
         "/admin/assignments/" + assignment.id,
         { method: "DELETE" },
       );
@@ -382,8 +472,17 @@ export function AssignmentEditor({
   }
 
   const editable = assignment?.status !== "archived";
-  const configurationEditable =
+  const rulesEditable =
     assignment === null || assignment.status === "draft";
+  const submitted = initialSubmissions.filter(
+    (item) => item.in_current_audience && item.submission_id !== null,
+  );
+  const unsubmitted = initialSubmissions.filter(
+    (item) => item.in_current_audience && item.submission_id === null,
+  );
+  const historical = initialSubmissions.filter(
+    (item) => !item.in_current_audience,
+  );
 
   return (
     <div className="mt-8 grid gap-8 xl:grid-cols-[minmax(0,1fr)_22rem]">
@@ -448,12 +547,15 @@ export function AssignmentEditor({
         </section>
 
         <section className="space-y-5 border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
-          <h2 className="text-xl font-semibold">受众快照配置</h2>
+          <h2 className="text-xl font-semibold">当前作业受众</h2>
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            保存已发布或已关闭作业时，会按当前激活学生重新生成受众快照；正式提交历史不会删除。
+          </p>
           <div className="flex flex-wrap gap-4 text-sm">
             <label className="flex items-center gap-2">
               <input
                 checked={allStudents}
-                disabled={!configurationEditable}
+                disabled={!editable}
                 name="assignment-audience"
                 onChange={() => setAllStudents(true)}
                 type="radio"
@@ -463,7 +565,7 @@ export function AssignmentEditor({
             <label className="flex items-center gap-2">
               <input
                 checked={!allStudents}
-                disabled={!configurationEditable}
+                disabled={!editable}
                 name="assignment-audience"
                 onChange={() => setAllStudents(false)}
                 type="radio"
@@ -480,7 +582,7 @@ export function AssignmentEditor({
                     <label className="flex items-center gap-2 text-sm" key={direction.id}>
                       <input
                         checked={directionIds.includes(direction.id)}
-                        disabled={!configurationEditable || !direction.is_active}
+                        disabled={!editable || !direction.is_active}
                         onChange={() =>
                           setDirectionIds(toggle(directionIds, direction.id))
                         }
@@ -501,7 +603,7 @@ export function AssignmentEditor({
             允许扩展名（逗号分隔）
             <input
               className={inputClassName}
-              disabled={!configurationEditable}
+              disabled={!rulesEditable}
               onChange={(event) => setAllowedExtensions(event.target.value)}
               value={allowedExtensions}
             />
@@ -510,7 +612,7 @@ export function AssignmentEditor({
             单版本附件总上限（字节）
             <input
               className={inputClassName}
-              disabled={!configurationEditable}
+              disabled={!rulesEditable}
               max={2147483648}
               min={1}
               onChange={(event) => setMaxTotalBytes(event.target.value)}
@@ -522,7 +624,7 @@ export function AssignmentEditor({
             发布时间
             <input
               className={inputClassName}
-              disabled={!configurationEditable}
+              disabled={!rulesEditable}
               onChange={(event) => setPublishAt(event.target.value)}
               required
               type="datetime-local"
@@ -581,38 +683,27 @@ export function AssignmentEditor({
         {assignment && assignment.status !== "draft" ? (
           <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
             <h2 className="text-xl font-semibold">目标学生与提交</h2>
-            <div className="mt-4 space-y-3">
-              {initialSubmissions.map((item) => (
-                <article
-                  className="border border-[var(--color-border)] p-4"
-                  key={item.user_id}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium">{item.full_name}</p>
-                      <p className="mt-1 font-mono text-xs text-[var(--color-text-muted)]">
-                        {item.student_number}
-                      </p>
-                    </div>
-                    {item.submission_id ? (
-                      <Link
-                        className="text-sm text-[var(--color-info)]"
-                        href={"/admin/submissions/" + item.submission_id}
-                      >
-                        查看 v{item.latest_version_number} →
-                      </Link>
-                    ) : (
-                      <span className="text-sm text-[var(--color-text-muted)]">
-                        未提交
-                      </span>
-                    )}
-                  </div>
-                  <ExtensionControls
-                    assignmentId={assignment.id}
-                    userId={item.user_id}
-                  />
-                </article>
-              ))}
+            <div className="mt-5 space-y-7">
+              <SubmissionGroup
+                assignmentId={assignment.id}
+                emptyMessage="当前受众中暂无已提交学生。"
+                items={submitted}
+                title="已提交"
+              />
+              <SubmissionGroup
+                assignmentId={assignment.id}
+                emptyMessage="当前受众均已提交。"
+                items={unsubmitted}
+                title="未提交"
+              />
+              {historical.length > 0 ? (
+                <SubmissionGroup
+                  assignmentId={assignment.id}
+                  emptyMessage=""
+                  items={historical}
+                  title="历史提交（已不在当前受众）"
+                />
+              ) : null}
             </div>
           </section>
         ) : null}
@@ -644,9 +735,17 @@ export function AssignmentEditor({
           </dl>
         </section>
         <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-secondary)]">
-          <p>发布后受众、扩展名、附件上限和发布时间冻结。</p>
+          <p>
+            发布后仍可修改标题、说明、资料链接、提交说明、受众和公共截止；扩展名、附件上限和发布时间冻结。
+          </p>
           <p className="mt-3">
             当前截止：{assignment ? formatDateTime(assignment.deadline) : "—"}
+          </p>
+          <p className="mt-2">
+            最后正式提交：
+            {assignment?.stats.last_submitted_at
+              ? formatDateTime(assignment.stats.last_submitted_at)
+              : "暂无"}
           </p>
           <p className="mt-2">
             附件上限：{assignment ? formatFileSize(assignment.max_total_bytes) : "—"}

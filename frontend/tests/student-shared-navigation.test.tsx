@@ -61,12 +61,12 @@ const dashboard: Dashboard = {
   unread_counts: {
     announcements: 1,
     assignments: 2,
-    competitions: 3,
+    teams: 3,
     help_requests: 4,
   },
   recent_announcements: [],
   assignments: [],
-  competitions: [],
+  team: null,
 };
 
 const publicHelpRequest: PublicHelpRequestDetail = {

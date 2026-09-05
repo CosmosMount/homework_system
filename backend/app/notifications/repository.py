@@ -16,6 +16,7 @@ MAIL_JOB_TYPES = (
     "announcement_email",
     "announcement_update_email",
     "assignment_extension_email",
+    "submission_feedback_email",
     "intention_open_email",
 )
 
@@ -24,12 +25,12 @@ MAIL_JOB_TYPES = (
 class NotificationUnreadCounts:
     announcements: int
     assignments: int
-    competitions: int
+    teams: int
     help_requests: int
 
     @property
     def total(self) -> int:
-        return self.announcements + self.assignments + self.competitions + self.help_requests
+        return self.announcements + self.assignments + self.teams + self.help_requests
 
 
 class OutboxRepository:
@@ -203,10 +204,10 @@ class StudentNotificationRepository:
     async def unread_counts(self, user_id: UUID) -> NotificationUnreadCounts:
         announcement_target = StudentNotification.target_type == "announcement"
         help_request_target = StudentNotification.target_type == "help_request"
-        competition_target = StudentNotification.target_url.startswith("/competitions/")
+        team_target = StudentNotification.target_url.startswith("/teams/")
         assignment_target = and_(
             StudentNotification.target_type.in_(("assignment", "submission")),
-            ~competition_target,
+            ~team_target,
         )
         active_target = or_(
             ~announcement_target,
@@ -216,7 +217,7 @@ class StudentNotificationRepository:
             select(
                 func.count().filter(announcement_target),
                 func.count().filter(assignment_target),
-                func.count().filter(competition_target),
+                func.count().filter(team_target),
                 func.count().filter(help_request_target),
             )
             .select_from(StudentNotification)
@@ -237,7 +238,7 @@ class StudentNotificationRepository:
         return NotificationUnreadCounts(
             announcements=int(row[0] or 0),
             assignments=int(row[1] or 0),
-            competitions=int(row[2] or 0),
+            teams=int(row[2] or 0),
             help_requests=int(row[3] or 0),
         )
 

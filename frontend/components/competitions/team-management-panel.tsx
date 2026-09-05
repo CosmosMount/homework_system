@@ -72,7 +72,7 @@ export function TeamManagementPanel({
         method: "DELETE",
       });
       if (leavingSelf) {
-        router.push("/competitions/" + team.competition_id);
+        router.push("/competitions");
       } else {
         setTeam((current) => ({
           ...current,
@@ -124,7 +124,7 @@ export function TeamManagementPanel({
     begin();
     try {
       await csrfFetch("/teams/" + team.id + "/dissolve", { method: "POST" });
-      router.push("/competitions/" + team.competition_id);
+      router.push("/competitions");
       router.refresh();
     } catch (nextError) {
       setError(errorMessage(nextError));
@@ -140,8 +140,7 @@ export function TeamManagementPanel({
           <div>
             <h2 className="text-2xl font-semibold">{team.name}</h2>
             <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-              当前 {team.member_count} 人，要求 {team.min_team_size}–
-              {team.max_team_size} 人。
+              当前 {team.member_count} / {team.max_members} 人。
             </p>
           </div>
           <span
@@ -191,7 +190,7 @@ export function TeamManagementPanel({
                   ) : null}
                 </p>
                 <p className="mt-1 font-mono text-xs text-[var(--color-text-muted)]">
-                  {member.student_id} · 加入于 {formatDateTime(member.joined_at)}
+                  {member.student_number} · 加入于 {formatDateTime(member.joined_at)}
                   {member.added_by_admin ? " · 管理员补录" : ""}
                 </p>
               </div>
@@ -277,19 +276,9 @@ export function TeamManagementPanel({
         <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-secondary)]">
           <p>
             {team.status === "forming"
-              ? "报名结束前，队长可以调整成员、轮换邀请码和转让队长。"
-              : "队伍已锁定或进入终态，普通成员关系只读。"}
+              ? "队长可以调整成员、轮换邀请码和转让队长；单人成队时可以解散队伍。"
+              : "队伍已解散，成员关系只读。"}
           </p>
-          {team.min_size_waived ? (
-            <p className="mt-3 text-[var(--color-warning)]">
-              管理员已豁免最小人数：{team.waiver_reason}
-            </p>
-          ) : null}
-          {team.disqualification_reason ? (
-            <p className="mt-3 text-[var(--color-danger)]">
-              取消资格原因：{team.disqualification_reason}
-            </p>
-          ) : null}
         </section>
       </aside>
     </div>

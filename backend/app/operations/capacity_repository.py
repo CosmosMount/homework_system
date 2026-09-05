@@ -4,19 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.announcements.models import Announcement
 from app.assignments.models import Assignment, AssignmentAudienceUser
 from app.audit.models import AuditLog
-from app.competitions.models import (
-    Competition,
-    CompetitionRegistration,
-    CompetitionTask,
-    Team,
-    TeamMember,
-)
 from app.notifications.models import StudentNotification
 from app.operations.capacity_seed import (
     CAPACITY_MARKER_REQUEST_ID,
     CapacityDataset,
 )
 from app.submissions.models import Submission, SubmissionVersion
+from app.teams.models import Team, TeamMember
 from app.users.models import Cohort, Direction, User
 
 
@@ -48,15 +42,6 @@ class CapacitySeedRepository:
         await self._session.execute(
             insert(AssignmentAudienceUser),
             dataset.assignment_audience_users,
-        )
-        await self._session.execute(insert(Competition), dataset.competitions)
-        await self._session.execute(
-            insert(CompetitionTask),
-            dataset.competition_tasks,
-        )
-        await self._session.execute(
-            insert(CompetitionRegistration),
-            dataset.competition_registrations,
         )
         await self._session.execute(insert(Team), dataset.teams)
         await self._session.execute(insert(TeamMember), dataset.team_members)

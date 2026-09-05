@@ -6,6 +6,7 @@ import pytest
 from app.auth.models import OneTimeToken
 from app.notifications.admin_service import OutboxAdministrationService
 from app.notifications.models import OutboxJob
+from app.notifications.repository import MAIL_JOB_TYPES
 from app.notifications.service import (
     OutboxProcessor,
     apply_delivery_failure,
@@ -39,6 +40,10 @@ def make_job(
         created_at=now,
         sent_at=None,
     )
+
+
+def test_feedback_email_is_visible_to_mail_administration_and_account_cleanup() -> None:
+    assert "submission_feedback_email" in MAIL_JOB_TYPES
 
 
 def test_transient_delivery_failure_uses_backoff_and_redacts_free_form_error() -> None:

@@ -144,6 +144,28 @@ def render_mail(
         )
         return RenderedMail(recipient=recipient, subject=subject, text=text, html=html)
 
+    if job.job_type == "submission_feedback_email":
+        title = str(job.payload["title"])
+        target_url = str(job.payload["target_url"])
+        if (
+            not target_url.startswith("/assignments/")
+            or "/submissions/" not in target_url
+            or "://" in target_url
+        ):
+            raise PermanentMailError("INVALID_TARGET_URL")
+        subject_title = " ".join(title.splitlines()).strip()
+        if not subject_title:
+            raise PermanentMailError("MISSING_TITLE")
+        link = f"{base_url}{target_url}"
+        subject = f"PNX Training Hub 作业评语更新：{subject_title}"
+        text = f"{full_name}，你好：\n\n作业《{title}》有新的私密评语。\n\n请登录平台查看：\n{link}"
+        html = (
+            f"<p>{safe_name}，你好：</p>"
+            f"<p>作业《{escape(title)}》有新的私密评语。</p>"
+            f'<p><a href="{escape(link)}">登录平台查看私密评语</a></p>'
+        )
+        return RenderedMail(recipient=recipient, subject=subject, text=text, html=html)
+
     if job.job_type == "security_alert":
         event = str(job.payload.get("event") or "account_changed")
         event_text = {

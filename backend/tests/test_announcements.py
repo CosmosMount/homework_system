@@ -142,8 +142,8 @@ async def test_dashboard_includes_published_assignment_for_admin_student_view(
     assignment_repository = SimpleNamespace(
         list_for_student=AsyncMock(return_value=([assignment_record], 1)),
     )
-    competition_repository = SimpleNamespace(
-        dashboard_competitions=AsyncMock(return_value=[]),
+    team_repository = SimpleNamespace(
+        team_for_user=AsyncMock(return_value=None),
     )
     monkeypatch.setattr(
         announcement_service_module,
@@ -152,8 +152,8 @@ async def test_dashboard_includes_published_assignment_for_admin_student_view(
     )
     monkeypatch.setattr(
         announcement_service_module,
-        "CompetitionRepository",
-        lambda _session: competition_repository,
+        "TeamRepository",
+        lambda _session: team_repository,
     )
     service = AnnouncementService(
         cast(AsyncSession, SimpleNamespace()),
@@ -174,7 +174,7 @@ async def test_dashboard_includes_published_assignment_for_admin_student_view(
                 return_value=NotificationUnreadCounts(
                     announcements=1,
                     assignments=2,
-                    competitions=3,
+                    teams=3,
                     help_requests=4,
                 )
             )
@@ -218,7 +218,7 @@ async def test_unread_counts_are_grouped_and_exclude_inactive_announcements() ->
     assert counts.total == 14
     assert counts.announcements == 2
     assert counts.assignments == 3
-    assert counts.competitions == 4
+    assert counts.teams == 4
     assert counts.help_requests == 5
     statement = str(session.execute.await_args.args[0])
     assert "LEFT OUTER JOIN announcements" in statement

@@ -5,7 +5,6 @@ from app.announcements.router import router as announcements_router
 from app.assignments.router import router as assignments_router
 from app.audit.router import router as audit_router
 from app.auth.router import router as auth_router
-from app.competitions.router import router as competitions_router
 from app.core.config import Settings, get_settings
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging
@@ -17,6 +16,7 @@ from app.knowledge.router import router as knowledge_router
 from app.notifications.center_router import router as notification_center_router
 from app.notifications.router import router as notifications_router
 from app.submissions.router import router as submissions_router
+from app.teams.router import router as teams_router
 from app.uploads.router import router as uploads_router
 from app.users.router import router as users_router
 
@@ -43,7 +43,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(users_router, prefix="/api/v1")
     application.include_router(announcements_router, prefix="/api/v1")
     application.include_router(assignments_router, prefix="/api/v1")
-    application.include_router(competitions_router, prefix="/api/v1")
+    application.include_router(teams_router, prefix="/api/v1")
     application.include_router(help_requests_router, prefix="/api/v1")
     application.include_router(intentions_router, prefix="/api/v1")
     application.include_router(knowledge_router, prefix="/api/v1")

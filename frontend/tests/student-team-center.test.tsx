@@ -2,39 +2,30 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import CompetitionsPage from "@/app/competitions/page";
-import type {
-  CompetitionDetail,
-  CompetitionPage,
-  Dashboard,
-  TeamDirectoryPage,
-  User,
-} from "@/lib/api/types";
+import type { Dashboard, TeamDirectoryPage, User } from "@/lib/api/types";
 
 const {
-  getCompetitionMock,
-  getCompetitionsMock,
-  getCompetitionTeamsMock,
   getDashboardMock,
+  getMyTeamMock,
+  getTeamsMock,
   requireUserMock,
 } = vi.hoisted(() => ({
-  getCompetitionMock: vi.fn(),
-  getCompetitionsMock: vi.fn(),
-  getCompetitionTeamsMock: vi.fn(),
   getDashboardMock: vi.fn(),
+  getMyTeamMock: vi.fn(),
+  getTeamsMock: vi.fn(),
   requireUserMock: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
   redirect: vi.fn(),
   usePathname: () => "/competitions",
-  useRouter: () => ({ refresh: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
 }));
 
 vi.mock("@/lib/api/server", () => ({
-  getCompetition: getCompetitionMock,
-  getCompetitions: getCompetitionsMock,
-  getCompetitionTeams: getCompetitionTeamsMock,
   getDashboard: getDashboardMock,
+  getMyTeam: getMyTeamMock,
+  getTeams: getTeamsMock,
   requireUser: requireUserMock,
 }));
 
@@ -64,87 +55,22 @@ const dashboard: Dashboard = {
   unread_counts: {
     announcements: 0,
     assignments: 0,
-    competitions: 0,
+    teams: 0,
     help_requests: 0,
   },
   recent_announcements: [],
   assignments: [],
-  competitions: [],
-};
-
-const summaries: CompetitionPage = {
-  items: [
-    {
-      id: "current-competition",
-      name: "2026 校内赛",
-      status: "registration_open",
-      registration_start: "2026-08-20T00:00:00Z",
-      registration_end: "2026-09-01T00:00:00Z",
-      submission_start: "2026-09-01T00:00:00Z",
-      submission_end: "2026-09-15T00:00:00Z",
-      min_team_size: 2,
-      max_team_size: 4,
-      registration_status: "registered",
-      registration_disqualification_reason: null,
-      team_id: null,
-      team_name: null,
-      team_status: null,
-    },
-    {
-      id: "archived-competition",
-      name: "历史赛事",
-      status: "archived",
-      registration_start: "2025-08-20T00:00:00Z",
-      registration_end: "2025-09-01T00:00:00Z",
-      submission_start: "2025-09-01T00:00:00Z",
-      submission_end: "2025-09-15T00:00:00Z",
-      min_team_size: 2,
-      max_team_size: 4,
-      registration_status: null,
-      registration_disqualification_reason: null,
-      team_id: null,
-      team_name: null,
-      team_status: null,
-    },
-  ],
-  total: 2,
-  page: 1,
-  page_size: 100,
-};
-
-const competition: CompetitionDetail = {
-  id: "current-competition",
-  name: "2026 校内赛",
-  description_markdown: "公告",
-  description_html: "<p>校内赛公告</p>",
-  rules_url: null,
-  status: "registration_open",
-  registration_start: "2026-08-20T00:00:00Z",
-  registration_end: "2026-09-01T00:00:00Z",
-  submission_start: "2026-09-01T00:00:00Z",
-  submission_end: "2026-09-15T00:00:00Z",
-  min_team_size: 2,
-  max_team_size: 4,
-  published_at: "2026-08-19T00:00:00Z",
-  archived_at: null,
-  revision: 1,
-  registration_status: "registered",
-  registration_disqualification_reason: null,
-  team_id: null,
-  team_name: null,
-  team_status: null,
-  tasks: [],
+  team: null,
 };
 
 const teams: TeamDirectoryPage = {
   items: [
     {
       id: "team-1",
-      competition_id: competition.id,
       name: "原子队",
       status: "forming",
       member_count: 2,
-      max_team_size: 4,
+      max_members: 4,
       can_join: true,
     },
   ],
@@ -153,31 +79,29 @@ const teams: TeamDirectoryPage = {
   page_size: 20,
 };
 
-describe("student campus competition team center", () => {
+describe("student campus team center", () => {
   beforeEach(() => {
     requireUserMock.mockResolvedValue(student);
     getDashboardMock.mockResolvedValue(dashboard);
-    getCompetitionsMock.mockResolvedValue(summaries);
-    getCompetitionMock.mockResolvedValue(competition);
-    getCompetitionTeamsMock.mockResolvedValue(teams);
+    getMyTeamMock.mockResolvedValue(null);
+    getTeamsMock.mockResolvedValue(teams);
   });
 
-  it("shows only the current campus competition and searches its team directory", async () => {
+  it("allows direct team entry and searches the independent team directory", async () => {
     render(
       await CompetitionsPage({
         searchParams: Promise.resolve({ q: " 原子 ", page: "2" }),
       }),
     );
 
-    expect(
-      screen.getByRole("heading", { name: "校内赛队伍中心" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("校内赛公告")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "校内赛队伍中心" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建队伍" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "加入队伍" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "自动分配队伍" })).toBeInTheDocument();
     expect(screen.getByText("原子队")).toBeInTheDocument();
-    expect(screen.queryByText("历史赛事")).not.toBeInTheDocument();
-    expect(getCompetitionMock).toHaveBeenCalledWith("current-competition");
-    expect(getCompetitionTeamsMock).toHaveBeenCalledWith(
-      "current-competition",
+    expect(screen.queryByText(/尚未配置校内赛/)).not.toBeInTheDocument();
+    expect(getMyTeamMock).toHaveBeenCalledOnce();
+    expect(getTeamsMock).toHaveBeenCalledWith(
       "query=%E5%8E%9F%E5%AD%90&page=2&page_size=20",
     );
     expect(screen.getByText("为保护隐私，目录不显示邀请码和成员姓名。")).toBeInTheDocument();

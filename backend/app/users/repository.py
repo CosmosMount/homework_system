@@ -11,12 +11,12 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app.announcements.models import AnnouncementFile
 from app.assignments.models import AssignmentExtension
 from app.auth.models import AuthSecurityEvent, OneTimeToken
-from app.competitions.models import Competition, CompetitionRegistration, Team, TeamMember
 from app.help_requests.models import HelpRequest
 from app.intentions.models import IntentionResponse
 from app.notifications.models import OutboxJob, StudentNotification
 from app.notifications.repository import MAIL_JOB_TYPES
-from app.submissions.models import Submission, SubmissionVersion, VersionFile
+from app.submissions.models import Submission
+from app.teams.models import Team, TeamMember
 from app.uploads.models import StoredFile, UploadSession
 from app.users.models import Cohort, Direction, User
 
@@ -251,10 +251,6 @@ class UserRepository:
                 AssignmentExtension.user_id == user_id,
             ),
             "submissions": await count(Submission, Submission.owner_user_id == user_id),
-            "competition_registrations": await count(
-                CompetitionRegistration,
-                CompetitionRegistration.user_id == user_id,
-            ),
             "team_memberships": await count(TeamMember, TeamMember.user_id == user_id),
             "intention_responses": await count(
                 IntentionResponse,
@@ -276,35 +272,34 @@ class UserRepository:
         *,
         now: datetime,
     ) -> tuple[int, int, int]:
-        current_team_rows = (
-            await self._session.execute(
-                select(Team, Competition.min_team_size)
-                .join(Competition, Competition.id == Team.competition_id)
-                .join(
-                    TeamMember,
-                    and_(
-                        TeamMember.team_id == Team.id,
-                        TeamMember.user_id == user_id,
-                        TeamMember.left_at.is_(None),
-                    ),
+        current_teams = list(
+            (
+                await self._session.scalars(
+                    select(Team)
+                    .join(
+                        TeamMember,
+                        and_(
+                            TeamMember.team_id == Team.id,
+                            TeamMember.user_id == user_id,
+                            TeamMember.left_at.is_(None),
+                        ),
+                    )
+                    .order_by(Team.id)
+                    .with_for_update(of=Team)
                 )
-                .order_by(Team.id)
-                .with_for_update(of=Team)
-            )
-        ).all()
-        captain_team_rows = (
-            await self._session.execute(
-                select(Team, Competition.min_team_size)
-                .join(Competition, Competition.id == Team.competition_id)
-                .where(Team.captain_user_id == user_id)
-                .order_by(Team.id)
-                .with_for_update(of=Team)
-            )
-        ).all()
-
-        impacted: dict[UUID, tuple[Team, int]] = {}
-        for row in (*current_team_rows, *captain_team_rows):
-            impacted[row[0].id] = (row[0], int(row[1]))
+            ).all()
+        )
+        captain_teams = list(
+            (
+                await self._session.scalars(
+                    select(Team)
+                    .where(Team.captain_user_id == user_id)
+                    .order_by(Team.id)
+                    .with_for_update()
+                )
+            ).all()
+        )
+        impacted = {team.id: team for team in (*current_teams, *captain_teams)}
         if not impacted:
             return 0, 0, 0
 
@@ -327,36 +322,23 @@ class UserRepository:
 
         transferred = 0
         dissolved = 0
-        invalidated = 0
-        for team, min_team_size in impacted.values():
+        for team in impacted.values():
             remaining = [
                 member for member in members_by_team.get(team.id, []) if member.user_id != user_id
             ]
-            changed = False
-            if team.captain_user_id == user_id:
-                if remaining:
-                    team.captain_user_id = remaining[0].user_id
-                    transferred += 1
-                else:
-                    team.captain_user_id = None
-                    team.status = "dissolved"
-                    team.dissolved_at = now
-                    team.disqualified_at = None
-                    team.disqualified_by = None
-                    team.disqualification_reason = None
-                    dissolved += 1
-                changed = True
-            if (
-                team.status == "locked"
-                and len(remaining) < min_team_size
-                and team.min_size_waived_at is None
-            ):
-                team.status = "invalid"
-                invalidated += 1
-                changed = True
-            if changed:
-                team.revision += 1
-        return transferred, dissolved, invalidated
+            if team.captain_user_id != user_id:
+                continue
+            if remaining:
+                team.captain_user_id = remaining[0].user_id
+                transferred += 1
+            else:
+                team.captain_user_id = None
+                team.status = "dissolved"
+                team.dissolved_at = now
+                dissolved += 1
+            team.updated_at = now
+            team.revision += 1
+        return transferred, dissolved, 0
 
     async def prepare_account_erasure(
         self,
@@ -393,25 +375,6 @@ class UserRepository:
                     await self._session.scalars(
                         select(AnnouncementFile.file_id).where(
                             AnnouncementFile.file_id.in_(owned_file_ids)
-                        )
-                    )
-                ).all()
-            )
-            shared_file_ids.update(
-                (
-                    await self._session.scalars(
-                        select(VersionFile.file_id)
-                        .join(
-                            SubmissionVersion,
-                            SubmissionVersion.id == VersionFile.version_id,
-                        )
-                        .join(
-                            Submission,
-                            Submission.id == SubmissionVersion.submission_id,
-                        )
-                        .where(
-                            VersionFile.file_id.in_(owned_file_ids),
-                            Submission.owner_team_id.is_not(None),
                         )
                     )
                 ).all()

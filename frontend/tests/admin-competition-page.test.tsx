@@ -2,15 +2,10 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import AdminCompetitionsPage from "@/app/admin/competitions/page";
-import type { CompetitionPage, User } from "@/lib/api/types";
+import type { AdminTeamList, User } from "@/lib/api/types";
 
-const {
-  getAdminCompetitionTeamsMock,
-  getAdminCompetitionsMock,
-  requireAdminMock,
-} = vi.hoisted(() => ({
-  getAdminCompetitionTeamsMock: vi.fn(),
-  getAdminCompetitionsMock: vi.fn(),
+const { getAdminTeamsMock, requireAdminMock } = vi.hoisted(() => ({
+  getAdminTeamsMock: vi.fn(),
   requireAdminMock: vi.fn(),
 }));
 
@@ -20,8 +15,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/api/server", () => ({
-  getAdminCompetitionTeams: getAdminCompetitionTeamsMock,
-  getAdminCompetitions: getAdminCompetitionsMock,
+  getAdminTeams: getAdminTeamsMock,
   requireAdmin: requireAdminMock,
 }));
 
@@ -39,61 +33,44 @@ const admin: User = {
   revision: 1,
 };
 
-const competitions: CompetitionPage = {
-  items: [
-    {
-      id: "competition-1",
-      name: "2026 校内赛",
-      status: "registration_open",
-      registration_start: "2026-08-20T00:00:00Z",
-      registration_end: "2026-09-01T00:00:00Z",
-      submission_start: "2026-09-01T00:00:00Z",
-      submission_end: "2026-09-15T00:00:00Z",
-      min_team_size: 2,
-      max_team_size: 4,
-      registration_status: null,
-      registration_disqualification_reason: null,
-      team_id: null,
-      team_name: null,
-      team_status: null,
-    },
-  ],
+const teams: AdminTeamList = {
   total: 1,
   page: 1,
-  page_size: 100,
+  page_size: 20,
+  items: [
+    {
+      id: "team-1",
+      name: "原子队",
+      status: "forming",
+      captain_user_id: "student-1",
+      member_count: 3,
+      max_members: 4,
+    },
+  ],
 };
 
-describe("admin campus competition page", () => {
+describe("admin campus team page", () => {
   beforeEach(() => {
     requireAdminMock.mockResolvedValue(admin);
-    getAdminCompetitionsMock.mockResolvedValue(competitions);
-    getAdminCompetitionTeamsMock.mockResolvedValue({
-      total: 1,
-      items: [
-        {
-          id: "team-1",
-          competition_id: "competition-1",
-          name: "原子队",
-          status: "forming",
-          captain_user_id: "student-1",
-          member_count: 3,
-          min_size_waived: false,
-          latest_submission_count: 0,
-        },
-      ],
-    });
+    getAdminTeamsMock.mockResolvedValue(teams);
   });
 
-  it("shows the current campus competition and teams without a create action", async () => {
-    render(await AdminCompetitionsPage());
-
-    expect(screen.getByRole("heading", { name: "校内赛" })).toBeInTheDocument();
-    expect(screen.getByText("原子队")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "管理公告" })).toHaveAttribute(
-      "href",
-      "/admin/competitions/competition-1",
+  it("shows independent teams without competition creation or announcement controls", async () => {
+    render(
+      await AdminCompetitionsPage({
+        searchParams: Promise.resolve({ q: "原子", page: "1" }),
+      }),
     );
-    expect(screen.queryByText("新建赛事")).not.toBeInTheDocument();
-    expect(screen.queryByText("新建校内赛")).not.toBeInTheDocument();
+
+    expect(screen.getByRole("heading", { name: "校内赛队伍" })).toBeInTheDocument();
+    expect(screen.getByText("原子队")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /原子队/ })).toHaveAttribute(
+      "href",
+      "/admin/competitions/team-1",
+    );
+    expect(screen.queryByText(/新建赛事|管理公告|报名/)).not.toBeInTheDocument();
+    expect(getAdminTeamsMock).toHaveBeenCalledWith(
+      "query=%E5%8E%9F%E5%AD%90&page=1&page_size=20",
+    );
   });
 });

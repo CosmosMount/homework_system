@@ -24,7 +24,7 @@ export default async function DashboardPage() {
             {user.full_name}，欢迎回来
           </h1>
           <p className="mt-4 max-w-2xl text-[var(--color-text-secondary)]">
-            从这里查看与你技术方向匹配的校内通知与近期作业。赛事区域只呈现已经上线的真实数据。
+            从这里查看与你技术方向匹配的校内通知与近期作业。队伍中心支持直接创建、邀请加入与自动分配。
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
@@ -148,13 +148,13 @@ export default async function DashboardPage() {
         </div>
         <div className="border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
           <p className="font-mono text-xs text-[var(--color-text-muted)]">
-            COMPETITIONS
+            MY TEAM
           </p>
-          <h2 className="mt-2 text-xl font-semibold">校内赛事</h2>
+          <h2 className="mt-2 text-xl font-semibold">我的队伍</h2>
           <p className="mt-4 text-sm text-[var(--color-text-secondary)]">
-            {dashboard.competitions.length === 0
-              ? "当前没有开放中的校内赛事。"
-              : "已有赛事数据，请进入赛事模块查看。"}
+            {dashboard.team === null
+              ? "尚未加入队伍，可前往校内赛队伍中心直接组队。"
+              : dashboard.team.name + " · " + dashboard.team.member_count + " / " + dashboard.team.max_members + " 人"}
           </p>
         </div>
       </section>

@@ -155,16 +155,17 @@ class DashboardAssignmentItem(BaseModel):
     deadline: datetime
 
 
-class DashboardCompetitionItem(BaseModel):
+class DashboardTeamItem(BaseModel):
     id: UUID
     name: str
-    status: str
+    member_count: int
+    max_members: int
 
 
 class DashboardUnreadCounts(BaseModel):
     announcements: int
     assignments: int
-    competitions: int
+    teams: int
     help_requests: int
 
 
@@ -174,4 +175,4 @@ class DashboardResponse(BaseModel):
     unread_counts: DashboardUnreadCounts
     recent_announcements: list[AnnouncementSummaryResponse]
     assignments: list[DashboardAssignmentItem]
-    competitions: list[DashboardCompetitionItem]
+    team: DashboardTeamItem | None

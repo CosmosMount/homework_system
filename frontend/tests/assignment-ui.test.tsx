@@ -44,9 +44,7 @@ function submission(): Submission {
   return {
     id: "submission-1",
     assignment_id: "assignment-1",
-    competition_task_id: null,
     owner_user_id: "student-id",
-    owner_team_id: null,
     latest_version_id: "version-1",
     versions: [
       {

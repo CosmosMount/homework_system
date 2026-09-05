@@ -72,29 +72,16 @@ class SubmissionRepository:
         result: Submission | None = await self._session.scalar(statement)
         return result
 
-    async def get_for_competition_team(
-        self,
-        competition_task_id: UUID,
-        owner_team_id: UUID,
-        *,
-        for_update: bool = False,
-    ) -> Submission | None:
-        statement = select(Submission).where(
-            Submission.competition_task_id == competition_task_id,
-            Submission.owner_team_id == owner_team_id,
-        )
-        if for_update:
-            statement = statement.with_for_update()
-        result: Submission | None = await self._session.scalar(statement)
-        return result
-
     async def get_by_id(
         self,
         submission_id: UUID,
         *,
         for_update: bool = False,
     ) -> Submission | None:
-        statement = select(Submission).where(Submission.id == submission_id)
+        statement = select(Submission).where(
+            Submission.id == submission_id,
+            Submission.assignment_id.is_not(None),
+        )
         if for_update:
             statement = statement.with_for_update()
         result: Submission | None = await self._session.scalar(statement)
@@ -106,7 +93,14 @@ class SubmissionRepository:
         *,
         submission_id: UUID | None = None,
     ) -> SubmissionVersion | None:
-        statement = select(SubmissionVersion).where(SubmissionVersion.id == version_id)
+        statement = (
+            select(SubmissionVersion)
+            .join(Submission, Submission.id == SubmissionVersion.submission_id)
+            .where(
+                SubmissionVersion.id == version_id,
+                Submission.assignment_id.is_not(None),
+            )
+        )
         if submission_id is not None:
             statement = statement.where(SubmissionVersion.submission_id == submission_id)
         result: SubmissionVersion | None = await self._session.scalar(statement)
@@ -120,7 +114,10 @@ class SubmissionRepository:
             await self._session.execute(
                 select(SubmissionVersion, Submission)
                 .join(Submission, Submission.id == SubmissionVersion.submission_id)
-                .where(SubmissionVersion.id == version_id)
+                .where(
+                    SubmissionVersion.id == version_id,
+                    Submission.assignment_id.is_not(None),
+                )
             )
         ).one_or_none()
         if row is None:

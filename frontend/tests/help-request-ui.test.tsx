@@ -270,7 +270,7 @@ describe("feedback and help request UI", () => {
         unreadCounts={{
           announcements: 0,
           assignments: 0,
-          competitions: 0,
+          teams: 0,
           help_requests: 2,
         }}
         user={student}

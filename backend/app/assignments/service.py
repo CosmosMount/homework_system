@@ -343,19 +343,35 @@ class AssignmentService:
 
         current_audience = await self._audience(assignment)
         published = assignment.status in {"published", "closed"}
+        audience_changed = payload.audience != current_audience
+        old_deadline = assignment.deadline
+        deadline_changed = payload.deadline != old_deadline
+        automatically_closed = (
+            assignment.status == "closed"
+            and assignment.closed_at is not None
+            and assignment.closed_at >= old_deadline
+        )
         if published and (
-            payload.audience != current_audience
-            or payload.allowed_extensions != list(assignment.allowed_extensions)
+            payload.allowed_extensions != list(assignment.allowed_extensions)
             or payload.max_total_bytes != assignment.max_total_bytes
             or payload.publish_at != assignment.publish_at
         ):
             await self._session.rollback()
-            raise self._state_conflict("发布后不能修改受众、发布时间或附件规则。")
-        if published and payload.deadline < assignment.deadline:
-            await self._session.rollback()
-            raise self._state_conflict("发布后的作业截止时间只能延长。")
+            raise self._state_conflict("发布后不能修改发布时间或附件规则。")
+        if published and payload.deadline < old_deadline:
+            last_submitted_at = await self._assignments.last_submitted_at(assignment.id)
+            if last_submitted_at is not None and payload.deadline < last_submitted_at:
+                await self._session.rollback()
+                raise self._state_conflict("截止时间不能早于已有正式提交时间。")
+            if (
+                assignment.status == "closed"
+                and not automatically_closed
+                and assignment.closed_at is not None
+                and payload.deadline <= assignment.closed_at
+            ):
+                await self._session.rollback()
+                raise self._state_conflict("提前关闭作业的截止时间必须晚于实际关闭时间。")
 
-        old_deadline = assignment.deadline
         now = self._clock()
         changed_fields = [
             field
@@ -377,6 +393,8 @@ class AssignmentService:
             )
             if before != after
         ]
+        if audience_changed:
+            changed_fields.append("audience")
         assignment.title = payload.title.strip()
         assignment.description_markdown = payload.description_markdown.strip()
         assignment.description_html = render_markdown(payload.description_markdown)
@@ -387,16 +405,20 @@ class AssignmentService:
         assignment.updated_by = audit.actor.user.id
         assignment.revision += 1
 
-        if assignment.status == "draft":
+        audience_added = 0
+        audience_removed = 0
+        audience_target_count = 0
+        if assignment.status == "draft" or audience_changed:
             assignment.all_students = payload.audience.all_students
             assignment.audience_match = payload.audience.match
-            assignment.allowed_extensions = payload.allowed_extensions
-            assignment.max_total_bytes = payload.max_total_bytes
             await self._assignments.replace_audience(
                 assignment.id,
                 cohort_ids=payload.audience.cohort_ids,
                 direction_ids=payload.audience.direction_ids,
             )
+        if assignment.status == "draft":
+            assignment.allowed_extensions = payload.allowed_extensions
+            assignment.max_total_bytes = payload.max_total_bytes
             scheduled = await self._outbox.get_by_event_key(f"assignment:{assignment.id}:publish")
             if scheduled is not None:
                 await self._upsert_job(
@@ -406,21 +428,29 @@ class AssignmentService:
                     available_at=assignment.publish_at,
                     now=now,
                 )
-        elif payload.deadline > old_deadline:
-            if (
-                assignment.status == "closed"
-                and assignment.closed_at is not None
-                and assignment.closed_at >= old_deadline
-            ):
+        else:
+            if audience_changed:
+                users = await active_students_for_audience(self._session, payload.audience)
+                audience_target_count = len(users)
+                (
+                    audience_added,
+                    audience_removed,
+                ) = await self._assignments.replace_audience_snapshot(
+                    assignment_id=assignment.id,
+                    users=users,
+                    created_at=now,
+                )
+            if deadline_changed and automatically_closed and payload.deadline > now:
                 assignment.status = "published"
                 assignment.closed_at = None
-            await self._upsert_job(
-                assignment=assignment,
-                job_type="close_assignment",
-                event_key=f"assignment:{assignment.id}:close",
-                available_at=assignment.deadline,
-                now=now,
-            )
+            if deadline_changed and assignment.status == "published":
+                await self._upsert_job(
+                    assignment=assignment,
+                    job_type="close_assignment",
+                    event_key=f"assignment:{assignment.id}:close",
+                    available_at=assignment.deadline,
+                    now=now,
+                )
 
         self._add_audit(
             actor_user_id=audit.actor.user.id,
@@ -428,7 +458,18 @@ class AssignmentService:
             assignment_id=assignment.id,
             request_id=audit.request_id,
             ip_prefix=audit.ip_prefix,
-            change_summary={"changed_fields": changed_fields},
+            change_summary={
+                "changed_fields": changed_fields,
+                **(
+                    {
+                        "audience_added": audience_added,
+                        "audience_removed": audience_removed,
+                        "audience_target_count": audience_target_count,
+                    }
+                    if audience_changed and published
+                    else {}
+                ),
+            },
             now=now,
         )
         try:
@@ -1050,6 +1091,7 @@ class AssignmentService:
                         else None
                     ),
                     has_feedback=record.has_feedback,
+                    in_current_audience=record.in_current_audience,
                 )
                 for record in records
             ],

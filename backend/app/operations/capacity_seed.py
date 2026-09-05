@@ -14,7 +14,6 @@ CAPACITY_STUDENT_COUNT = 300
 CAPACITY_ADMIN_COUNT = 10
 CAPACITY_ANNOUNCEMENT_COUNT = 100
 CAPACITY_ASSIGNMENT_COUNT = 40
-CAPACITY_COMPETITION_COUNT = 10
 CAPACITY_TEAM_COUNT = 100
 CAPACITY_COHORT_COUNT = 4
 CAPACITY_DIRECTION_COUNT = 8
@@ -35,9 +34,6 @@ class CapacityDataset:
     student_notifications: list[Row]
     assignments: list[Row]
     assignment_audience_users: list[Row]
-    competitions: list[Row]
-    competition_tasks: list[Row]
-    competition_registrations: list[Row]
     teams: list[Row]
     team_members: list[Row]
     submissions: list[Row]
@@ -83,9 +79,6 @@ def _summary(dataset: CapacityDataset) -> dict[str, int]:
         "student_notifications": len(dataset.student_notifications),
         "assignments": len(dataset.assignments),
         "assignment_audience_users": len(dataset.assignment_audience_users),
-        "competitions": len(dataset.competitions),
-        "competition_tasks": len(dataset.competition_tasks),
-        "competition_registrations": len(dataset.competition_registrations),
         "teams": len(dataset.teams),
         "team_members": len(dataset.team_members),
         "submissions": len(dataset.submissions),
@@ -118,15 +111,7 @@ class CapacityDatasetBuilder:
             assignment_submissions,
             assignment_versions,
         ) = self._build_assignments()
-        (
-            competitions,
-            competition_tasks,
-            registrations,
-            teams,
-            team_members,
-            competition_submissions,
-            competition_versions,
-        ) = self._build_competitions()
+        teams, team_members = self._build_teams()
         dataset = CapacityDataset(
             cohorts=cohorts,
             directions=directions,
@@ -135,13 +120,10 @@ class CapacityDatasetBuilder:
             student_notifications=student_notifications,
             assignments=assignments,
             assignment_audience_users=assignment_audience_users,
-            competitions=competitions,
-            competition_tasks=competition_tasks,
-            competition_registrations=registrations,
             teams=teams,
             team_members=team_members,
-            submissions=assignment_submissions + competition_submissions,
-            submission_versions=assignment_versions + competition_versions,
+            submissions=assignment_submissions,
+            submission_versions=assignment_versions,
             audit_logs=[],
         )
         dataset.audit_logs.append(self._build_marker(_summary(dataset)))
@@ -350,9 +332,7 @@ class CapacityDatasetBuilder:
                     {
                         "id": submission_id,
                         "assignment_id": assignment_id,
-                        "competition_task_id": None,
                         "owner_user_id": student_id,
-                        "owner_team_id": None,
                         "latest_version_id": version_ids[-1],
                         "created_at": first_submitted_at,
                         "updated_at": latest_submitted_at,
@@ -386,209 +366,42 @@ class CapacityDatasetBuilder:
                 version_index += version_count
         return assignments, audience_rows, submissions, versions
 
-    def _build_competitions(
-        self,
-    ) -> tuple[
-        list[Row],
-        list[Row],
-        list[Row],
-        list[Row],
-        list[Row],
-        list[Row],
-        list[Row],
-    ]:
-        competitions: list[Row] = []
-        tasks: list[Row] = []
-        registrations: list[Row] = []
+    def _build_teams(self) -> tuple[list[Row], list[Row]]:
         teams: list[Row] = []
         members: list[Row] = []
-        submissions: list[Row] = []
-        versions: list[Row] = []
-        competition_version_index = 0
-        for competition_index in range(CAPACITY_COMPETITION_COUNT):
-            competition_id = _capacity_uuid("competition", competition_index)
-            task_id = _capacity_uuid("competition-task", competition_index)
-            if competition_index < 6:
-                status = "archived"
-                registration_start = datetime(2024, 1, 1, tzinfo=UTC)
-                registration_end = datetime(2024, 2, 1, tzinfo=UTC)
-                submission_start = datetime(2024, 2, 2, tzinfo=UTC)
-                submission_end = datetime(2024, 6, 1, tzinfo=UTC)
-                archived_at = datetime(2024, 7, 1, tzinfo=UTC)
-            elif competition_index < 9:
-                status = "submission_open"
-                registration_start = datetime(2025, 1, 1, tzinfo=UTC)
-                registration_end = datetime(2025, 12, 1, tzinfo=UTC)
-                submission_start = datetime(2026, 1, 1, tzinfo=UTC)
-                submission_end = _FUTURE_END
-                archived_at = None
-            else:
-                status = "registration_open"
-                registration_start = datetime(2025, 1, 1, tzinfo=UTC)
-                registration_end = datetime(2029, 1, 1, tzinfo=UTC)
-                submission_start = datetime(2029, 1, 2, tzinfo=UTC)
-                submission_end = _FUTURE_END
-                archived_at = None
-            published_at = registration_start - timedelta(days=1)
-            competitions.append(
+        for team_index in range(CAPACITY_TEAM_COUNT):
+            team_id = _capacity_uuid("team", team_index)
+            created_at = _PUBLISHED_BASE + timedelta(minutes=team_index)
+            student_indexes = [team_index * 3 + offset for offset in range(3)]
+            captain_id = self._student_ids[student_indexes[0]]
+            teams.append(
                 {
-                    "id": competition_id,
-                    "name": f"容量赛事 {competition_index + 1:02d}",
-                    "description_markdown": "虚构容量赛事说明。",
-                    "description_html": "<p>虚构容量赛事说明。</p>",
-                    "rules_url": "https://example.invalid/capacity-rules",
-                    "status": status,
-                    "registration_start": registration_start,
-                    "registration_end": registration_end,
-                    "submission_start": submission_start,
-                    "submission_end": submission_end,
-                    "min_team_size": 3,
-                    "max_team_size": 5,
-                    "created_by": self._admin_ids[competition_index % CAPACITY_ADMIN_COUNT],
-                    "updated_by": self._admin_ids[competition_index % CAPACITY_ADMIN_COUNT],
-                    "published_at": published_at,
-                    "archived_at": archived_at,
-                    **_mixin_fields(published_at),
+                    "id": team_id,
+                    "name": f"容量队伍 {team_index + 1:03d}",
+                    "status": "forming",
+                    "captain_user_id": captain_id,
+                    "invite_code_hash": hashlib.sha256(
+                        f"capacity-team-{team_index}".encode()
+                    ).hexdigest(),
+                    "invite_code_rotated_at": created_at,
+                    "max_members": 5,
+                    "dissolved_at": None,
+                    **_mixin_fields(created_at),
                 }
             )
-            tasks.append(
-                {
-                    "id": task_id,
-                    "competition_id": competition_id,
-                    "title": f"容量赛题 {competition_index + 1:02d}",
-                    "description_markdown": "虚构容量赛题说明。",
-                    "description_html": "<p>虚构容量赛题说明。</p>",
-                    "resource_url": "https://example.invalid/capacity-task",
-                    "allowed_extensions": ["txt", "pdf", "zip"],
-                    "max_total_bytes": 2_147_483_648,
-                    "deadline": submission_end - timedelta(days=1),
-                    "display_order": 0,
-                    **_mixin_fields(published_at),
-                }
-            )
-            for local_team_index in range(10):
-                global_team_index = competition_index * 10 + local_team_index
-                team_id = _capacity_uuid("team", global_team_index)
-                student_indexes = [
-                    (competition_index * 30 + local_team_index * 3 + offset)
-                    % CAPACITY_STUDENT_COUNT
-                    for offset in range(3)
-                ]
-                captain_id = self._student_ids[student_indexes[0]]
-                forming = status == "registration_open"
-                team_status = "forming" if forming else status.replace("submission_open", "locked")
-                locked_at = None if forming else registration_end
-                teams.append(
+            for member_offset, student_index in enumerate(student_indexes):
+                members.append(
                     {
-                        "id": team_id,
-                        "competition_id": competition_id,
-                        "name": f"容量队伍 {global_team_index + 1:03d}",
-                        "status": team_status,
-                        "captain_user_id": captain_id,
-                        "invite_code_hash": hashlib.sha256(
-                            f"capacity-team-{global_team_index}".encode()
-                        ).hexdigest(),
-                        "invite_code_rotated_at": registration_start,
-                        "min_size_waived_at": None,
-                        "min_size_waived_by": None,
-                        "waiver_reason": None,
-                        "disqualified_at": None,
-                        "disqualified_by": None,
-                        "disqualification_reason": None,
-                        "locked_at": locked_at,
-                        "dissolved_at": None,
-                        **_mixin_fields(registration_start),
+                        "id": _capacity_uuid("team-member", team_index * 3 + member_offset),
+                        "team_id": team_id,
+                        "user_id": self._student_ids[student_index],
+                        "joined_at": created_at,
+                        "left_at": None,
+                        "added_by_admin": False,
+                        "admin_reason": None,
                     }
                 )
-                for member_offset, student_index in enumerate(student_indexes):
-                    student_id = self._student_ids[student_index]
-                    registrations.append(
-                        {
-                            "id": _capacity_uuid(
-                                "competition-registration",
-                                global_team_index * 3 + member_offset,
-                            ),
-                            "competition_id": competition_id,
-                            "user_id": student_id,
-                            "status": "registered",
-                            "registered_at": registration_start,
-                            "withdrawn_at": None,
-                            "disqualified_at": None,
-                            "disqualified_by": None,
-                            "disqualification_reason": None,
-                            **_mixin_fields(registration_start),
-                        }
-                    )
-                    members.append(
-                        {
-                            "id": _capacity_uuid(
-                                "team-member", global_team_index * 3 + member_offset
-                            ),
-                            "team_id": team_id,
-                            "competition_id": competition_id,
-                            "user_id": student_id,
-                            "joined_at": registration_start,
-                            "left_at": None,
-                            "added_by_admin": False,
-                            "admin_reason": None,
-                        }
-                    )
-                if forming:
-                    continue
-                submission_id = _capacity_uuid("competition-submission", global_team_index)
-                version_count = global_team_index % 3 + 1
-                version_ids = [
-                    _capacity_uuid("competition-version", competition_version_index + offset)
-                    for offset in range(version_count)
-                ]
-                first_submitted_at = submission_start + timedelta(days=2)
-                submissions.append(
-                    {
-                        "id": submission_id,
-                        "assignment_id": None,
-                        "competition_task_id": task_id,
-                        "owner_user_id": None,
-                        "owner_team_id": team_id,
-                        "latest_version_id": version_ids[-1],
-                        "created_at": first_submitted_at,
-                        "updated_at": first_submitted_at + timedelta(hours=version_count - 1),
-                    }
-                )
-                for offset, version_id in enumerate(version_ids):
-                    number = offset + 1
-                    versions.append(
-                        {
-                            "id": version_id,
-                            "submission_id": submission_id,
-                            "version_number": number,
-                            "submitted_by": captain_id,
-                            "text_markdown": (
-                                f"虚构容量赛事 {competition_index + 1:02d} "
-                                f"队伍 {global_team_index + 1:03d} 版本 {number}。"
-                            ),
-                            "text_html": (
-                                f"<p>虚构容量赛事 {competition_index + 1:02d} "
-                                f"队伍 {global_team_index + 1:03d} 版本 {number}。</p>"
-                            ),
-                            "external_url": None,
-                            "total_file_bytes": 0,
-                            "idempotency_key": (
-                                f"capacity-competition-{competition_index:02d}-"
-                                f"team-{local_team_index:02d}-v{number}"
-                            ),
-                            "submitted_at": first_submitted_at + timedelta(hours=offset),
-                        }
-                    )
-                competition_version_index += version_count
-        return (
-            competitions,
-            tasks,
-            registrations,
-            teams,
-            members,
-            submissions,
-            versions,
-        )
+        return teams, members
 
     def _build_marker(self, summary: dict[str, int]) -> Row:
         return {
@@ -633,7 +446,6 @@ class CapacityDatasetSeeder:
     @staticmethod
     def expected_summary() -> dict[str, int]:
         assignment_versions = CAPACITY_ASSIGNMENT_COUNT * CAPACITY_STUDENT_COUNT * 2
-        competition_versions = 90 * 2
         return {
             "dataset_version": CAPACITY_DATASET_VERSION,
             "cohorts": CAPACITY_COHORT_COUNT,
@@ -644,11 +456,8 @@ class CapacityDatasetSeeder:
             "student_notifications": (CAPACITY_ANNOUNCEMENT_COUNT * CAPACITY_STUDENT_COUNT),
             "assignments": CAPACITY_ASSIGNMENT_COUNT,
             "assignment_audience_users": (CAPACITY_ASSIGNMENT_COUNT * CAPACITY_STUDENT_COUNT),
-            "competitions": CAPACITY_COMPETITION_COUNT,
-            "competition_tasks": CAPACITY_COMPETITION_COUNT,
-            "competition_registrations": CAPACITY_TEAM_COUNT * 3,
             "teams": CAPACITY_TEAM_COUNT,
             "team_members": CAPACITY_TEAM_COUNT * 3,
-            "submissions": (CAPACITY_ASSIGNMENT_COUNT * CAPACITY_STUDENT_COUNT + 90),
-            "submission_versions": assignment_versions + competition_versions,
+            "submissions": CAPACITY_ASSIGNMENT_COUNT * CAPACITY_STUDENT_COUNT,
+            "submission_versions": assignment_versions,
         }

@@ -13,7 +13,7 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260904_0019"]
+    assert script.get_heads() == ["20260904_0020"]
 
 
 def test_persistent_login_migration_is_reversible_and_follows_account_deletion() -> None:

@@ -183,7 +183,7 @@ export type AnnouncementAdminPage = {
 export type NotificationUnreadCounts = {
   announcements: number;
   assignments: number;
-  competitions: number;
+  teams: number;
   help_requests: number;
 };
 
@@ -199,7 +199,7 @@ export type Dashboard = {
   unread_counts: NotificationUnreadCounts;
   recent_announcements: AnnouncementSummary[];
   assignments: { id: string; title: string; deadline: string }[];
-  competitions: { id: string; name: string; status: string }[];
+  team: { id: string; name: string; member_count: number; max_members: number } | null;
 };
 
 export type StudentNotification = {
@@ -403,10 +403,8 @@ export type SubmissionVersion = {
 
 export type Submission = {
   id: string;
-  assignment_id: string | null;
-  competition_task_id: string | null;
-  owner_user_id: string | null;
-  owner_team_id: string | null;
+  assignment_id: string;
+  owner_user_id: string;
   latest_version_id: string;
   versions: SubmissionVersion[];
 };
@@ -442,6 +440,7 @@ export type AssignmentSubmissionAdminItem = {
   latest_version_number: number | null;
   last_submitted_at: string | null;
   has_feedback: boolean;
+  in_current_audience: boolean;
 };
 
 export type AssignmentSubmissionAdminPage = {
@@ -462,131 +461,12 @@ export type AssignmentExtension = {
   revision: number;
 };
 
-export type CompetitionStatus =
-  | "draft"
-  | "registration_open"
-  | "registration_closed"
-  | "submission_open"
-  | "submission_closed"
-  | "archived";
-
-export type RegistrationStatus =
-  | "registered"
-  | "withdrawn"
-  | "disqualified";
-
-export type TeamStatus =
-  | "forming"
-  | "dissolved"
-  | "locked"
-  | "invalid"
-  | "disqualified"
-  | "archived";
-
-export type CompetitionTask = {
-  id: string;
-  competition_id: string;
-  title: string;
-  description_markdown: string;
-  description_html: string;
-  resource_url: string | null;
-  allowed_extensions: string[];
-  max_total_bytes: number;
-  deadline: string;
-  display_order: number;
-  revision: number;
-  submission_id: string | null;
-  latest_version_id: string | null;
-};
-
-export type CompetitionSummary = {
-  id: string;
-  name: string;
-  status: CompetitionStatus;
-  registration_start: string;
-  registration_end: string;
-  submission_start: string;
-  submission_end: string;
-  min_team_size: number;
-  max_team_size: number;
-  registration_status: RegistrationStatus | null;
-  registration_disqualification_reason: string | null;
-  team_id: string | null;
-  team_name: string | null;
-  team_status: TeamStatus | null;
-};
-
-export type CompetitionPage = {
-  items: CompetitionSummary[];
-  total: number;
-  page: number;
-  page_size: number;
-};
-
-export type CompetitionDetail = {
-  id: string;
-  name: string;
-  description_markdown: string;
-  description_html: string;
-  rules_url: string | null;
-  status: CompetitionStatus;
-  registration_start: string;
-  registration_end: string;
-  submission_start: string;
-  submission_end: string;
-  min_team_size: number;
-  max_team_size: number;
-  published_at: string | null;
-  archived_at: string | null;
-  revision: number;
-  registration_status: RegistrationStatus | null;
-  registration_disqualification_reason: string | null;
-  team_id: string | null;
-  team_name: string | null;
-  team_status: TeamStatus | null;
-  tasks: CompetitionTask[];
-};
-
-export type AdminCompetitionDetail = CompetitionDetail & {
-  registration_count: number;
-  team_count: number;
-  valid_team_count: number;
-  invalid_team_count: number;
-};
-
-export type Registration = {
-  competition_id: string;
-  user_id: string;
-  status: RegistrationStatus;
-  registered_at: string;
-  withdrawn_at: string | null;
-  disqualified_at: string | null;
-  disqualification_reason: string | null;
-  revision: number;
-};
-
-export type AdminRegistrationItem = {
-  user_id: string;
-  full_name: string;
-  student_number: string;
-  status: RegistrationStatus;
-  registered_at: string;
-  withdrawn_at: string | null;
-  disqualified_at: string | null;
-  disqualification_reason: string | null;
-  team_id: string | null;
-  team_name: string | null;
-};
-
-export type AdminRegistrationList = {
-  items: AdminRegistrationItem[];
-  total: number;
-};
+export type TeamStatus = "forming" | "dissolved";
 
 export type TeamMember = {
   user_id: string;
   full_name: string;
-  student_id: string;
+  student_number: string;
   joined_at: string;
   added_by_admin: boolean;
   is_captain: boolean;
@@ -594,22 +474,15 @@ export type TeamMember = {
 
 export type Team = {
   id: string;
-  competition_id: string;
   name: string;
   status: TeamStatus;
   captain_user_id: string | null;
   member_count: number;
-  min_team_size: number;
-  max_team_size: number;
-  min_size_waived: boolean;
-  waiver_reason: string | null;
-  disqualification_reason: string | null;
-  locked_at: string | null;
+  max_members: number;
   dissolved_at: string | null;
   revision: number;
   members: TeamMember[];
   can_manage: boolean;
-  can_submit: boolean;
 };
 
 export type TeamCreated = Team & {
@@ -623,11 +496,10 @@ export type AutoAssign = Team & {
 
 export type TeamDirectoryItem = {
   id: string;
-  competition_id: string;
   name: string;
   status: TeamStatus;
   member_count: number;
-  max_team_size: number;
+  max_members: number;
   can_join: boolean;
 };
 
@@ -647,32 +519,21 @@ export type InviteCodeRotated = {
 
 export type AdminTeamListItem = {
   id: string;
-  competition_id: string;
   name: string;
   status: TeamStatus;
   captain_user_id: string | null;
   member_count: number;
-  min_size_waived: boolean;
-  latest_submission_count: number;
+  max_members: number;
 };
 
 export type AdminTeamList = {
   items: AdminTeamListItem[];
   total: number;
+  page: number;
+  page_size: number;
 };
 
-export type AdminTeamSubmissionItem = {
-  task_id: string;
-  task_title: string;
-  deadline: string;
-  submission_id: string | null;
-  latest_version_id: string | null;
-};
-
-export type AdminTeamDetail = Team & {
-  submissions: AdminTeamSubmissionItem[];
-};
-
+export type AdminTeamDetail = Team;
 
 export type IntentionStatus = "draft" | "open" | "closed" | "archived";
 

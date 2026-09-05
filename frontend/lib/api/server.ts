@@ -9,8 +9,6 @@ import { safeReturnPath } from "@/lib/safe-return-path";
 import type {
   AdminHelpRequestDetail,
   AdminHelpRequestPage,
-  AdminCompetitionDetail,
-  AdminRegistrationList,
   AdminSession,
   AdminUserPage,
   AdminIntentionSurveyPage,
@@ -33,9 +31,6 @@ import type {
   AssignmentDetail,
   AssignmentPage,
   AssignmentSubmissionAdminPage,
-  CompetitionDetail,
-  CompetitionPage,
-  CompetitionTask,
   Dashboard,
   Direction,
   ExcellentSubmissionDetail,
@@ -47,6 +42,7 @@ import type {
   Session,
   Submission,
   Team,
+  TeamDirectoryPage,
   User,
 } from "@/lib/api/types";
 
@@ -336,56 +332,44 @@ export async function getAdminAssignment(
 export async function getAdminAssignmentSubmissions(
   assignmentId: string,
 ): Promise<AssignmentSubmissionAdminPage> {
-  return resolveProtectedResult(
+  const pageSize = 100;
+  const first = resolveProtectedResult(
     await serverApi<AssignmentSubmissionAdminPage>(
       "/admin/assignments/" +
         encodeURIComponent(assignmentId) +
-        "/submissions?page_size=100",
+        "/submissions?page=1&page_size=" +
+        pageSize,
     ),
   );
-}
-
-export async function getCompetitions(search = ""): Promise<CompetitionPage> {
-  const suffix = search ? "?" + search : "";
-  return resolveProtectedResult(
-    await serverApi<CompetitionPage>("/competitions" + suffix),
-  );
-}
-
-export async function getCompetition(
-  competitionId: string,
-): Promise<CompetitionDetail | null> {
-  const result = await serverApi<CompetitionDetail>(
-    "/competitions/" + encodeURIComponent(competitionId),
-  );
-  if (result instanceof Response && result.status === 404) {
-    return null;
-  }
-  return resolveProtectedResult(result);
-}
-
-export async function getCompetitionTeam(
-  competitionId: string,
-): Promise<Team | null> {
-  const result = await serverApi<Team>(
-    "/competitions/" + encodeURIComponent(competitionId) + "/my-team",
-  );
-  if (result instanceof Response && result.status === 404) {
-    return null;
-  }
-  return resolveProtectedResult(result);
-}
-
-export async function getCompetitionTeams(
-  competitionId: string,
-  search = "",
-): Promise<import("@/lib/api/types").TeamDirectoryPage> {
-  const suffix = search ? "?" + search : "";
-  return resolveProtectedResult(
-    await serverApi<import("@/lib/api/types").TeamDirectoryPage>(
-      "/competitions/" + encodeURIComponent(competitionId) + "/teams" + suffix,
+  const pageCount = Math.ceil(first.total / pageSize);
+  if (pageCount <= 1) return first;
+  const remaining = await Promise.all(
+    Array.from({ length: pageCount - 1 }, (_, index) =>
+      serverApi<AssignmentSubmissionAdminPage>(
+        "/admin/assignments/" +
+          encodeURIComponent(assignmentId) +
+          "/submissions?page=" +
+          (index + 2) +
+          "&page_size=" +
+          pageSize,
+      ).then(resolveProtectedResult),
     ),
   );
+  return {
+    ...first,
+    items: [first, ...remaining].flatMap((page) => page.items),
+  };
+}
+
+export async function getTeams(search = ""): Promise<TeamDirectoryPage> {
+  const suffix = search ? "?" + search : "";
+  return resolveProtectedResult(
+    await serverApi<TeamDirectoryPage>("/teams" + suffix),
+  );
+}
+
+export async function getMyTeam(): Promise<Team | null> {
+  return resolveProtectedResult(await serverApi<Team | null>("/teams/me"));
 }
 
 export async function getIntentions(): Promise<IntentionSurveyPage> {
@@ -511,76 +495,10 @@ export async function getAdminKnowledge(): Promise<KnowledgeAdminStatus> {
   );
 }
 
-export async function getCompetitionTask(
-  competitionId: string,
-  taskId: string,
-): Promise<CompetitionTask | null> {
-  const result = await serverApi<CompetitionTask>(
-    "/competitions/" +
-      encodeURIComponent(competitionId) +
-      "/tasks/" +
-      encodeURIComponent(taskId),
-  );
-  if (result instanceof Response && result.status === 404) {
-    return null;
-  }
-  return resolveProtectedResult(result);
-}
-
-export async function getCompetitionSubmission(
-  competitionId: string,
-  taskId: string,
-): Promise<Submission | null> {
-  const result = await serverApi<Submission>(
-    "/competitions/" +
-      encodeURIComponent(competitionId) +
-      "/tasks/" +
-      encodeURIComponent(taskId) +
-      "/submission",
-  );
-  if (result instanceof Response && result.status === 404) {
-    return null;
-  }
-  return resolveProtectedResult(result);
-}
-
-export async function getAdminCompetitions(): Promise<CompetitionPage> {
+export async function getAdminTeams(search = ""): Promise<AdminTeamList> {
+  const suffix = search ? "?" + search : "";
   return resolveProtectedResult(
-    await serverApi<CompetitionPage>("/admin/competitions?page_size=100"),
-  );
-}
-
-export async function getAdminCompetition(
-  competitionId: string,
-): Promise<AdminCompetitionDetail | null> {
-  const result = await serverApi<AdminCompetitionDetail>(
-    "/admin/competitions/" + encodeURIComponent(competitionId),
-  );
-  if (result instanceof Response && result.status === 404) {
-    return null;
-  }
-  return resolveProtectedResult(result);
-}
-
-export async function getAdminCompetitionTeams(
-  competitionId: string,
-): Promise<AdminTeamList> {
-  return resolveProtectedResult(
-    await serverApi<AdminTeamList>(
-      "/admin/competitions/" + encodeURIComponent(competitionId) + "/teams",
-    ),
-  );
-}
-
-export async function getAdminCompetitionRegistrations(
-  competitionId: string,
-): Promise<AdminRegistrationList> {
-  return resolveProtectedResult(
-    await serverApi<AdminRegistrationList>(
-      "/admin/competitions/" +
-        encodeURIComponent(competitionId) +
-        "/registrations",
-    ),
+    await serverApi<AdminTeamList>("/admin/teams" + suffix),
   );
 }
 

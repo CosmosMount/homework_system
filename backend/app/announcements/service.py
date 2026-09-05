@@ -19,8 +19,8 @@ from app.announcements.schemas import (
     AnnouncementPatchRequest,
     AnnouncementSummaryResponse,
     DashboardAssignmentItem,
-    DashboardCompetitionItem,
     DashboardResponse,
+    DashboardTeamItem,
     DashboardUnreadCounts,
     DashboardUserResponse,
 )
@@ -28,12 +28,12 @@ from app.assignments.repository import AssignmentRepository
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
 from app.auth.service import AuthenticatedContext, context_effective_role
-from app.competitions.repository import CompetitionRepository
 from app.core.errors import ApplicationError, ErrorDetail
 from app.core.identifiers import uuid7
 from app.core.markdown import render_markdown
 from app.notifications.models import OutboxJob, StudentNotification
 from app.notifications.repository import OutboxRepository, StudentNotificationRepository
+from app.teams.repository import TeamRepository
 from app.uploads.models import StoredFile
 from app.uploads.repository import UploadRepository
 from app.users.models import User
@@ -985,14 +985,17 @@ class AnnouncementService:
                 )
                 for record in records
             ]
-        competition_items = [
-            DashboardCompetitionItem(
-                id=competition.id,
-                name=competition.name,
-                status=competition.status,
-            )
-            for competition in await CompetitionRepository(self._session).dashboard_competitions()
-        ]
+        team_item: DashboardTeamItem | None = None
+        if context_effective_role(context) == "student":
+            team_repository = TeamRepository(self._session)
+            team = await team_repository.team_for_user(context.user.id)
+            if team is not None:
+                team_item = DashboardTeamItem(
+                    id=team.id,
+                    name=team.name,
+                    member_count=await team_repository.member_count(team.id),
+                    max_members=team.max_members,
+                )
         unread_counts = await self._notifications.unread_counts(context.user.id)
         return DashboardResponse(
             current_user=DashboardUserResponse(
@@ -1006,7 +1009,7 @@ class AnnouncementService:
             unread_counts=DashboardUnreadCounts(
                 announcements=unread_counts.announcements,
                 assignments=unread_counts.assignments,
-                competitions=unread_counts.competitions,
+                teams=unread_counts.teams,
                 help_requests=unread_counts.help_requests,
             ),
             recent_announcements=await self._summary_responses(
@@ -1014,7 +1017,7 @@ class AnnouncementService:
                 user_id=context.user.id,
             ),
             assignments=assignment_items,
-            competitions=competition_items,
+            team=team_item,
         )
 
 

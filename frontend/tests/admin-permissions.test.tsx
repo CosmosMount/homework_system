@@ -9,6 +9,7 @@ import NewAssignmentPage from "@/app/admin/assignments/new/page";
 import { ProfileEditor } from "@/components/admin/profile-editor";
 import { AssignmentEditor } from "@/components/admin/assignment-editor";
 import { AppShell } from "@/components/layout/app-shell";
+import { ApiError } from "@/lib/api/client";
 import type { AdminSession, AssignmentAdmin, User } from "@/lib/api/types";
 
 const {
@@ -288,6 +289,152 @@ describe("admin permissions UI", () => {
     expect(screen.getByText("作业草稿已保存。")).toBeInTheDocument();
   });
 
+  it("edits a published assignment audience while preserving frozen file rules", async () => {
+    const published: AssignmentAdmin = {
+      ...assignment(),
+      status: "published",
+      published_at: "2026-08-25T10:00:39.321Z",
+      publish_at: "2026-08-25T10:00:37.321Z",
+      deadline: "2026-09-01T10:00:42.111Z",
+      stats: {
+        ...assignment().stats,
+        submitted_count: 1,
+        last_submitted_at: "2026-08-30T09:30:15Z",
+      },
+    };
+    const updated = {
+      ...published,
+      title: "修正后的已发布作业",
+      audience: {
+        all_students: false,
+        cohort_ids: [],
+        direction_ids: ["direction-1"],
+        match: "intersection" as const,
+      },
+      deadline: new Date("2026-08-31T18:00").toISOString(),
+      revision: published.revision + 1,
+    };
+    csrfFetchMock.mockResolvedValue(updated);
+
+    render(
+      <AssignmentEditor
+        directions={[
+          {
+            id: "direction-1",
+            code: "ec",
+            name: "电控",
+            description: null,
+            is_active: true,
+            revision: 1,
+          },
+        ]}
+        initialAssignment={published}
+        initialSubmissions={[]}
+      />,
+    );
+
+    expect(screen.getByLabelText("标题")).toBeEnabled();
+    expect(screen.getByLabelText("Markdown 作业说明")).toBeEnabled();
+    expect(screen.getByLabelText("公共截止")).toBeEnabled();
+    expect(screen.getByLabelText("全部激活学生")).toBeEnabled();
+    expect(screen.getByLabelText("允许扩展名（逗号分隔）")).toBeDisabled();
+    expect(screen.getByLabelText("单版本附件总上限（字节）")).toBeDisabled();
+    expect(screen.getByLabelText("发布时间")).toBeDisabled();
+    expect(screen.getByText(/最后正式提交/)).toHaveTextContent("2026年8月30日 17:30");
+
+    fireEvent.change(screen.getByLabelText("标题"), {
+      target: { value: "修正后的已发布作业" },
+    });
+    fireEvent.change(screen.getByLabelText("公共截止"), {
+      target: { value: "2026-08-31T18:00" },
+    });
+    fireEvent.click(screen.getByLabelText("按技术方向"));
+    fireEvent.click(screen.getByLabelText("电控"));
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledTimes(1));
+    const [path, request] = csrfFetchMock.mock.calls[0] ?? [];
+    expect(path).toBe("/admin/assignments/assignment-1");
+    expect(request).toMatchObject({ method: "PATCH" });
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      revision: published.revision,
+      title: "修正后的已发布作业",
+      audience: {
+        all_students: false,
+        cohort_ids: [],
+        direction_ids: ["direction-1"],
+        match: "intersection",
+      },
+      allowed_extensions: published.allowed_extensions,
+      max_total_bytes: published.max_total_bytes,
+      publish_at: "2026-08-25T10:00:37.321Z",
+      deadline: new Date("2026-08-31T18:00").toISOString(),
+    });
+    expect(screen.getByText("作业已更新。")).toBeInTheDocument();
+  });
+
+  it("separates submitted, unsubmitted and historical submitters", () => {
+    const published: AssignmentAdmin = {
+      ...assignment(),
+      status: "published",
+      published_at: "2026-08-25T10:00:00Z",
+    };
+    render(
+      <AssignmentEditor
+        directions={[]}
+        initialAssignment={published}
+        initialSubmissions={[
+          {
+            user_id: "submitted-user",
+            full_name: "已提交同学",
+            student_number: "1001",
+            cohort_id: null,
+            direction_id: null,
+            submission_id: "submission-1",
+            latest_version_number: 2,
+            last_submitted_at: "2026-08-26T10:00:00Z",
+            has_feedback: true,
+            in_current_audience: true,
+          },
+          {
+            user_id: "unsubmitted-user",
+            full_name: "未提交同学",
+            student_number: "1002",
+            cohort_id: null,
+            direction_id: null,
+            submission_id: null,
+            latest_version_number: null,
+            last_submitted_at: null,
+            has_feedback: false,
+            in_current_audience: true,
+          },
+          {
+            user_id: "historical-user",
+            full_name: "历史提交同学",
+            student_number: "1003",
+            cohort_id: null,
+            direction_id: null,
+            submission_id: "submission-3",
+            latest_version_number: 1,
+            last_submitted_at: "2026-08-25T10:00:00Z",
+            has_feedback: false,
+            in_current_audience: false,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: /已提交.*\(1\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /未提交.*\(1\)/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /历史提交（已不在当前受众）.*\(1\)/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("已提交同学")).toBeInTheDocument();
+    expect(screen.getByText("未提交同学")).toBeInTheDocument();
+    expect(screen.getByText("历史提交同学")).toBeInTheDocument();
+    expect(screen.getAllByText("管理个人延期")).toHaveLength(2);
+  });
+
   it("publishes an assignment over HTTP when randomUUID is unavailable", async () => {
     const draft = assignment();
     const published: AssignmentAdmin = {
@@ -333,6 +480,97 @@ describe("admin permissions UI", () => {
     expect(
       screen.getByText("作业已发布并固化受众快照。"),
     ).toBeInTheDocument();
+  });
+
+  it("restores a stale admin student-view session before publishing", async () => {
+    const draft = assignment();
+    const published: AssignmentAdmin = {
+      ...draft,
+      status: "published",
+      published_at: "2026-08-25T10:00:00Z",
+      revision: 4,
+    };
+    const forbidden = new ApiError(
+      new Response(null, { status: 403 }),
+      {
+        error: {
+          code: "FORBIDDEN",
+          message: "权限不足。",
+          request_id: "request-id",
+        },
+      },
+    );
+    csrfFetchMock
+      .mockRejectedValueOnce(forbidden)
+      .mockResolvedValueOnce({ ...admin, student_view: false })
+      .mockResolvedValueOnce(draft)
+      .mockResolvedValueOnce(published);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(
+      <AssignmentEditor
+        directions={[]}
+        initialAssignment={draft}
+        initialSubmissions={[]}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "发布 / 安排发布" }),
+    );
+
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledTimes(4));
+    expect(csrfFetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/admin/assignments/assignment-1",
+      expect.objectContaining({ method: "PATCH" }),
+    );
+    expect(csrfFetchMock).toHaveBeenNthCalledWith(2, "/auth/student-view", {
+      method: "DELETE",
+    });
+    expect(csrfFetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/admin/assignments/assignment-1",
+      expect.objectContaining({ method: "PATCH" }),
+    );
+    expect(csrfFetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/admin/assignments/assignment-1/publish",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(
+      screen.getByText("作业已发布并固化受众快照。"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not retry when the session cannot restore administrator view", async () => {
+    const forbidden = new ApiError(
+      new Response(null, { status: 403 }),
+      {
+        error: {
+          code: "FORBIDDEN",
+          message: "权限不足。",
+          request_id: "request-id",
+        },
+      },
+    );
+    csrfFetchMock.mockRejectedValue(forbidden);
+
+    render(
+      <AssignmentEditor
+        directions={[]}
+        initialAssignment={assignment()}
+        initialSubmissions={[]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("权限不足。")).toBeInTheDocument();
+    });
+    expect(csrfFetchMock).toHaveBeenCalledTimes(2);
+    expect(csrfFetchMock).toHaveBeenNthCalledWith(2, "/auth/student-view", {
+      method: "DELETE",
+    });
   });
 
   it("keeps the assignment when delete confirmation is cancelled", () => {

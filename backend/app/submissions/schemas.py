@@ -73,10 +73,8 @@ class SubmissionVersionResponse(BaseModel):
 
 class SubmissionResponse(BaseModel):
     id: UUID
-    assignment_id: UUID | None
-    competition_task_id: UUID | None
-    owner_user_id: UUID | None
-    owner_team_id: UUID | None
+    assignment_id: UUID
+    owner_user_id: UUID
     latest_version_id: UUID
     versions: list[SubmissionVersionResponse]
 

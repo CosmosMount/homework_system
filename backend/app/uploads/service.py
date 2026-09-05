@@ -14,8 +14,6 @@ from app.announcements.service import AnnouncementService
 from app.assignments.policy import can_submit_assignment
 from app.assignments.repository import AssignmentRepository
 from app.auth.service import AuthenticatedContext, context_effective_role, context_is_admin
-from app.competitions.policy import task_submission_is_open
-from app.competitions.repository import CompetitionRepository
 from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.core.identifiers import uuid7
@@ -297,7 +295,6 @@ class UploadService:
         self._uploads = UploadRepository(session)
         self._announcements = AnnouncementRepository(session)
         self._assignments = AssignmentRepository(session)
-        self._competitions = CompetitionRepository(session)
         self._submissions = SubmissionRepository(session)
         self._object_store = object_store or MinioObjectStore(settings)
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -390,68 +387,6 @@ class UploadService:
             ):
                 raise self._not_found()
             return "announcement"
-
-        if payload.purpose == "competition_submission":
-            task = await self._competitions.get_task(payload.context_id)
-            competition = (
-                await self._competitions.get_competition(task.competition_id)
-                if task is not None
-                else None
-            )
-            team = (
-                await self._competitions.team_for_user(
-                    task.competition_id,
-                    context.user.id,
-                )
-                if task is not None
-                else None
-            )
-            if (
-                context_effective_role(context) != "student"
-                or task is None
-                or competition is None
-                or team is None
-            ):
-                raise self._not_found()
-            if team.captain_user_id != context.user.id:
-                raise ApplicationError(
-                    status_code=403,
-                    code="TEAM_CAPTAIN_REQUIRED",
-                    message="只有当前队长可以上传团队提交附件。",
-                )
-            if not task_submission_is_open(
-                competition,
-                task,
-                team,
-                self._clock(),
-            ):
-                code = (
-                    "TEAM_INVALID"
-                    if team.status == "invalid"
-                    else (
-                        "TEAM_DISQUALIFIED"
-                        if team.status == "disqualified"
-                        else "COMPETITION_SUBMISSION_CLOSED"
-                    )
-                )
-                raise ApplicationError(
-                    status_code=409,
-                    code=code,
-                    message="当前队伍或赛事状态不能上传赛题附件。",
-                )
-            if extension not in task.allowed_extensions:
-                raise ApplicationError(
-                    status_code=415,
-                    code="FILE_TYPE_NOT_ALLOWED",
-                    message="附件类型不在当前赛题白名单内。",
-                )
-            if payload.size_bytes > task.max_total_bytes:
-                raise ApplicationError(
-                    status_code=413,
-                    code="SUBMISSION_SIZE_EXCEEDED",
-                    message="文件超过当前赛题的附件总量上限。",
-                )
-            return "competition_task"
 
         assignment = await self._assignments.get_by_id(payload.context_id)
         if (
@@ -969,31 +904,22 @@ class UploadService:
             if record is None:
                 raise self._not_found()
             submission = record.submission
-            if not context_is_admin(context):
-                if submission.assignment_id is not None:
-                    if submission.owner_user_id != context.user.id:
-                        assignment = await self._assignments.get_by_id(submission.assignment_id)
-                        if assignment is None or assignment.status == "archived":
-                            raise self._not_found()
-                        marker = await self._assignments.get_excellent_marker(
-                            submission.assignment_id,
-                            version_id,
-                        )
-                        if marker is None or not await self._assignments.is_audience_user(
-                            submission.assignment_id,
-                            context.user.id,
-                            preview_user=(
-                                context.user if getattr(context, "is_student_view", False) else None
-                            ),
-                        ):
-                            raise self._not_found()
-                elif (
-                    submission.owner_team_id is None
-                    or await self._competitions.current_member(
-                        submission.owner_team_id,
-                        context.user.id,
-                    )
-                    is None
+            if submission.assignment_id is None or submission.owner_user_id is None:
+                raise self._not_found()
+            if not context_is_admin(context) and submission.owner_user_id != context.user.id:
+                assignment = await self._assignments.get_by_id(submission.assignment_id)
+                if assignment is None or assignment.status == "archived":
+                    raise self._not_found()
+                marker = await self._assignments.get_excellent_marker(
+                    submission.assignment_id,
+                    version_id,
+                )
+                if marker is None or not await self._assignments.is_audience_user(
+                    submission.assignment_id,
+                    context.user.id,
+                    preview_user=(
+                        context.user if getattr(context, "is_student_view", False) else None
+                    ),
                 ):
                     raise self._not_found()
         try:

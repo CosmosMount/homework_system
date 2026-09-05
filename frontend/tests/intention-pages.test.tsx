@@ -48,12 +48,12 @@ const dashboard: Dashboard = {
   unread_counts: {
     announcements: 0,
     assignments: 0,
-    competitions: 0,
+    teams: 0,
     help_requests: 0,
   },
   recent_announcements: [],
   assignments: [],
-  competitions: [],
+  team: null,
 };
 
 const survey: IntentionSurvey = {
