@@ -102,7 +102,7 @@
 `DELETE /auth/account` 只接受当前有效账号本人；`confirmation_email` 去除首尾空白并规范化后必须与当前账号完全一致，错误密码返回 `401 INVALID_CREDENTIALS`，邮箱不一致返回带 `confirmation_email/ACCOUNT_EMAIL_MISMATCH` 的 `400 VALIDATION_ERROR`，最后一名激活管理员返回 `409 STATE_CONFLICT`。成功前不会清 Cookie；数据库事务失败时账号保持，成功后不返回删除计数、邮箱或对象信息。备份确认不由普通用户填写，但页面必须披露不可撤销和备份保留期边界。
 
 
-`GET /auth/me` 和登录响应中的 `user` 始终返回真实 `role`；管理员学生视图通过 `student_view: true` 表示当前 Session 的有效角色为学生。学生视图请求管理员接口（包括 `/admin/*` 与管理员会话列表）返回 403；学生通知、作业、赛事、个人提交和上传接口按有效角色执行，关闭后恢复管理员权限。
+`GET /auth/me` 和登录响应中的 `user` 始终返回真实 `role`；管理员学生视图通过 `student_view: true` 表示当前 Session 的有效角色为学生。学生视图请求管理员接口（包括 `/admin/*` 与管理员会话列表）返回 403；学生通知、作业、独立队伍、个人提交和上传接口按有效角色执行，关闭后恢复管理员权限。
 
 登录先查询规范化账号并执行真实或 dummy Argon2id 校验。账号不存在、密码错误、`pending_email` 和 `disabled` 统一返回 401 `INVALID_CREDENTIALS`，10 分钟内达到规范化邮箱 5 次或来源 IP 30 次阈值时统一返回 429 `RATE_LIMITED` 和 `Retry-After: 600`；响应状态、文案和主体不暴露账号是否存在或当前状态。已验证 `active` 账号的正确密码不受既有失败事件持久冷却阻断。成功登录唯一的已验证 active student 时，服务端在事务锁内把其持久化为 admin、撤销旧 Session、写审计，再返回管理员用户并创建新的 4 小时空闲 Session；多账号用户不触发该修正。系统不存在注册审批状态；用户在注册成功页或统一重发验证接口继续邮箱验证流程。
 
@@ -119,7 +119,7 @@
 
 ### `GET /dashboard`
 
-返回当前用户、有效未读总数 `unread_count`、按 `announcements/assignments/competitions/help_requests` 分类的 `unread_counts`、最近 5 条通知、最近 5 个作业和进行中赛事/队伍。已归档公告提醒不进入总数或分类计数。每个集合只含当前用户可见资源；优秀作业不出现在工作台，只在对应作业内读取。对应 NEWS-005、HW-006、TEAM-006、SHOW-002。
+返回当前用户、有效未读总数 `unread_count`、按 `announcements/assignments/teams/help_requests` 分类的 `unread_counts`、最近 5 条通知、最近 5 个作业和本人当前队伍。已归档公告提醒不进入总数或分类计数。每个集合只含当前用户可见资源；优秀作业不出现在工作台，只在对应作业内读取。对应 NEWS-005、HW-006、TEAM-006、SHOW-002。
 
 ### 站内通知接口
 
@@ -203,7 +203,7 @@
 }
 ```
 
-返回 `201`：`{submission_id, version_id, version_number, submitted_at, total_file_bytes}`。超过有效截止返回 `409 ASSIGNMENT_CLOSED`，未完成文件返回 `409 FILE_NOT_AVAILABLE`。
+返回 `201`：`{submission_id, version_id, version_number, submitted_at, total_file_bytes}`。`file_ids` 最多包含 100 个不重复 UUID；浏览器可一次选择多张图片或其他允许类型附件，但每个文件仍分别经过现有 `/uploads*` 会话，正式版本只在用户确认时一次绑定全部可用文件。超过有效截止返回 `409 ASSIGNMENT_CLOSED`，未完成文件返回 `409 FILE_NOT_AVAILABLE`。
 
 ### 管理接口
 
@@ -212,14 +212,14 @@
 | `GET /admin/assignments` | 搜索未删除作业及提交统计；手工归档仍返回，已删除归档不返回 | HW-005、HW-008 |
 | `POST /admin/assignments` | 创建草稿 | HW-001～HW-003 |
 | `GET /admin/assignments/{id}` | 读取未删除作业配置、受众预估/快照和统计；已删除归档统一 404 | HW-002、HW-005、HW-008 |
-| `PATCH /admin/assignments/{id}` | 修改允许字段 | HW-007 |
+| `PATCH /admin/assignments/{id}` | 按 `revision` 修改作业；草稿可修改完整配置，`published/closed` 允许标题、说明、培训资料链接、提交说明、受众和公共截止变化。受众变化按当前激活学生原子替换权威快照；发布时间与附件规则必须原值回传。截止前移不得早于最后正式提交；自动关闭作业把截止延至未来时重新开放，提前关闭作业保持关闭 | HW-002～HW-003、HW-007、NFR-006 |
 | `DELETE /admin/assignments/{id}` | 草稿取消活动定时任务并物理删除；已发布、已关闭或手工归档作业归档标记删除；返回 204 | HW-003、HW-008、NFR-006 |
 | `POST /admin/assignments/{id}/publish` | 固化受众快照并发布 | HW-002～HW-003 |
 | `POST /admin/assignments/{id}/close` | 提前关闭 | HW-003 |
 | `POST /admin/assignments/{id}/archive` | 归档 | HW-003 |
 | `PUT /admin/assignments/{id}/extensions/{user_id}` | `{extended_deadline,reason}` | HW-004 |
 | `DELETE /admin/assignments/{id}/extensions/{user_id}` | 截止前移除尚未使用的延期 | HW-004 |
-| `GET /admin/assignments/{id}/submissions` | 按方向、提交/反馈状态列出目标学生；历史届次快照仍可读取 | HW-005 |
+| `GET /admin/assignments/{id}/submissions` | 按方向、提交/反馈状态分页列出“当前受众并集历史提交者”；每项返回 `in_current_audience`，统计口径只计算当前受众，历史届次快照仍可读取 | HW-005 |
 | `POST /admin/assignments/{id}/excellent-submissions/{version_id}` | 把本作业版本标记为优秀作业 | SHOW-001～SHOW-003 |
 | `DELETE /admin/assignments/{id}/excellent-submissions/{version_id}` | 取消优秀标记 | SHOW-004 |
 
@@ -227,83 +227,52 @@
 
 作业删除以独立删除标记区分手工归档和已删除归档。物理删除只适用于尚无学生生命周期的 `draft`；`published/closed` 删除必须转为 `archived` 并写删除标记，手工 `archived` 首次 DELETE 补写标记；常规管理列表/详情只返回未删除内容，重复 DELETE 对已有标记幂等 204。归档删除不得删除固定受众、提交、版本、评语、优秀标记和附件；学生列表、详情、优秀作业读取以及优秀附件重新签名均排除归档作业，提交所有者的历史版本仍按不可变记录保留。
 
-## 通用提交与评语接口
+## 个人作业提交与评语接口
 
 | 方法与路径 | 访问 | 行为 | 需求 |
 | --- | --- | --- | --- |
-| `GET /submissions/{submission_id}` | 所有者/团队成员/管理员 | 返回聚合和版本摘要 | SUB-003、SUB-005 |
-| `GET /submissions/{submission_id}/versions/{version_id}` | 同上 | 返回不可变版本和当前用户可见评语 | SUB-003、SUB-006 |
-| `PUT /admin/submissions/{submission_id}/versions/{version_id}/feedback` | 管理员 | `{body_markdown,revision?}` 创建或修订私密评语 | SUB-006、COMP-005 |
+| `GET /submissions/{submission_id}` | 所有者/管理员 | 返回个人作业聚合和版本摘要 | SUB-003、SUB-005 |
+| `GET /submissions/{submission_id}/versions/{version_id}` | 所有者/管理员 | 返回不可变版本和当前用户可见评语 | SUB-003、SUB-006 |
+| `PUT /admin/submissions/{submission_id}/versions/{version_id}/feedback` | 管理员 | `{body_markdown,revision?}` 创建或修订私密评语，并同事务创建站内提醒与唯一评语邮件 Outbox | SUB-006、MAIL-001～MAIL-005 |
 
-评语响应含 `id`、`body_html`、`created_by`、`created_at`、`updated_at`、`revision`，不含评分字段。
+评语响应含 `id`、`body_html`、`created_by`、`created_at`、`updated_at`、`revision`，不含评分字段。邮件仅含学生称呼、作业标题和 `/assignments/{assignment_id}/submissions/{submission_id}` 站内链接，不含评语正文。
 
-## 赛事接口
+## 独立队伍接口
 
-### 学生赛事读取与报名
+“校内赛”是前端导航名称，不对应赛事实体 API。以下接口均以有效 Session 为前提；学生写操作还要求同源与 CSRF。
 
-| 方法与路径 | 行为 | 需求 |
-| --- | --- | --- |
-| `GET /competitions` | 按阶段搜索可见赛事并返回本人状态 | COMP-001～COMP-003 |
-| `GET /competitions/{competition_id}` | 返回校内赛公告、时间轴、报名和队伍摘要；历史赛题字段仅为兼容保留 | COMP-001～COMP-003、COMP-006 |
-| `POST /competitions/{competition_id}/registration` | 登记本人参赛 | COMP-003 |
-| `DELETE /competitions/{competition_id}/registration` | 报名期撤回；已入队时禁止 | COMP-003、TEAM-002 |
-
-### 队伍接口
+### 学生队伍接口
 
 | 方法与路径 | 请求/行为 | 需求 |
 | --- | --- | --- |
-| `GET /competitions/{competition_id}/my-team` | 返回本人队伍、成员与权限 | TEAM-001～TEAM-006 |
-| `GET /competitions/{competition_id}/teams` | `query,page,page_size`；只返回未满 `forming` 队伍的名称、状态、人数、最大人数和 `can_join`，不返回成员或邀请码 | TEAM-008 |
-| `POST /competitions/{competition_id}/auto-assign` | 已报名且无队伍学生申请；优先加入人数较少的成形队伍，否则自动建队 | TEAM-002、TEAM-004、TEAM-008 |
-| `POST /competitions/{competition_id}/teams` | `{name}` 创建队伍并成为队长 | TEAM-001 |
-| `POST /competitions/{competition_id}/teams/join` | `{invite_code}` 加入队伍 | TEAM-001～TEAM-004 |
-| `POST /teams/{team_id}/invite-code/rotate` | 队长轮换邀请码，明文只返回一次 | TEAM-003 |
-| `DELETE /teams/{team_id}/members/{user_id}` | 队长移除成员或成员退出本人 | TEAM-003 |
-| `POST /teams/{team_id}/captain-transfer` | `{new_captain_user_id}` | TEAM-003 |
-| `POST /teams/{team_id}/dissolve` | 解散仅剩或已清空成员的形成中队伍 | TEAM-003 |
+| GET /teams | query、page、page_size；返回 forming 队伍的名称、状态、当前/最大人数和 can_join，不返回成员或邀请码 | TEAM-006 |
+| GET /teams/me | 返回本人当前队伍、成员和 can_manage；无队伍返回 null | TEAM-003、TEAM-006 |
+| POST /teams | name；直接创建队伍并成为队长，201 响应中的 invite_code 只出现一次 | TEAM-001～TEAM-002 |
+| POST /teams/join | invite_code；加入未满 forming 队伍 | TEAM-001～TEAM-004 |
+| POST /teams/auto-assign | 无正文；优先加入人数最少的未满 forming 队伍，否则自动建队 | TEAM-002、TEAM-004～TEAM-005 |
+| POST /teams/{team_id}/invite-code/rotate | 队长轮换邀请码，明文只返回一次 | TEAM-003 |
+| DELETE /teams/{team_id}/members/{user_id} | 队长移除非队长成员，或非队长退出本人 | TEAM-003 |
+| POST /teams/{team_id}/captain-transfer | new_captain_user_id | TEAM-003 |
+| POST /teams/{team_id}/dissolve | 仅剩队长一人时解散 | TEAM-003、TEAM-007 |
 
-### 历史赛事赛题兼容接口
+创建、加入和自动分配只允许有效角色为 student 的 active 账号。已有当前队伍返回 409 ALREADY_IN_TEAM；队伍已满返回 409 TEAM_FULL；并发分配冲突返回 409 TEAM_MEMBERSHIP_CONFLICT；无效邀请码返回 400 INVITE_CODE_INVALID。邀请码尝试按账号和来源网段限流，超限返回 429 RATE_LIMITED 和 Retry-After。非队长管理返回 403 TEAM_CAPTAIN_REQUIRED，队长直接退出返回 409 CAPTAIN_TRANSFER_REQUIRED，非单人队伍解散返回 409 TEAM_NOT_EMPTY。
 
-新创建的赛事不设置赛题或作品提交。以下接口仅为兼容历史赛事数据保留，前端不提供入口；新产品流程不依赖这些接口。
+### 管理员队伍接口
 
-| 方法与路径 | 行为 | 需求 |
+| 方法与路径 | 请求/行为 | 需求 |
 | --- | --- | --- |
-| `GET /competitions/{competition_id}/tasks/{task_id}` | 返回历史赛事赛题、有效截止、团队提交摘要 | 兼容路径 |
-| `POST /competitions/{competition_id}/tasks/{task_id}/submission-versions` | 按历史规则由当前队长创建团队正式版本 | 兼容路径 |
-| `GET /competitions/{competition_id}/tasks/{task_id}/submission` | 按历史规则由当前团队成员查看版本和评语 | 兼容路径 |
+| GET /admin/teams | query、page、page_size；分页返回当前独立队伍 | TEAM-008 |
+| GET /admin/teams/{team_id} | 返回成员和队伍详情 | TEAM-008 |
+| POST /admin/teams/{team_id}/members | user_id、reason；补录 active student | TEAM-004、TEAM-008 |
+| DELETE /admin/teams/{team_id}/members/{user_id} | reason；管理员移除非队长成员 | TEAM-008 |
+| POST /admin/teams/{team_id}/captain-transfer | new_captain_user_id、reason | TEAM-008 |
+| DELETE /admin/teams/{team_id} | reason；物理删除队伍并级联成员关系，返回 204 | TEAM-008 |
 
-版本请求与作业版本结构相同。队伍非 `locked`、人数无效、被取消资格或不在提交期均返回具体 409 错误。
+管理员接口必须由真实 admin 且未开启学生视图调用；所有写操作要求 CSRF。reason 去空白后必须为 1～2,000 字符并写脱敏审计；删除二次确认属于前端防误触，不能代替后端授权。独立队伍不统计或读取历史团队提交，删除不会触碰 legacy 赛事、版本、评语、附件或 MinIO 对象。
 
-### 管理赛事接口
+### Legacy 数据边界
 
-| 方法与路径 | 行为 | 需求 |
-| --- | --- | --- |
-| `GET /admin/competitions` | 搜索赛事和阶段统计；管理端前端默认只展示当前未归档校内赛，归档赛事保留为历史兼容记录 | COMP-001～COMP-006 |
-| `POST /admin/competitions` | 首次创建校内赛草稿；已有未归档校内赛时返回 `409 CAMPUS_COMPETITION_EXISTS` | COMP-001～COMP-002 |
-| `GET /admin/competitions/{id}` | 读取赛事、报名、队伍和提交汇总 | COMP-001～COMP-006 |
-| `PATCH /admin/competitions/{id}` | 修改尚未生效或允许延后的字段 | COMP-001～COMP-004 |
-| `POST /admin/competitions/{id}/publish` | 发布并按时间进入正确阶段 | COMP-002 |
-| `POST /admin/competitions/{id}/close-registration` | 提前关报名并锁队 | COMP-002、TEAM-004～TEAM-005 |
-| `POST /admin/competitions/{id}/close-submissions` | 提前关提交 | COMP-002 |
-| `POST /admin/competitions/{id}/archive` | 归档 | COMP-006 |
-| `POST /admin/competitions/{id}/tasks` | 创建历史兼容赛题（新赛事不使用） | 兼容路径 |
-| `PATCH /admin/competition-tasks/{task_id}` | 修改历史兼容赛题（新赛事不使用） | 兼容路径 |
-| `GET /admin/competitions/{id}/teams` | 筛选队伍、人数和提交状态 | TEAM-004～TEAM-006 |
-| `POST /admin/teams/{team_id}/members` | `{user_id,reason}` 补录 | TEAM-005 |
-| `GET /admin/competitions/{id}/registrations` | 返回个人报名记录、状态、当前队伍和管理员可见的取消资格原因 | COMP-003 |
-| `POST /admin/competitions/{id}/registrations/{user_id}/disqualify` | `{reason}` 取消个人资格并在仍有有效队伍时同步取消整队资格 | COMP-003、TEAM-006 |
-| `GET /admin/teams/{team_id}` | 返回队伍成员、权限字段和各赛题提交/最新版本摘要 | TEAM-004～TEAM-006、SUB-005 |
-| `DELETE /admin/teams/{team_id}` | `{reason}`；无历史团队提交时物理删除，有历史提交时释放当前成员并保留为 `dissolved`，返回 204 | TEAM-009、NFR-006 |
-| `DELETE /admin/teams/{team_id}/members/{user_id}` | `{reason}` 管理员移除 | TEAM-005 |
-| `POST /admin/teams/{team_id}/captain-transfer` | `{new_captain_user_id,reason}` | TEAM-005 |
-| `POST /admin/teams/{team_id}/waive-min-size` | `{reason}` 人数豁免 | TEAM-004 |
-| `POST /admin/teams/{team_id}/disqualify` | `{reason}` 取消资格 | COMP-003、TEAM-006 |
-
-赛事时间必须满足：`registration_start < registration_end <= submission_start < submission_end`；现有字段用于兼容状态机，其中 submission_start 表示组队锁定时间，submission_end 表示赛事结束时间。新赛事不校验赛题截止。
-个人取消资格原因只返回管理员和对应学生本人；联动队伍的 `disqualification_reason` 使用不含个人原因的固定通用说明。管理员补录使 `invalid` 队伍达到最低人数时恢复 `locked`；从 `locked` 队伍移除成员后低于最低人数且没有豁免时转为 `invalid`。所有上述纠错请求必须提供非空原因并写审计。
-
-删除队伍只允许真实管理员且未开启学生视图，要求 CSRF 和去空白后 1～2,000 字符的 `reason`。Service 先锁定队伍，随后锁定当前成员并统计团队提交引用；无引用时删除 `teams` 并级联成员关联，有引用时把当前成员写入离队时间、清空队长和当前取消资格元数据、转为 `dissolved`，历史提交树保持原 `owner_team_id`。成功响应不返回删除模式、成员或提交数量；审计只保存目标 UUID、原状态、模式、安全计数和内部原因。删除后学生与常规管理员读取统一不可见，不存在资源返回 `404 RESOURCE_NOT_FOUND`。
-
+COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/admin/competitions* 或赛事赛题提交 API；旧赛事、报名、赛题、原队伍和历史赛事提交只由 0020 迁移后的 legacy 数据结构保留。前端旧详情路径仅重定向到 /competitions 队伍中心，不读取这些记录。
 
 ## 学生问卷接口
 
@@ -344,7 +313,7 @@
 
 ## 优秀作业接口
 
-优秀作业接口全部嵌套在作业资源下，不提供 `/showcases` 或赛事来源。标记请求无正文；服务端必须验证版本属于指定作业、不是赛事提交且尚未标记。普通学生读取权限复用作业受众快照；管理员当前 Session 开启学生视图时按当前作业受众配置临时预览。响应展示提交者姓名和该版本的文本、链接、附件，不返回评语、内部提交聚合 ID 或其他版本。
+优秀作业接口全部嵌套在作业资源下，不提供 `/showcases` 或赛事来源。标记请求无正文；服务端必须验证版本属于指定作业、属于个人作业且尚未标记。普通学生读取权限复用作业受众快照；管理员当前 Session 开启学生视图时按当前作业受众配置临时预览。响应展示提交者姓名和该版本的文本、链接、附件，不返回评语、内部提交聚合 ID 或其他版本。
 
 ## 上传与下载接口
 
@@ -376,7 +345,7 @@
 }
 ```
 
-`purpose` 为 `announcement_attachment`、`assignment_submission` 或 `competition_submission`。服务端按上下文验证权限、截止、扩展名和总量。
+`purpose` 只接受 `announcement_attachment` 或 `assignment_submission`。数据库检查约束继续允许 `competition_submission` 仅为保存 legacy 文件元数据，公共请求 Schema 与 Service 必须拒绝该值。服务端按上下文验证权限、截止、扩展名和总量。
 
 ### 分片与完成
 

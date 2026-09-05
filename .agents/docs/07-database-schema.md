@@ -6,7 +6,7 @@
 - 业务实体主键统一使用应用生成的 UUIDv7 和 PostgreSQL `uuid` 类型，便于按时间局部排序；只允许运维单例表使用文档明确的自然键。
 - 时间统一使用 `TIMESTAMPTZ`；可变表包含 `created_at`、`updated_at` 和整数 `revision`。
 - 邮箱在写入前规范化为小写并存入 `email_normalized`，以唯一索引比较；原始显示值存 `email`。
-- 不采用全局通用软删除。已进入用户生命周期的业务内容通过状态保留；未发布通知/作业可在受审计删除事务中物理删除，可清理文件使用 `deleted_at`。正式版本、评语和审计日志通常不物理删除；唯一例外是 AUTH-012 账号擦除中属于目标用户的个人提交树，团队版本与共享业务事实仍保留。
+- 不采用全局通用软删除。已进入用户生命周期的业务内容通过状态保留；未发布通知/作业可在受审计删除事务中物理删除，可清理文件使用 `deleted_at`。正式版本、评语和审计日志通常不物理删除；唯一例外是 AUTH-012 账号擦除中属于目标用户的个人提交树。legacy 团队版本与共享业务事实继续保留但不提供运行时读取。
 - 外键默认 `RESTRICT`；只对纯关联表使用 `CASCADE`。历史资源不得因删除基础配置而失去引用。
 - 枚举通过 PostgreSQL enum 或受约束文本实现；迁移必须支持新增值的前滚策略。
 
@@ -18,9 +18,9 @@
 | `user_status` | `pending_email`, `active`, `disabled` |
 | `announcement_status` | `draft`, `scheduled`, `published`, `archived` |
 | `assignment_status` | `draft`, `published`, `closed`, `archived` |
-| `competition_status` | `draft`, `registration_open`, `registration_closed`, `submission_open`, `submission_closed`, `archived` |
-| `registration_status` | `registered`, `withdrawn`, `disqualified` |
-| `team_status` | `forming`, `locked`, `invalid`, `dissolved`, `disqualified`, `archived` |
+| `team_status` | 当前独立队伍只允许 `forming`, `dissolved` |
+| legacy `competition_status` | `draft`, `registration_open`, `registration_closed`, `submission_open`, `submission_closed`, `archived` |
+| legacy `registration_status/team_status` | `registered`, `withdrawn`, `disqualified`；原队伍另含 `forming`, `locked`, `invalid`, `dissolved`, `disqualified`, `archived` |
 | `upload_status` | `initialized`, `uploading`, `verifying`, `available`, `rejected`, `aborted`, `expired` |
 | `outbox_status` | `pending`, `processing`, `retry`, `sent`, `dead` |
 | `audience_match` | `union`, `intersection` |
@@ -40,9 +40,6 @@ erDiagram
     ANNOUNCEMENTS }o--o{ DIRECTIONS : targets
     ASSIGNMENTS }o--o{ USERS : snapshots
     ASSIGNMENTS ||--o{ ASSIGNMENT_EXTENSIONS : grants
-    COMPETITIONS ||--o{ COMPETITION_REGISTRATIONS : accepts
-    COMPETITIONS ||--o{ COMPETITION_TASKS : contains
-    COMPETITIONS ||--o{ TEAMS : contains
     TEAMS ||--o{ TEAM_MEMBERS : has
     USERS ||--o{ INTENTION_RESPONSES : submits
     INTENTION_SURVEYS ||--o{ INTENTION_OPTIONS : defines
@@ -50,9 +47,7 @@ erDiagram
     INTENTION_RESPONSES ||--o{ INTENTION_RESPONSE_OPTIONS : selects
     INTENTION_OPTIONS ||--o{ INTENTION_RESPONSE_OPTIONS : selected_by
     ASSIGNMENTS ||--o{ SUBMISSIONS : receives
-    COMPETITION_TASKS ||--o{ SUBMISSIONS : receives
     USERS ||--o{ SUBMISSIONS : owns_assignment
-    TEAMS ||--o{ SUBMISSIONS : owns_competition
     SUBMISSIONS ||--o{ SUBMISSION_VERSIONS : versions
     SUBMISSION_VERSIONS ||--o| FEEDBACK : receives
     SUBMISSION_VERSIONS }o--o{ FILES : attaches
@@ -62,6 +57,8 @@ erDiagram
     FILES ||--o| UPLOAD_SESSIONS : produces
     USERS ||--o{ AUDIT_LOGS : acts
 ```
+
+当前关系图只展示运行时产品实体；旧赛事、报名、赛题、原队伍及其提交关系由 0020 legacy 结构原样保存，见“独立队伍与 legacy 赛事数据”，不连接当前 `TEAMS`。
 
 ## 身份与基础数据
 
@@ -173,6 +170,7 @@ erDiagram
 - `allowed_extensions` 存规范化小写数组，并由服务层保证是全局白名单子集。
 - `max_total_bytes` 满足 `1 <= value <= 2147483648`。
 - `deadline > publish_at`。
+- `published/closed` 更新在 Service 的作业行锁内允许替换受众配置，继续冻结 `publish_at`、`allowed_extensions` 和 `max_total_bytes`；公共截止前移时聚合读取本作业 `submission_versions.submitted_at` 最大值，禁止早于已有正式提交，并与 `close_assignment` Outbox 及自动/提前关闭语义协调。该规则复用现有字段和索引，不新增迁移。
 - 管理员删除 `draft` 时可物理删除本行；`published/closed` 删除转为 `archived` 并写 `deleted_at`，手工归档保持空值直至再次删除。约束保证 `deleted_at IS NULL OR status='archived'`；普通详情与管理列表只读取空值行，关联提交与版本继续受 `RESTRICT` 和不可变规则保护。
 
 ### `assignment_cohorts`、`assignment_directions`
@@ -183,8 +181,9 @@ erDiagram
 
 `assignment_id`, `user_id`, `cohort_id_at_publish`, `direction_id_at_publish`, `created_at`，复合主键 `(assignment_id, user_id)`。
 
-- 发布事务生成初始固定受众；后续账号首次激活为普通学生时，同一激活事务为仍处于 `published`、未过公共截止且匹配的作业追加该学生。
-- `cohort_id_at_publish` 和 `direction_id_at_publish` 对激活后补录行记录补录当时分类；届次字段仅历史兼容。学生后续调整方向不修改此表。
+- 发布事务生成初始受众；后续账号首次激活为普通学生时，同一激活事务为仍处于 `published`、未过公共截止且匹配的作业追加该学生。
+- 管理员修改 `published/closed` 作业受众时，在同一作业事务删除旧快照并按当前 `active student` 重建；`cohort_id_at_publish` 和 `direction_id_at_publish` 记录本次快照生成时分类。学生后续自行调整方向不会自动修改此表。
+- 快照移除不级联删除 `submissions`、版本、评语、优秀标记、附件、延期、提醒或审计；管理名单以当前快照与历史提交者并集查询。
 
 ### `assignment_extensions`
 
@@ -193,50 +192,32 @@ erDiagram
 - 复合唯一 `(assignment_id, user_id)`。
 - `extended_deadline` 必须晚于作业公共截止时间。
 
-## 赛事、报名与队伍
-
-### `competitions`
-
-`id`, `name`, `description_markdown`, `description_html`, `rules_url`, `status`, `registration_start`, `registration_end`, `submission_start`, `submission_end`, `min_team_size`, `max_team_size`, `created_by`, `updated_by`, `published_at`, `archived_at`, `created_at`, `updated_at`, `revision`。
-
-约束：
-
-- `registration_start < registration_end <= submission_start < submission_end`。
-- `1 <= min_team_size <= max_team_size <= 20`。
-- 状态只允许按规定方向推进。
-
-### `competition_registrations`
-
-`id`, `competition_id`, `user_id`, `status`, `registered_at`, `withdrawn_at`, `disqualified_at`, `disqualified_by`, `disqualification_reason`, `created_at`, `updated_at`, `revision`。
-
-- `(competition_id, user_id)` 唯一；重新报名复用记录并校验状态。
-- 索引 `(competition_id, status)`。
-
-### `competition_tasks`（历史兼容）
-
-`id`, `competition_id`, `title`, `description_markdown`, `description_html`, `resource_url`, `allowed_extensions`, `max_total_bytes`, `deadline`, `display_order`, `created_at`, `updated_at`, `revision`。
-
-- `deadline` 位于历史赛事提交窗口内；新赛事不创建该实体。
-- `(competition_id, display_order)` 唯一。
+## 独立队伍与 legacy 赛事数据
 
 ### `teams`
 
-`id`, `competition_id`, `name`, `status`, `captain_user_id`, `invite_code_hash`, `invite_code_rotated_at`, `min_size_waived_at`, `min_size_waived_by`, `waiver_reason`, `disqualified_at`, `disqualified_by`, `disqualification_reason`, `created_at`, `updated_at`, `locked_at`, `dissolved_at`, `revision`。
+当前产品表字段：`id`、`name`、`status`、`captain_user_id`、`invite_code_hash`、`invite_code_rotated_at`、`max_members`、`dissolved_at`、`created_at`、`updated_at`、`revision`。
 
-- `(competition_id, lower(name))` 对未解散队伍唯一。
-- `captain_user_id` 必须是当前有效成员，由 Service 事务保证。
-- 邀请码只保存慢哈希或带服务端 pepper 的 HMAC，不保存明文。公开目录只从该表和有效成员计数生成，不连接用户身份字段；自动分配锁定赛事及所有候选 `forming` 队伍并优先选择未满且人数较少者。
-- 管理员删除先锁定队伍并统计 `submissions.owner_team_id`：计数为 0 时物理删除本行；计数大于 0 时把状态改为 `dissolved`、清空当前队长和当前取消资格元数据并保留本行，使历史团队提交外键、版本、评语和附件继续有效。后者的既有取消资格事实继续由只追加审计保留。
+- `status` 只允许 `forming/dissolved`；`forming` 必须有当前队长且 `dissolved_at` 为空，`dissolved` 必须无队长且 `dissolved_at` 非空。
+- `lower(name)` 对 `forming` 队伍全局唯一；`max_members` 为 1～20，当前默认 5。
+- `captain_user_id` 使用 `users.id RESTRICT` 外键，并由延迟约束触发器保证队长是本队当前成员。
+- 邀请码只保存带服务端 pepper 的 HMAC，不保存明文。公开目录只从队伍和有效成员计数生成，不连接用户身份字段。
+- 自动分配锁定 forming 候选队伍，按成员数、created_at 和 id 选择；无候选时创建新队伍。
+- 管理员删除独立队伍时物理删除本行并级联当前/历史成员关系；该表不被任何当前提交引用。
 
 ### `team_members`
 
-`id`, `team_id`, `competition_id`, `user_id`, `joined_at`, `left_at`, `added_by_admin`, `admin_reason`。
+当前产品表字段：`id`、`team_id`、`user_id`、`joined_at`、`left_at`、`added_by_admin`、`admin_reason`。
 
-- 部分唯一索引 `(competition_id, user_id) WHERE left_at IS NULL` 保证一赛一队。
-- 唯一 `(team_id, user_id, joined_at)` 保留重新加入历史。
-- 管理员物理删除无提交队伍时本表依 `team_id` 外键级联；保留历史提交的删除路径锁定全部当前成员并写入同一 `left_at`，立即释放一赛一队部分唯一索引，历史成员行继续保留。
-- Service 验证 `competition_id` 与 `teams.competition_id` 一致。
-- 索引 `(team_id, left_at)`。
+- 部分唯一索引 `user_id WHERE left_at IS NULL` 保证每名学生全局最多一支当前队伍。
+- 唯一 `team_id, user_id, joined_at` 保留重新加入历史；索引 `team_id, left_at` 支持成员装载。
+- `team_id` 和 `user_id` 分别使用 `CASCADE` 外键；管理员补录必须同时保存非空 `admin_reason`，普通加入不得保存原因。
+
+### legacy 赛事与原队伍
+
+迁移 `20260904_0020` 把原 `teams/team_members` 重命名为 `legacy_competition_teams/legacy_competition_team_members`，并原位保留 `competitions`、`competition_registrations`、`competition_tasks`、历史赛事提交及其附件/评语关系。它们不属于当前产品模型，不由 Router、Service、Repository、Worker 或页面查询。
+
+Alembic 只精确排除这五张 legacy 表，以及 `submissions` 上已知的历史赛事外键、检查约束和索引。`submissions` 的 `competition_task_id`、`owner_team_id` 仍以可空内部兼容列进入 ORM 元数据，防止 Alembic 误报删除；所有当前 Submission Repository 查询必须包含 `assignment_id IS NOT NULL`。`files` 的数据库 `purpose` 检查继续允许 `competition_submission` 只为承载历史元数据，公共上传 Schema 和 Service 仅接受 `announcement_attachment/assignment_submission`。
 
 ## 学生问卷
 
@@ -297,6 +278,8 @@ erDiagram
 
 `id`, `assignment_id`, `competition_task_id`, `owner_user_id`, `owner_team_id`, `latest_version_id`, `created_at`, `updated_at`。
 
+当前运行时只创建和查询 `assignment_id/owner_user_id` 分支，所有 Repository 查询都限制 `assignment_id IS NOT NULL`。`competition_task_id/owner_team_id` 及下述第二分支仅用于匹配并保留 legacy 数据库结构，不注册读取或写入 API。
+
 核心检查约束：
 
 ```sql
@@ -310,10 +293,11 @@ CHECK (
 ```
 
 - 部分唯一 `(assignment_id, owner_user_id) WHERE assignment_id IS NOT NULL`。
-- 部分唯一 `(competition_task_id, owner_team_id) WHERE competition_task_id IS NOT NULL`。
+- legacy 部分唯一 `(competition_task_id, owner_team_id) WHERE competition_task_id IS NOT NULL`。
 - `latest_version_id` 在创建版本事务结束前指向同一提交的版本；使用延迟外键或迁移后追加外键解决建表循环。
 
-- `owner_user_id` 对账号使用 `ON DELETE CASCADE`，只删除目标用户的个人作业提交；`owner_team_id` 继续保留团队赛事提交。擦除前 Service 把个人提交的 `latest_version_id` 置空，再由提交外键向版本树级联。
+- `owner_user_id` 对账号使用 `ON DELETE CASCADE`，只删除目标用户的个人作业提交；`owner_team_id` 继续保留 legacy 团队赛事提交，但当前 Service 不读取。擦除前 Service 把个人提交的 `latest_version_id` 置空，再由提交外键向版本树级联。
+
 ### `submission_versions`
 
 `id`, `submission_id`, `version_number`, `submitted_by`, `text_markdown`, `text_html`, `external_url`, `total_file_bytes`, `idempotency_key`, `submitted_at`。
@@ -321,14 +305,14 @@ CHECK (
 - `(submission_id, version_number)` 唯一，`version_number >= 1`。
 - `(submitted_by, idempotency_key)` 唯一。
 - `text_markdown`、`external_url` 和附件至少一种存在，由 Service 验证。
-- `submitted_by` 可空并使用 `ON DELETE SET NULL`，因此目标账号曾代表队伍提交的历史团队版本继续存在且去除提交者归属。
+- `submitted_by` 可空并使用 `ON DELETE SET NULL`，因此目标账号曾代表旧队伍提交的 legacy 版本继续存在且去除提交者归属，但不提供运行时读取。
 - 行创建后禁止普通 `UPDATE` 和 `DELETE`；必要纠错创建新版本。迁移 `0015` 仅允许在当前事务设置 `pnx.account_erasure=on` 且父 `submissions` 行已经由账号擦除级联删除时通过 DELETE 触发器，直接删除版本或只设置标记而父提交仍存在都继续抛出 `55000`。
 
 ### `version_files`
 
 `version_id`, `file_id`, `display_order`，复合主键 `(version_id, file_id)`。
 
-- 同一文件只允许绑定一个正式版本或一个通知，避免跨用户引用；个人版本删除时关联级联删除，通知或团队版本关联继续保留。
+- 同一文件只允许绑定一个正式版本或一个通知，避免跨用户引用；个人版本删除时关联级联删除，通知或 legacy 团队版本关联继续保留。一个个人作业版本可按 `display_order` 关联多个文件，API 当前最多接受 100 个不重复 `file_id`；批量选择不新增表、字段或约束。
 - 绑定事务再次验证文件所有者、状态和合计大小。
 
 ### `feedback`
@@ -345,7 +329,7 @@ CHECK (
 `assignment_id`, `version_id`, `marked_by`, `marked_at`，复合主键 `(assignment_id, version_id)`。
 
 - `version_id` 另设唯一约束，避免同一版本被重复标记。
-- Service 必须验证该版本的 `submission.assignment_id` 等于记录的 `assignment_id`，并拒绝 `competition_task_id` 非空的赛事版本。
+- Service 必须验证该版本的 `submission.assignment_id` 等于记录的 `assignment_id`；所有当前查询预先排除 `competition_task_id` 非空的 legacy 版本。
 - 该表存在即表示优秀标记生效；取消标记删除关联行，不删除源提交版本、附件或审计日志。
 - 作业受众从源版本读取全部文本、链接和附件，并通过 `submitted_by` 关联用户姓名；`feedback` 永不参与优秀作业响应。
 - 关联存在期间，源版本和其 `version_files` 禁止进入合规删除流程。
@@ -358,7 +342,7 @@ CHECK (
 
 - `object_key` 唯一且不可由客户端指定。
 - `sha256` 为 64 位小写十六进制；`size_bytes >= 0`。
-- `owner_user_id` 可空并使用 `ON DELETE SET NULL`。账号擦除前 Repository 锁定全部本人文件：被通知或团队版本引用的文件属于共享资源，只清空所有者；未共享的个人文件元数据在用户删除后显式删除，对象键进入可靠清理任务。
+- `owner_user_id` 可空并使用 `ON DELETE SET NULL`。账号擦除前 Repository 锁定全部本人文件：被通知或 legacy 团队版本引用的文件属于共享资源，只清空所有者；未共享的个人文件元数据在用户删除后显式删除，对象键进入可靠清理任务。
 - 索引 `(owner_user_id, status, created_at)`、`(status, created_at)`。
 
 ### `upload_sessions`
@@ -422,8 +406,8 @@ CHECK (
 
 | 分类 | 处理 | 代表引用 |
 | --- | --- | --- |
-| 本人私有数据 | `ON DELETE CASCADE` | Session/一次性令牌/站内提醒/幂等记录、作业受众与延期、个人提交树、报名与队员关系、问卷回答、本人反馈答疑、上传会话 |
-| 平台或团队共享事实 | 可空 `ON DELETE SET NULL` | 通知/作业/赛事/问卷/知识库创建者，其他人的延期/评语/优秀标记/取消资格/豁免/答复操作者，团队版本提交者，文件所有者，审计与认证安全事件操作者 |
+| 本人私有数据 | `ON DELETE CASCADE` | Session/一次性令牌/站内提醒/幂等记录、作业受众与延期、个人提交树、当前独立队员关系、问卷回答、本人反馈答疑、上传会话 |
+| 平台或 legacy 共享事实 | 可空 `ON DELETE SET NULL` | 通知/作业/问卷/知识库创建者，其他人的延期/评语/优秀标记/答复操作者，legacy 赛事操作者与团队版本提交者，文件所有者，审计与认证安全事件操作者 |
 | 需要 Service 预处理 | 保持 `RESTRICT` 或显式删除 | `teams.captain_user_id` 在锁内转移/解散；个人文件先区分共享引用并捕获对象清理资料；`submissions.latest_version_id` 先置空；认证安全事件与邮件 Outbox 先去标识化 |
 
 `SET NULL` 产生的空操作者只表示账号已经被擦除，不否定业务事实；相应状态检查改以时间、原因和正文为事实依据。降级到 `0014` 前若已经产生旧结构无法接受的空值，迁移明确抛出 `ACCOUNT_ERASURE_DOWNGRADE_REQUIRES_BACKUP_RESTORE_OR_FORWARD_FIX`，要求从同点备份恢复或前滚修复，不静默伪造操作者。
@@ -435,7 +419,8 @@ CHECK (
 | AUTH | `users`, `sessions`, `one_time_tokens`, `auth_security_events`、全部个人/共享用户外键、`files`、`outbox_jobs`、`audit_logs`、`directions`；`cohorts` 仅历史兼容 |
 | NEWS、MAIL | `announcements`, 受众关联表, `student_notifications`, `outbox_jobs` |
 | HW | `assignments`, 受众配置与快照, `assignment_extensions` |
-| COMP、TEAM | `competitions`, `competition_registrations`, `teams`, `team_members`；`competition_tasks` 仅保留历史兼容数据 |
+| COMP | competitions、competition_registrations、competition_tasks、legacy_competition_teams、legacy_competition_team_members，仅由 legacy 层保留 |
+| TEAM | teams、team_members |
 | SUB | `submissions`, `submission_versions`, `version_files`, `feedback` |
 | INT | `intention_surveys`, `intention_survey_directions`, `intention_questions`, `intention_options`, `intention_responses`, `intention_response_options`, `outbox_jobs` |
 | HELP | `help_requests`, `student_notifications`, `audit_logs` |
@@ -460,10 +445,13 @@ CHECK (
 12. 已解答问题公开读取仅改变查询和响应，不改变 `0014` 表结构，不新增 Alembic revision；应用回滚不需要数据库降级。
 13. 管理员删除通知/作业的原始版本复用既有 `archived` 状态、关联表 `CASCADE`、提交外键 `RESTRICT` 和孤立文件清理；该版本无法区分手工归档与已删除归档，现由第 17 项迁移修订。
 14. 账号擦除迁移 `20260829_0015` 接在 `0014` 后：把明确个人数据引用改为 `CASCADE`，把平台/团队共享操作者改为可空 `SET NULL`，调整取消资格、人数豁免和反馈答复检查，并用事务级 `pnx.account_erasure` 标记收窄正式版本级联许可。尚未删除账号且没有产生新空值时可降级；一旦执行擦除，优先前滚修复，恢复账号与个人对象必须使用删除前 PostgreSQL/MinIO 同点备份。生产验证必须在隔离副本执行 `0014 → 0015 → 0014 → 0015`，不得用当前运行库做开发测试。
-15. 管理员删除队伍复用 `teams.status='dissolved'`、`team_members.left_at`、既有 `team_members.team_id ON DELETE CASCADE` 和 `submissions.owner_team_id` 引用，不新增字段、枚举、约束、索引或 Alembic revision。无历史提交的物理删除和有历史提交的保留壳均由应用事务处理；应用回滚不要求数据库降级，但不能恢复已经物理删除的无提交队伍。
+15. ADR-044 描述的赛事依附队伍删除是 0020 前历史方案；当前独立队伍由管理员物理删除并依 team_members.team_id CASCADE 清理，不读取历史提交引用。
 16. 持久登录迁移 `20260830_0016` 接在 `0015` 后，只为 `sessions` 增加可空 `VARCHAR(64) ip_binding_hash`；不回填、不撤销历史 Session，也不修改用户、密码哈希、到期时间或安全事件。downgrade 只删除该列，可完成 `0015 → 0016 → 0015 → 0016`；若已产生持久会话，应用回滚前应评估旧版本不再校验 IP 绑定的安全放宽并优先前滚修复。
 17. 管理端删除可见性迁移 `20260831_0017` 接在 `0016` 后，为 `announcements/assignments` 增加可空 `TIMESTAMPTZ deleted_at` 与“非空必须归档”检查；从成功的 archive 模式删除审计回填历史标记。downgrade 先删约束再删列，会丢失两种归档意图的结构化区分；可执行 `0016 → 0017 → 0016 → 0017`，生产回滚应优先前滚修复。
 18. 知识库目录独立文件迁移 `20260831_0018` 接在 `0017` 后，扩展 `knowledge_nodes.node_type` 检查以允许 `file`，增加可空 `asset_id → knowledge_assets.id` 的 `RESTRICT` 外键与索引，并把历史 `object_type=file` 节点标为 `file`；历史节点资源关联仍为空。downgrade 先把 `file` 节点转回 `unsupported`，再删除索引、外键和列并恢复旧检查，因此无需预删快照；降级会丢失节点资源关联，重新前滚后须由真实管理员再次成功同步。MinIO 对象不随 downgrade 删除。
+
+19. 问卷技术组受众迁移 20260904_0019 接在 0018 后，为问卷增加 all_students 和受限技术组关联；旧问卷默认面向全部学生。
+20. 独立队伍迁移 20260904_0020 接在 0019 后：原队伍表重命名为 legacy 表，新建空的全局 teams/team_members；赛事、报名、赛题、历史提交和 MinIO 对象不删除。downgrade 把新队伍以 UUID 后缀名称挂到占位赛事后恢复旧表，可完成 0019 → 0020 → 0019 → 0020。生产应用前必须备份，但迁移本身不执行跨系统对象删除。
 
 ## 飞书知识库快照
 

@@ -897,3 +897,24 @@
 - 旧实现下新增回归准确失败，修复后问卷定向 27/27、完整前端 25 文件/138 项 Vitest、ESLint、严格 TypeScript、Next.js 16.3.2 生产构建和 `git diff --check` 全部通过。测试确认所有当前命令处于同一 `lg:flex-nowrap` 操作组，且逐个具有 `shrink-0 whitespace-nowrap`。
 - `.env` 已固定为 `APP_IMAGE_TAG=questionnaire-actions-row-20260904`，只替换 Frontend 并刷新 Nginx；Backend、Worker、PostgreSQL 与 MinIO 保持。六服务 healthy、重启 0，`/login`、`/health/ready`、`/nginx-health` 均为 200，`/admin/intentions` 匿名为 307。
 - Alembic 保持 `20260904_0019 (head)`；发布窗口 Frontend/Nginx 错误和 Nginx 5xx 均为 0。验收未携带管理员 Session，未调用问卷 DELETE、PATCH、状态、邮件、方向配置或其他业务写接口，未运行迁移，也未修改 PostgreSQL/MinIO 数据。
+
+## 2026-09-05 已发布作业修改部署
+
+### 隔离候选、备份恢复与回滚
+
+- 工作树同时包含管理员学生视图恢复、独立队伍、知识库图片等未授权上线内容，因此从提交 `1d666c9` 导出隔离上下文，只覆盖本功能的作业 Repository、Service、编辑组件与回归测试。候选明确不包含 `assignmentAdminFetch` 或 `20260904_0020`，未直接从脏工作树构建。
+- Backend 候选通过 396 项 Pytest、Ruff、154 文件格式检查、154 文件严格 Mypy、`alembic check` 和 116 路径 OpenAPI 检查；Frontend 通过 25 文件/139 项 Vitest、ESLint、严格 TypeScript 与 Next.js 16.3.2 生产构建。`pip-audit`、`npm audit`、清理生成目录后的 Gitleaks 均为 0，两类镜像均以 `appuser` 运行。
+- OpenPGP 每日增量备份 `pnx-backup-20260905T105700Z-daily` 为 4,578,384,168 字节、权限 0600、SHA-256 `45539d367e298f4fbc56d35d113861c4864eb8b5b9cb343c052e44fbade440af`；数据库 dump 27,921,765 字节，对象库存 3,141 个/6,714,121,551 字节，增量 payload 256 个/4,675,956,956 字节。
+- 独立项目 `pnx-restore-published-assignment-20260905` 从空 PostgreSQL/MinIO 卷完成周基线和日增量恢复；对象引用缺失、大小与 SHA-256 差异均为 0，RPO 283 秒、RTO 161 秒，1,875 个历史未跟踪对象只报告不删除。恢复容器、网络和数据卷随后精确清理。
+- 回滚标签 `published-assignment-editing-rollback-20260905` 指向发布前 Backend/Worker `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6` 与 Frontend `sha256:3ba9fa4315a59833d093f6c992d8248a1ba3aa599108dce62091e2fe214e2650`；本功能没有迁移，应用回滚无需数据库降级或恢复备份。
+
+### 两阶段发布与运行验收
+
+- `.env` 已固定为 `APP_IMAGE_TAG=published-assignment-editing-20260905`。候选 migrate 幂等结束且没有新 DDL；先替换 Backend/Worker 并确认健康，再替换 Frontend/Nginx，所有更新均使用 `--no-build`。
+- Backend/Worker 镜像为 `sha256:83fce481995cb7bf0b31e1861bad606c66cbc887e823b5a89805c4b70c3a49be`，Frontend 为 `sha256:e7d2f455da9b27e42b0c53061ab44f65ac07ea4ec9d54acd96c10872e85415a2`。六服务 healthy、重启 0；PostgreSQL/MinIO 容器、网络和数据卷未重建。
+- Alembic 保持 `20260904_0019 (head)`；`/login`、`/health/ready`、`/nginx-health` 为 200，`/admin/assignments` 匿名为 307 到登录页，`/api/v1/admin/assignments` 匿名为 401。运行 OpenAPI 保持 116 条路径且作业详情包含 PATCH，Frontend 产物包含“最后正式提交”和“作业已更新”。
+- 切换前与切换后首轮用户/作业/固定受众/提交/版本/延期/Outbox 聚合均为 `189/3/456/1/2/0/841`。部署命令没有携带管理员 Session、Cookie 或 CSRF，也未调用真实作业 PATCH、飞书同步、删除、上传或其他业务写接口。
+- 部署后真实管理员于 `2026-09-05 11:44:22Z` 手动创建知识库同步，Outbox 因此增至 842。第一次飞书网络不可用后既有重试在第 2 次成功，运行记录为 `succeeded/216/1241`，Outbox 为 sent；最近成功快照按事务替换，旧成功快照未被失败尝试覆盖。
+- 约 37 分钟同步期间 Worker 主循环不能在单项长任务内刷新心跳，Docker 健康状态短暂变为 unhealthy；进程始终未重启且进度持续，任务提交后自动恢复 healthy。除受控网络重试和资源 fallback 警告外，Backend/Worker 无 ERROR/CRITICAL/Traceback/Unhandled/Exception。
+- `12:32:54Z～13:01:49Z` 的真实学生流量新增 7 个个人提交和 8 个不可变版本，对应 8 条 `submission.version_create` 审计；观测时总数为 `submissions=8/submission_versions=10`，且仍可能随正常业务继续增长。部署验收请求不携带登录态，未产生这些写入。
+- 同期 Nginx 访问日志有 0 个 5xx、31 个 499 和 1,194 个 206；大文件存储下载记录 382 次上游连接提前关闭，Frontend 记录 8 次响应目标流提前关闭。服务、对象存储与入口仍健康，但需另行用完整下载校验区分正常取消/Range 重试和真实截断。新加密归档和临时 GPG 私钥仍同机位于 `/tmp`，必须迁移到受控异机介质；两项观察均已记入运维待办。
