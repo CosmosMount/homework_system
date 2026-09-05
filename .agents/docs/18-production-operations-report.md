@@ -918,3 +918,24 @@
 - 约 37 分钟同步期间 Worker 主循环不能在单项长任务内刷新心跳，Docker 健康状态短暂变为 unhealthy；进程始终未重启且进度持续，任务提交后自动恢复 healthy。除受控网络重试和资源 fallback 警告外，Backend/Worker 无 ERROR/CRITICAL/Traceback/Unhandled/Exception。
 - `12:32:54Z～13:01:49Z` 的真实学生流量新增 7 个个人提交和 8 个不可变版本，对应 8 条 `submission.version_create` 审计；观测时总数为 `submissions=8/submission_versions=10`，且仍可能随正常业务继续增长。部署验收请求不携带登录态，未产生这些写入。
 - 同期 Nginx 访问日志有 0 个 5xx、31 个 499 和 1,194 个 206；大文件存储下载记录 382 次上游连接提前关闭，Frontend 记录 8 次响应目标流提前关闭。服务、对象存储与入口仍健康，但需另行用完整下载校验区分正常取消/Range 重试和真实截断。新加密归档和临时 GPG 私钥仍同机位于 `/tmp`，必须迁移到受控异机介质；两项观察均已记入运维待办。
+
+## 2026-09-06 统一作业与独立队伍版本部署
+
+### 最终备份与恢复门
+
+- 部署使用完整周备份 `pnx-backup-20260905T163853Z-weekly`，归档 6,623,505,731 字节、数据库 dump 29,359,559 字节，MinIO 清单为 3,291 个对象/6,786,977,538 字节；部署前再次执行外层 SHA-256 校验并通过。
+- 独立项目 `pnx-restore-final-20260906` 从全新 PostgreSQL/MinIO 卷原样恢复，RTO 132 秒；清单对象缺失、大小差异和 SHA-256 差异均为 0。1,875 个历史未跟踪对象仅告警保留，没有猜测删除。
+- 恢复副本随后使用统一镜像执行 `0019 → 0020` 并通过 `alembic check`；升级后再次对账仍为 0 缺失、0 大小差异和 0 SHA-256 差异。恢复项目、网络和隔离卷已精确清理。
+
+### 迁移与两阶段切换
+
+- 部署前生产六服务 healthy、重启 0，Backend/Worker 为 `sha256:83fce481995c…`，Frontend 为 `sha256:e7d2f455da9b…`，Alembic 为 `20260904_0019 (head)`；PostgreSQL 与 MinIO 容器 ID 分别为 `bfa750f66ab0…`、`331150f34f37…`。
+- `.env` 固定为 `APP_IMAGE_TAG=unified-assignment-teams-20260906`。migrate 容器一次执行 `0019 → 0020` 成功，当前为 `20260904_0020 (head)`，模型无待生成操作。
+- 先仅重建 Backend/Worker 并等待 healthy，再仅重建 Frontend/Nginx；PostgreSQL、MinIO、网络和持久卷未重建。最终 Backend/Worker 镜像为 `sha256:9c2701a53ab1301874b4ebd87fdd92bf2213d4123b4f0accfc502600f333f12e`，Frontend 为 `sha256:2b908afcfcaee84ca2f288c1c52fba3d8c9f3fea20b745081aaf2fd139168506`。
+
+### 运行验收与清理
+
+- 六服务持续 healthy、RestartCount 0；`/nginx-health`、`/login` 和 Backend ready 为 200，`/admin/assignments` 匿名为 307，`/api/v1/admin/assignments` 与 `/api/v1/teams` 匿名为 401。
+- 运行 OpenAPI 为 98 条路径，包含 `/api/v1/teams` 和 `/api/v1/admin/teams`，包含 `competition` 的 API 路径为 0。四个应用容器部署窗口内严重错误和 HTTP 5xx 均为 0。
+- 迁移前后用户、作业、作业受众、提交、版本、Outbox 与知识库 run/node/document/asset 聚合均为 `190/3/457/35/37/843/27/5316/4784/1284`。旧队伍/成员 `3/8` 完整进入 legacy 表，新独立队伍/成员为 `0/0`。验收未携带管理员 Session、Cookie 或 CSRF，未调用真实作业 PATCH、评语、上传、队伍或其他业务写接口。
+- 备份目录已删除 48 个旧文件，只保留 `pnx-backup-20260905T163853Z-weekly` 的归档、SHA-256、元数据和锁文件；Docker 已删除 73 个旧 PNX Backend/Frontend 标签，两类应用镜像各只保留统一当前版。PostgreSQL、MinIO、Nginx 基础镜像和生产卷未删除。
