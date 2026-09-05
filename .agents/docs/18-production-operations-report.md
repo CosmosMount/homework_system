@@ -938,4 +938,6 @@
 - 六服务持续 healthy、RestartCount 0；`/nginx-health`、`/login` 和 Backend ready 为 200，`/admin/assignments` 匿名为 307，`/api/v1/admin/assignments` 与 `/api/v1/teams` 匿名为 401。
 - 运行 OpenAPI 为 98 条路径，包含 `/api/v1/teams` 和 `/api/v1/admin/teams`，包含 `competition` 的 API 路径为 0。四个应用容器部署窗口内严重错误和 HTTP 5xx 均为 0。
 - 迁移前后用户、作业、作业受众、提交、版本、Outbox 与知识库 run/node/document/asset 聚合均为 `190/3/457/35/37/843/27/5316/4784/1284`。旧队伍/成员 `3/8` 完整进入 legacy 表，新独立队伍/成员为 `0/0`。验收未携带管理员 Session、Cookie 或 CSRF，未调用真实作业 PATCH、评语、上传、队伍或其他业务写接口。
-- 备份目录已删除 48 个旧文件，只保留 `pnx-backup-20260905T163853Z-weekly` 的归档、SHA-256、元数据和锁文件；Docker 已删除 73 个旧 PNX Backend/Frontend 标签，两类应用镜像各只保留统一当前版。PostgreSQL、MinIO、Nginx 基础镜像和生产卷未删除。
+- 备份目录首轮删除 48 个旧文件；目标级深度扫描继续删除散落在 `/tmp` 的 12 个旧生产 dump、1 个旧受众 SQL 快照、1 个旧 MinIO 副本，以及明文恢复解包、Stage 6 备份和测试伪备份目录。PNX 范围内只保留 `pnx-backup-20260905T163853Z-weekly` 的归档、SHA-256、元数据及其状态/锁文件，清理后再次通过 SHA-256。
+- Docker 首轮删除 73 个旧 PNX Backend/Frontend 标签，深度扫描再确认并删除 3 个无容器引用的无标签旧 Backend 构建；两类应用镜像各只保留统一当前版。PostgreSQL、MinIO、Nginx 基础镜像和生产卷未删除。
+- 13 个工作区 `.orig` 的内容哈希均存在于 Git 历史，另两组知识库/图片说明源码备份由当前实现与更多回归覆盖，退役赛事编辑器备份与现行产品约束冲突；均经核对后精确删除。最终工作树干净，`main` 无未合并分支，只有一个 worktree。
