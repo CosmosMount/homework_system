@@ -85,6 +85,29 @@ def test_production_nginx_enforces_https_and_security_headers() -> None:
     assert "server_tokens off;" in nginx
 
 
+def test_storage_preview_allows_only_same_origin_framing_and_preserves_security_headers() -> None:
+    for path in (DEVELOPMENT_NGINX, PRODUCTION_NGINX):
+        nginx = path.read_text(encoding="utf-8")
+        storage = nginx.split("location /storage/ {", maxsplit=1)[1].split(
+            "location /", maxsplit=1
+        )[0]
+
+        assert "X-Frame-Options SAMEORIGIN" in storage
+        assert "X-Frame-Options DENY" not in storage
+        assert "Referrer-Policy no-referrer" in storage
+        assert "X-Content-Type-Options nosniff" in storage
+        assert "Permissions-Policy" in storage
+        assert "X-Frame-Options DENY" in nginx
+
+    production = PRODUCTION_NGINX.read_text(encoding="utf-8")
+    production_storage = production.split("location /storage/ {", maxsplit=1)[1].split(
+        "location /", maxsplit=1
+    )[0]
+    assert "Strict-Transport-Security" in production_storage
+    assert "Cross-Origin-Opener-Policy same-origin" in production_storage
+    assert "Cross-Origin-Resource-Policy same-origin" in production_storage
+
+
 def test_nginx_auth_rate_limit_uses_429_and_ignores_forwarded_ip_spoofing() -> None:
     for path in (DEVELOPMENT_NGINX, PRODUCTION_NGINX):
         nginx = path.read_text(encoding="utf-8")
