@@ -14,6 +14,7 @@ from app.core.request_context import current_request_id
 from app.help_requests.schemas import (
     AdminHelpRequestDetail,
     AdminHelpRequestPage,
+    AdminHelpRequestUnreadCount,
     HelpRequestCreateRequest,
     HelpRequestDetail,
     HelpRequestPage,
@@ -139,6 +140,17 @@ async def list_admin_help_requests(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get(
+    "/admin/help-requests/unread-count",
+    response_model=AdminHelpRequestUnreadCount,
+)
+async def get_admin_help_request_unread_count(
+    service: HelpRequestServiceDependency,
+    context: AdminContextDependency,
+) -> AdminHelpRequestUnreadCount:
+    return await service.admin_unread_count(context=context)
 
 
 @router.get(

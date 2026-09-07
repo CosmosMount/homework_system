@@ -91,3 +91,7 @@ class DownloadUrlResponse(BaseModel):
     size_bytes: int
     media_type: str
     sha256: str
+
+
+class PreviewUrlResponse(DownloadUrlResponse):
+    pass

@@ -2,6 +2,7 @@ import base64
 import hashlib
 from collections.abc import AsyncIterator
 from typing import cast
+from urllib.parse import quote
 
 import pytest
 
@@ -156,3 +157,27 @@ async def test_executable_download_presign_forces_attachment_and_octet_stream() 
         "attachment; filename*=UTF-8''%E8%AE%AD%E7%BB%83%E5%AE%A2%E6%88%B7%E7%AB%AF.exe"
     )
     assert parameters["ResponseContentType"] == "application/octet-stream"
+
+
+@pytest.mark.asyncio
+async def test_inline_presign_forces_safe_filename_and_media_type() -> None:
+    client = RecordingS3Client()
+    store = object_store(client)
+    file_name = '报告 "最终".pdf'
+
+    await store.presign_inline(
+        object_key="objects/report",
+        file_name=file_name,
+        content_type="application/pdf",
+        expires_seconds=300,
+    )
+
+    operation, options = client.presigned[0]
+    parameters = cast(dict[str, object], options["Params"])
+    assert operation == "get_object"
+    assert parameters["ResponseContentDisposition"] == (
+        "inline; filename*=UTF-8" + chr(39) * 2 + quote(file_name, safe="")
+    )
+    assert parameters["ResponseContentType"] == "application/pdf"
+    assert options["ExpiresIn"] == 300
+    assert options["HttpMethod"] == "GET"

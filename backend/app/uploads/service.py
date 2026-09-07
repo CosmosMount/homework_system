@@ -32,6 +32,7 @@ from app.uploads.schemas import (
     DownloadUrlResponse,
     PresignedPartResponse,
     PresignPartsResponse,
+    PreviewUrlResponse,
     UploadedPartResponse,
     UploadInitRequest,
     UploadSessionResponse,
@@ -129,6 +130,16 @@ _TEXT_EXTENSIONS = {
     "py",
     "rs",
     "txt",
+}
+_PREVIEW_MEDIA_TYPES_BY_EXTENSION = {
+    "gif": "image/gif",
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "mp4": "video/mp4",
+    "pdf": "application/pdf",
+    "png": "image/png",
+    "webm": "video/webm",
+    "webp": "image/webp",
 }
 _SHA256_BASE64 = re.compile(r"^[A-Za-z0-9+/]{43}=$")
 KNOWLEDGE_EXECUTABLE_MEDIA_TYPE = "application/vnd.microsoft.portable-executable"
@@ -322,6 +333,14 @@ class UploadService:
             status_code=status_code,
             code=error.code,
             message="文件名称、类型或内容不符合安全要求。",
+        )
+
+    @staticmethod
+    def _preview_not_supported() -> ApplicationError:
+        return ApplicationError(
+            status_code=415,
+            code="FILE_PREVIEW_NOT_SUPPORTED",
+            message="此附件类型不支持网页预览，请下载后查看。",
         )
 
     async def _session_response(
@@ -876,12 +895,12 @@ class UploadService:
         except ObjectStoreError as exc:
             raise self._store_unavailable(exc) from exc
 
-    async def download_url(
+    async def _authorized_file(
         self,
         file_id: UUID,
         *,
         context: AuthenticatedContext,
-    ) -> DownloadUrlResponse:
+    ) -> StoredFile:
         stored_file = await self._uploads.get_file(file_id)
         if (
             stored_file is None
@@ -922,6 +941,15 @@ class UploadService:
                     ),
                 ):
                     raise self._not_found()
+        return stored_file
+
+    async def download_url(
+        self,
+        file_id: UUID,
+        *,
+        context: AuthenticatedContext,
+    ) -> DownloadUrlResponse:
+        stored_file = await self._authorized_file(file_id, context=context)
         try:
             url = await self._object_store.presign_download(
                 object_key=stored_file.object_key,
@@ -937,6 +965,40 @@ class UploadService:
             file_name=stored_file.original_name,
             size_bytes=stored_file.size_bytes,
             media_type=stored_file.detected_media_type or stored_file.declared_media_type,
+            sha256=stored_file.sha256,
+        )
+
+    async def preview_url(
+        self,
+        file_id: UUID,
+        *,
+        context: AuthenticatedContext,
+    ) -> PreviewUrlResponse:
+        stored_file = await self._authorized_file(file_id, context=context)
+        detected_media_type = stored_file.detected_media_type
+        expected_media_type = _PREVIEW_MEDIA_TYPES_BY_EXTENSION.get(stored_file.extension)
+        if detected_media_type == "text/plain" and stored_file.extension in _TEXT_EXTENSIONS:
+            response_media_type = "text/plain; charset=utf-8"
+        elif detected_media_type is not None and detected_media_type == expected_media_type:
+            response_media_type = detected_media_type
+        else:
+            raise self._preview_not_supported()
+        try:
+            url = await self._object_store.presign_inline(
+                object_key=stored_file.object_key,
+                file_name=stored_file.original_name,
+                content_type=response_media_type,
+                expires_seconds=300,
+            )
+        except ObjectStoreError as exc:
+            raise self._store_unavailable(exc) from exc
+        now = self._clock()
+        return PreviewUrlResponse(
+            url=url,
+            expires_at=now + timedelta(seconds=300),
+            file_name=stored_file.original_name,
+            size_bytes=stored_file.size_bytes,
+            media_type=detected_media_type,
             sha256=stored_file.sha256,
         )
 

@@ -21,6 +21,17 @@ class HelpRequestRepository:
     def add(self, request: HelpRequest) -> None:
         self._session.add(request)
 
+    async def active_admin_ids(self) -> list[UUID]:
+        return list(
+            (
+                await self._session.scalars(
+                    select(User.id)
+                    .where(User.role == "admin", User.status == "active")
+                    .order_by(User.id)
+                )
+            ).all()
+        )
+
     async def delete(self, request: HelpRequest) -> None:
         await self._session.delete(request)
 

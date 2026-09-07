@@ -245,24 +245,41 @@ class StudentNotificationRepository:
     async def unread_count(self, user_id: UUID) -> int:
         return (await self.unread_counts(user_id)).total
 
+    async def unread_count_for_type(
+        self,
+        *,
+        user_id: UUID,
+        notification_type: str,
+    ) -> int:
+        value = await self._session.scalar(
+            select(func.count())
+            .select_from(StudentNotification)
+            .where(
+                StudentNotification.user_id == user_id,
+                StudentNotification.notification_type == notification_type,
+                StudentNotification.read_at.is_(None),
+            )
+        )
+        return int(value or 0)
+
     async def unread_ids_for_target(
         self,
         *,
         user_id: UUID,
         target_type: str,
         target_id: UUID,
+        notification_type: str | None = None,
     ) -> list[UUID]:
+        filters: list[ColumnElement[bool]] = [
+            StudentNotification.user_id == user_id,
+            StudentNotification.target_type == target_type,
+            StudentNotification.target_id == target_id,
+            StudentNotification.read_at.is_(None),
+        ]
+        if notification_type is not None:
+            filters.append(StudentNotification.notification_type == notification_type)
         return list(
-            (
-                await self._session.scalars(
-                    select(StudentNotification.id).where(
-                        StudentNotification.user_id == user_id,
-                        StudentNotification.target_type == target_type,
-                        StudentNotification.target_id == target_id,
-                        StudentNotification.read_at.is_(None),
-                    )
-                )
-            ).all()
+            (await self._session.scalars(select(StudentNotification.id).where(*filters))).all()
         )
 
     async def unread_for_target(
@@ -270,13 +287,17 @@ class StudentNotificationRepository:
         *,
         target_type: str,
         target_id: UUID,
+        notification_type: str | None = None,
         for_update: bool = False,
     ) -> list[StudentNotification]:
-        statement = select(StudentNotification).where(
+        filters: list[ColumnElement[bool]] = [
             StudentNotification.target_type == target_type,
             StudentNotification.target_id == target_id,
             StudentNotification.read_at.is_(None),
-        )
+        ]
+        if notification_type is not None:
+            filters.append(StudentNotification.notification_type == notification_type)
+        statement = select(StudentNotification).where(*filters)
         if for_update:
             statement = statement.with_for_update()
         return list((await self._session.scalars(statement)).all())

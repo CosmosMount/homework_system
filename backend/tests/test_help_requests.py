@@ -105,6 +105,7 @@ def make_service(now: datetime) -> tuple[HelpRequestService, AsyncMock]:
         StudentNotificationRepository,
         SimpleNamespace(
             add_all=Mock(),
+            unread_count_for_type=AsyncMock(return_value=0),
             unread_ids_for_target=AsyncMock(return_value=[]),
             unread_for_target=AsyncMock(return_value=[]),
         ),
@@ -137,7 +138,12 @@ async def test_student_creates_private_sanitized_help_request(request_type: str)
     now = datetime.now(UTC)
     service, session = make_service(now)
     add_request = Mock()
-    service._repo = cast(HelpRequestRepository, SimpleNamespace(add=add_request))
+    admin_ids = [uuid4(), uuid4()]
+    active_admin_ids = AsyncMock(return_value=admin_ids)
+    service._repo = cast(
+        HelpRequestRepository,
+        SimpleNamespace(add=add_request, active_admin_ids=active_admin_ids),
+    )
     audit_add = cast(Mock, service._audit.add)
     payload = HelpRequestCreateRequest(
         request_type=request_type,
@@ -156,7 +162,67 @@ async def test_student_creates_private_sanitized_help_request(request_type: str)
     assert 'href="javascript:' not in created.content_html.lower()
     assert "content" not in audit.change_summary
     assert "title" not in audit.change_summary
+    created_notifications = cast(
+        list[StudentNotification],
+        cast(Mock, service._notifications.add_all).call_args.args[0],
+    )
+    assert [item.user_id for item in created_notifications] == admin_ids
+    assert {item.event_key for item in created_notifications} == {
+        f"help_request_created:{created.id}"
+    }
+    assert {item.target_url for item in created_notifications} == {f"/admin/help/{created.id}"}
+    assert all(item.notification_type == "help_request_created" for item in created_notifications)
+    assert all(payload.content_markdown not in item.title for item in created_notifications)
+    active_admin_ids.assert_awaited_once_with()
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_help_request_creation_notification_failure_rolls_back() -> None:
+    now = datetime.now(UTC)
+    service, session = make_service(now)
+    add_request = Mock()
+    service._repo = cast(
+        HelpRequestRepository,
+        SimpleNamespace(
+            add=add_request,
+            active_admin_ids=AsyncMock(return_value=[uuid4()]),
+        ),
+    )
+    cast(Mock, service._notifications.add_all).side_effect = RuntimeError(
+        "notification persistence failed"
+    )
+
+    with pytest.raises(RuntimeError, match="notification persistence failed"):
+        await service.create(
+            HelpRequestCreateRequest(
+                request_type="question",
+                title="培训问题",
+                content_markdown="如何选择方向？",
+            ),
+            audit_context=make_audit_context(),
+        )
+
+    add_request.assert_called_once()
+    cast(Mock, service._audit.add).assert_not_called()
+    session.commit.assert_not_awaited()
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_active_admin_query_excludes_inactive_and_student_accounts() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    admin_ids = [uuid4(), uuid4()]
+    session.scalars.return_value = SimpleNamespace(all=lambda: admin_ids)
+    repository = HelpRequestRepository(cast(AsyncSession, session))
+
+    assert await repository.active_admin_ids() == admin_ids
+
+    statement = session.scalars.call_args.args[0]
+    sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "users.role = " in sql and "admin" in sql
+    assert "users.status = " in sql and "active" in sql
+    assert "ORDER BY users.id" in sql
 
 
 @pytest.mark.asyncio
@@ -210,7 +276,13 @@ async def test_plain_admin_is_blocked_from_student_path_but_student_view_is_allo
     now = datetime.now(UTC)
     service, session = make_service(now)
     add_request = Mock()
-    service._repo = cast(HelpRequestRepository, SimpleNamespace(add=add_request))
+    service._repo = cast(
+        HelpRequestRepository,
+        SimpleNamespace(
+            add=add_request,
+            active_admin_ids=AsyncMock(return_value=[]),
+        ),
+    )
     payload = HelpRequestCreateRequest(
         request_type="question",
         title="培训问题",
@@ -283,6 +355,44 @@ async def test_admin_list_returns_identity_and_normalizes_query() -> None:
 
 
 @pytest.mark.asyncio
+async def test_admin_detail_and_unread_count_are_scoped_to_current_admin() -> None:
+    now = datetime.now(UTC)
+    admin_id = uuid4()
+    request = make_request(now)
+    record = AdminHelpRequestRecord(
+        request=request,
+        submitter=make_submitter(request.created_by),
+    )
+    notification_id = uuid4()
+    service, _session = make_service(now)
+    service._repo = cast(
+        HelpRequestRepository,
+        SimpleNamespace(get_admin=AsyncMock(return_value=record)),
+    )
+    unread_ids = cast(AsyncMock, service._notifications.unread_ids_for_target)
+    unread_ids.return_value = [notification_id]
+    unread_count = cast(AsyncMock, service._notifications.unread_count_for_type)
+    unread_count.return_value = 2
+    context = make_context("admin", user_id=admin_id)
+
+    detail = await service.admin_detail(request.id, context=context)
+    count = await service.admin_unread_count(context=context)
+
+    assert detail.notification_ids == [notification_id]
+    assert count.count == 2
+    unread_ids.assert_awaited_once_with(
+        user_id=admin_id,
+        target_type="help_request",
+        target_id=request.id,
+        notification_type="help_request_created",
+    )
+    unread_count.assert_awaited_once_with(
+        user_id=admin_id,
+        notification_type="help_request_created",
+    )
+
+
+@pytest.mark.asyncio
 async def test_admin_resolution_updates_revision_and_adds_redacted_audit_notification() -> None:
     now = datetime.now(UTC)
     admin_id = uuid4()
@@ -298,6 +408,9 @@ async def test_admin_resolution_updates_revision_and_adds_redacted_audit_notific
     )
     audit_add = cast(Mock, service._audit.add)
     notification_add = cast(Mock, service._notifications.add_all)
+    created_notification = cast(StudentNotification, SimpleNamespace(read_at=None))
+    unread_for_target = cast(AsyncMock, service._notifications.unread_for_target)
+    unread_for_target.return_value = [created_notification]
     resolution = "## 处理结果\n已修复，请刷新后重试。"
 
     result = await service.resolve(
@@ -325,6 +438,13 @@ async def test_admin_resolution_updates_revision_and_adds_redacted_audit_notific
     assert notification.event_key == f"help_request_resolved:{request.id}:2"
     assert notification.target_url == f"/help/{request.id}"
     assert resolution not in notification.title
+    assert created_notification.read_at == now
+    unread_for_target.assert_awaited_once_with(
+        target_type="help_request",
+        target_id=request.id,
+        notification_type="help_request_created",
+        for_update=True,
+    )
     session.commit.assert_awaited_once()
 
 

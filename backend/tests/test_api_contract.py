@@ -221,6 +221,7 @@ def test_help_request_openapi_exposes_private_public_and_admin_contracts() -> No
         "/api/v1/help-requests/public/{request_id}",
         "/api/v1/help-requests/{request_id}",
         "/api/v1/admin/help-requests",
+        "/api/v1/admin/help-requests/unread-count",
         "/api/v1/admin/help-requests/{request_id}",
         "/api/v1/admin/help-requests/{request_id}/resolution",
     }
@@ -232,7 +233,7 @@ def test_help_request_openapi_exposes_private_public_and_admin_contracts() -> No
         if "help-requests" in path
         for method in operations
     )
-    assert operation_count == 9
+    assert operation_count == 10
 
     assert paths["/api/v1/help-requests"]["post"]["responses"]["201"]["content"][
         "application/json"
@@ -279,6 +280,12 @@ def test_help_request_openapi_exposes_private_public_and_admin_contracts() -> No
         "revision",
     }
     assert resolution_request["properties"]["revision"]["minimum"] == 1
+    unread_operation = paths["/api/v1/admin/help-requests/unread-count"]["get"]
+    assert unread_operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/AdminHelpRequestUnreadCount"
+    }
+    admin_detail = schema["components"]["schemas"]["AdminHelpRequestDetail"]
+    assert "notification_ids" in admin_detail["required"]
 
 
 def test_stage_three_openapi_contains_dashboard_announcements_notifications_and_uploads() -> None:
@@ -302,6 +309,7 @@ def test_stage_three_openapi_contains_dashboard_announcements_notifications_and_
         "/api/v1/uploads/{upload_id}/parts/presign",
         "/api/v1/uploads/{upload_id}/complete",
         "/api/v1/files/{file_id}/download-url",
+        "/api/v1/files/{file_id}/preview-url",
         "/api/v1/knowledge",
         "/api/v1/knowledge/documents/{document_id}",
         "/api/v1/knowledge/assets/{asset_id}/content",
@@ -310,6 +318,10 @@ def test_stage_three_openapi_contains_dashboard_announcements_notifications_and_
     }
 
     assert expected_paths <= set(paths)
+    preview_operation = paths["/api/v1/files/{file_id}/preview-url"]["post"]
+    assert preview_operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/PreviewUrlResponse"
+    }
     publish_parameters = paths["/api/v1/admin/announcements/{announcement_id}/publish"]["post"][
         "parameters"
     ]

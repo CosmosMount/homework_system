@@ -1,12 +1,16 @@
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import OneTimeToken
 from app.notifications.admin_service import OutboxAdministrationService
 from app.notifications.models import OutboxJob
-from app.notifications.repository import MAIL_JOB_TYPES
+from app.notifications.repository import MAIL_JOB_TYPES, StudentNotificationRepository
 from app.notifications.service import (
     OutboxProcessor,
     apply_delivery_failure,
@@ -381,3 +385,43 @@ async def test_worker_marks_invalid_account_object_payload_permanent() -> None:
     assert processor.object_store.delete_calls == []
     assert processor.sent_ids == []
     assert processor.failures == [(job.id, "INVALID_JOB_PAYLOAD", True)]
+
+
+@pytest.mark.asyncio
+async def test_notification_type_filters_scope_admin_help_unread_queries() -> None:
+    session = AsyncMock(spec=AsyncSession)
+    notification_ids = [uuid4(), uuid4()]
+    session.scalar.return_value = 2
+    session.scalars.return_value = SimpleNamespace(all=lambda: notification_ids)
+    repository = StudentNotificationRepository(cast(AsyncSession, session))
+    user_id = uuid4()
+    target_id = uuid4()
+
+    assert (
+        await repository.unread_count_for_type(
+            user_id=user_id,
+            notification_type="help_request_created",
+        )
+        == 2
+    )
+    assert (
+        await repository.unread_ids_for_target(
+            user_id=user_id,
+            target_type="help_request",
+            target_id=target_id,
+            notification_type="help_request_created",
+        )
+        == notification_ids
+    )
+
+    count_statement = session.scalar.call_args.args[0]
+    ids_statement = session.scalars.call_args.args[0]
+    count_sql = str(count_statement.compile(compile_kwargs={"literal_binds": True}))
+    ids_sql = str(ids_statement.compile(compile_kwargs={"literal_binds": True}))
+    for sql in (count_sql, ids_sql):
+        assert "student_notifications.notification_type = " in sql
+        assert "help_request_created" in sql
+        assert "student_notifications.read_at IS NULL" in sql
+    assert "student_notifications.user_id = " in count_sql
+    assert "student_notifications.user_id = " in ids_sql
+    assert "student_notifications.target_id = " in ids_sql

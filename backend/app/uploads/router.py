@@ -16,6 +16,7 @@ from app.uploads.schemas import (
     DownloadUrlResponse,
     PresignPartsRequest,
     PresignPartsResponse,
+    PreviewUrlResponse,
     UploadInitRequest,
     UploadSessionResponse,
 )
@@ -119,6 +120,19 @@ async def abort_upload(
 ) -> Response:
     await service.abort(upload_id, context=context)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/files/{file_id}/preview-url",
+    response_model=PreviewUrlResponse,
+)
+async def create_preview_url(
+    file_id: UUID,
+    service: UploadServiceDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> PreviewUrlResponse:
+    return await service.preview_url(file_id, context=context)
 
 
 @router.post(

@@ -241,7 +241,8 @@ async def test_excellent_submission_attachment_download_requires_marker_and_audi
     version_id = uuid4()
     stored_file = make_available_file(owner_user_id=owner_id)
     store = SimpleNamespace(
-        presign_download=AsyncMock(return_value="https://storage.invalid/presigned")
+        presign_download=AsyncMock(return_value="https://storage.invalid/presigned"),
+        presign_inline=AsyncMock(return_value="https://storage.invalid/preview"),
     )
     service = UploadService(
         cast(AsyncSession, AsyncMock()),
@@ -279,7 +280,9 @@ async def test_excellent_submission_attachment_download_requires_marker_and_audi
     )
 
     response = await service.download_url(stored_file.id, context=context)
+    preview = await service.preview_url(stored_file.id, context=context)
     assert response.url == "https://storage.invalid/presigned"
+    assert preview.url == "https://storage.invalid/preview"
 
     assignment.status = "archived"
     with pytest.raises(ApplicationError) as removed:
@@ -292,3 +295,120 @@ async def test_excellent_submission_attachment_download_requires_marker_and_audi
         await service.download_url(stored_file.id, context=context)
     assert hidden.value.status_code == 404
     assert hidden.value.code == "RESOURCE_NOT_FOUND"
+
+    owner_context = cast(
+        AuthenticatedContext,
+        SimpleNamespace(
+            user=SimpleNamespace(id=owner_id, role="student"),
+            is_admin=False,
+        ),
+    )
+    owner_preview = await service.preview_url(stored_file.id, context=owner_context)
+    assert owner_preview.url == "https://storage.invalid/preview"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("file_name", "extension", "media_type", "response_content_type"),
+    [
+        ("report.pdf", "pdf", "application/pdf", "application/pdf"),
+        ("diagram.png", "png", "image/png", "image/png"),
+        ("demo.mp4", "mp4", "video/mp4", "video/mp4"),
+        ("demo.webm", "webm", "video/webm", "video/webm"),
+        ("notes.txt", "txt", "text/plain", "text/plain; charset=utf-8"),
+    ],
+)
+async def test_attachment_preview_allows_only_detected_browser_safe_types(
+    file_name: str,
+    extension: str,
+    media_type: str,
+    response_content_type: str,
+) -> None:
+    stored_file = make_available_file(owner_user_id=uuid4())
+    stored_file.original_name = file_name
+    stored_file.extension = extension
+    stored_file.declared_media_type = media_type
+    stored_file.detected_media_type = media_type
+    store = SimpleNamespace(
+        presign_inline=AsyncMock(return_value="https://storage.invalid/preview")
+    )
+    service = UploadService(
+        cast(AsyncSession, AsyncMock()),
+        Settings(app_env="test"),
+        object_store=cast(MinioObjectStore, store),
+        clock=lambda: datetime.now(UTC),
+    )
+    service._uploads = cast(
+        UploadRepository,
+        SimpleNamespace(
+            get_file=AsyncMock(return_value=stored_file),
+            bound_announcement_id=AsyncMock(return_value=uuid4()),
+        ),
+    )
+    context = cast(
+        AuthenticatedContext,
+        SimpleNamespace(
+            user=SimpleNamespace(id=uuid4(), role="admin"),
+            is_admin=True,
+        ),
+    )
+
+    result = await service.preview_url(stored_file.id, context=context)
+
+    assert result.media_type == media_type
+    store.presign_inline.assert_awaited_once_with(
+        object_key=stored_file.object_key,
+        file_name=file_name,
+        content_type=response_content_type,
+        expires_seconds=300,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("file_name", "extension", "media_type"),
+    [
+        ("page.html", "html", "text/html"),
+        ("drawing.svg", "svg", "image/svg+xml"),
+        ("sheet.xlsx", "xlsx", "application/zip"),
+        ("archive.zip", "zip", "application/zip"),
+        ("tool.exe", "exe", "application/x-msdownload"),
+    ],
+)
+async def test_attachment_preview_rejects_active_content_and_download_only_types(
+    file_name: str,
+    extension: str,
+    media_type: str,
+) -> None:
+    stored_file = make_available_file(owner_user_id=uuid4())
+    stored_file.original_name = file_name
+    stored_file.extension = extension
+    stored_file.declared_media_type = media_type
+    stored_file.detected_media_type = media_type
+    store = SimpleNamespace(presign_inline=AsyncMock())
+    service = UploadService(
+        cast(AsyncSession, AsyncMock()),
+        Settings(app_env="test"),
+        object_store=cast(MinioObjectStore, store),
+    )
+    service._uploads = cast(
+        UploadRepository,
+        SimpleNamespace(
+            get_file=AsyncMock(return_value=stored_file),
+            bound_announcement_id=AsyncMock(return_value=uuid4()),
+        ),
+    )
+    context = cast(
+        AuthenticatedContext,
+        SimpleNamespace(
+            user=SimpleNamespace(id=uuid4(), role="admin"),
+            is_admin=True,
+        ),
+    )
+
+    with pytest.raises(ApplicationError) as unsupported:
+        await service.preview_url(stored_file.id, context=context)
+
+    assert unsupported.value.status_code == 415
+    assert unsupported.value.code == "FILE_PREVIEW_NOT_SUPPORTED"
+    store.presign_inline.assert_not_awaited()

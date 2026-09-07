@@ -82,6 +82,11 @@ class AdminHelpRequestDetail(AdminHelpRequestSummary):
     resolution_markdown: str | None
     resolution_html: str | None
     resolved_by: UUID | None
+    notification_ids: list[UUID]
+
+
+class AdminHelpRequestUnreadCount(BaseModel):
+    count: int = Field(ge=0)
 
 
 class AdminHelpRequestPage(BaseModel):

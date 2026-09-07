@@ -18,6 +18,7 @@ from app.help_requests.schemas import (
     AdminHelpRequestDetail,
     AdminHelpRequestPage,
     AdminHelpRequestSummary,
+    AdminHelpRequestUnreadCount,
     HelpRequestCreateRequest,
     HelpRequestDetail,
     HelpRequestPage,
@@ -134,7 +135,12 @@ class HelpRequestService:
         )
 
     @classmethod
-    def _admin_detail(cls, record: AdminHelpRequestRecord) -> AdminHelpRequestDetail:
+    def _admin_detail(
+        cls,
+        record: AdminHelpRequestRecord,
+        *,
+        notification_ids: list[UUID] | None = None,
+    ) -> AdminHelpRequestDetail:
         request = record.request
         return AdminHelpRequestDetail(
             **cls._admin_summary(record).model_dump(),
@@ -143,6 +149,7 @@ class HelpRequestService:
             resolution_markdown=request.resolution_markdown,
             resolution_html=request.resolution_html,
             resolved_by=request.resolved_by,
+            notification_ids=notification_ids or [],
         )
 
     def _add_audit(
@@ -274,6 +281,27 @@ class HelpRequestService:
         )
         try:
             self._repo.add(request)
+            admin_ids = await self._repo.active_admin_ids()
+            notification_title = (
+                "收到新的问题答疑" if request.request_type == "question" else "收到新的系统反馈"
+            )
+            self._notifications.add_all(
+                [
+                    StudentNotification(
+                        id=uuid7(),
+                        user_id=admin_id,
+                        notification_type="help_request_created",
+                        event_key=f"help_request_created:{request.id}",
+                        title=notification_title,
+                        target_type="help_request",
+                        target_id=request.id,
+                        target_url=f"/admin/help/{request.id}",
+                        created_at=now,
+                        read_at=None,
+                    )
+                    for admin_id in admin_ids
+                ]
+            )
             self._add_audit(
                 audit_context,
                 action="help_request.created",
@@ -319,7 +347,25 @@ class HelpRequestService:
         record = await self._repo.get_admin(request_id)
         if record is None:
             raise self._not_found()
-        return self._admin_detail(record)
+        notification_ids = await self._notifications.unread_ids_for_target(
+            user_id=context.user.id,
+            target_type="help_request",
+            target_id=request_id,
+            notification_type="help_request_created",
+        )
+        return self._admin_detail(record, notification_ids=notification_ids)
+
+    async def admin_unread_count(
+        self,
+        *,
+        context: AuthenticatedContext,
+    ) -> AdminHelpRequestUnreadCount:
+        self._require_admin(context)
+        count = await self._notifications.unread_count_for_type(
+            user_id=context.user.id,
+            notification_type="help_request_created",
+        )
+        return AdminHelpRequestUnreadCount(count=count)
 
     async def remove(
         self,
@@ -382,6 +428,15 @@ class HelpRequestService:
         try:
             was_resolved = request.status == "resolved"
             now = self._clock()
+            if not was_resolved:
+                created_notifications = await self._notifications.unread_for_target(
+                    target_type="help_request",
+                    target_id=request.id,
+                    notification_type="help_request_created",
+                    for_update=True,
+                )
+                for notification in created_notifications:
+                    notification.read_at = now
             request.status = "resolved"
             request.resolution_markdown = payload.resolution_markdown
             request.resolution_html = render_markdown(payload.resolution_markdown)
