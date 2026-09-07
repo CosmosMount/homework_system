@@ -720,6 +720,7 @@ export type AdminHelpRequestDetail = AdminHelpRequestSummary & {
   resolution_markdown: string | null;
   resolution_html: string | null;
   resolved_by: string | null;
+  notification_ids: string[];
 };
 
 export type AdminHelpRequestPage = {

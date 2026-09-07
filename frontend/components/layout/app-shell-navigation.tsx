@@ -7,8 +7,11 @@ import { useEffect, useState } from "react";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { AppIcon } from "@/components/ui/app-icon";
 import type { AppIconName } from "@/components/ui/app-icon";
-import { APP_SHELL_COLLAPSE_EVENT } from "@/lib/app-shell-events";
-import { ApiError, csrfFetch } from "@/lib/api/client";
+import {
+  APP_SHELL_COLLAPSE_EVENT,
+  NOTIFICATIONS_READ_EVENT,
+} from "@/lib/app-shell-events";
+import { ApiError, apiFetch, csrfFetch } from "@/lib/api/client";
 import { isAdminView } from "@/lib/api/types";
 import type { NotificationUnreadCounts, User } from "@/lib/api/types";
 
@@ -18,6 +21,7 @@ type NavigationItem = Readonly<{
   icon: AppIconName;
   match: (pathname: string) => boolean;
   badgeCount?: number;
+  badgeDot?: boolean;
 }>;
 
 type AppShellNavigationProps = Readonly<{
@@ -32,6 +36,7 @@ function matchesPath(pathname: string, href: string): boolean {
 function itemsForUser(
   user: User,
   unreadCounts: NotificationUnreadCounts,
+  adminHelpHasUnread: boolean,
 ): NavigationItem[] {
   const primary: Array<Omit<NavigationItem, "match">> =
     isAdminView(user)
@@ -42,7 +47,12 @@ function itemsForUser(
           { href: "/admin/knowledge", label: "知识库同步", icon: "book" },
           { href: "/admin/competitions", label: "校内赛", icon: "competition" },
           { href: "/admin/intentions", label: "问卷管理", icon: "layers" },
-          { href: "/admin/help", label: "反馈答疑", icon: "help" },
+          {
+            href: "/admin/help",
+            label: "反馈答疑",
+            icon: "help",
+            badgeDot: adminHelpHasUnread,
+          },
           { href: "/admin/users", label: "用户管理", icon: "users" },
           { href: "/admin/categories", label: "方向设置", icon: "categories" },
           { href: "/admin/sessions", label: "登录人员", icon: "monitor" },
@@ -80,8 +90,9 @@ function NavigationLinks({
     <nav aria-label="主要导航" className="min-w-0 flex-1 space-y-1.5 overflow-y-auto p-3">
       {items.map((item) => {
         const active = item.match(pathname);
-        const accessibleLabel =
-          item.badgeCount && item.badgeCount > 0
+        const accessibleLabel = item.badgeDot
+          ? `${item.label}，有未读消息`
+          : item.badgeCount && item.badgeCount > 0
             ? `${item.label}，${item.badgeCount} 条未读`
             : item.label;
         return (
@@ -120,7 +131,15 @@ function NavigationLinks({
             <span className={collapsed ? "sr-only" : "min-w-0 truncate"}>
               {item.label}
             </span>
-            {item.badgeCount && item.badgeCount > 0 ? (
+            {item.badgeDot ? (
+              <span
+                aria-hidden="true"
+                className={
+                  "ml-auto size-2 shrink-0 rounded-full bg-[var(--color-accent-fill)]" +
+                  (collapsed ? " absolute right-1 top-1" : "")
+                }
+              />
+            ) : item.badgeCount && item.badgeCount > 0 ? (
               <span
                 aria-hidden="true"
                 className={
@@ -274,8 +293,11 @@ export function AppShellNavigation({
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const items = itemsForUser(user, unreadCounts);
-  const homeHref = isAdminView(user) ? "/admin/dashboard" : "/dashboard";
+  const [adminHelpUnreadCount, setAdminHelpUnreadCount] = useState(0);
+  const [adminUnreadLoadFailed, setAdminUnreadLoadFailed] = useState(false);
+  const adminView = isAdminView(user);
+  const items = itemsForUser(user, unreadCounts, adminHelpUnreadCount > 0);
+  const homeHref = adminView ? "/admin/dashboard" : "/dashboard";
 
   useEffect(() => {
     function collapseNavigation() {
@@ -285,8 +307,47 @@ export function AppShellNavigation({
     return () => window.removeEventListener(APP_SHELL_COLLAPSE_EVENT, collapseNavigation);
   }, []);
 
+  useEffect(() => {
+    if (!adminView) return;
+    let cancelled = false;
+
+    async function loadAdminHelpUnreadCount() {
+      try {
+        const result = await apiFetch<{ count: number }>(
+          "/admin/help-requests/unread-count",
+        );
+        if (!cancelled) {
+          setAdminHelpUnreadCount(result.count);
+          setAdminUnreadLoadFailed(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setAdminUnreadLoadFailed(true);
+        }
+      }
+    }
+
+    void loadAdminHelpUnreadCount();
+    window.addEventListener(
+      NOTIFICATIONS_READ_EVENT,
+      loadAdminHelpUnreadCount,
+    );
+    return () => {
+      cancelled = true;
+      window.removeEventListener(
+        NOTIFICATIONS_READ_EVENT,
+        loadAdminHelpUnreadCount,
+      );
+    };
+  }, [adminView, user.id]);
+
   return (
     <>
+      {adminUnreadLoadFailed ? (
+        <p className="sr-only" role="status">
+          反馈答疑未读状态暂时无法加载。
+        </p>
+      ) : null}
       <aside
         aria-label="主要导航侧栏"
         className={

@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnnouncementEditor } from "@/components/admin/announcement-editor";
 import { AnnouncementListPanel } from "@/components/admin/announcement-list-panel";
+import {
+  AttachmentDownloadButton,
+} from "@/components/announcements/announcement-actions";
 import { SafeHtml } from "@/components/announcements/safe-html";
 import { AppShell } from "@/components/layout/app-shell";
 import type { AnnouncementAdmin, User } from "@/lib/api/types";
@@ -145,6 +148,70 @@ describe("announcement UI", () => {
       "href",
       "https://example.com",
     );
+  });
+
+  it("previews a supported attachment in place and restores focus on Escape", async () => {
+    csrfFetchMock.mockResolvedValue({
+      url: "/storage/pnx-training/objects/file?signature=test",
+    });
+    render(
+      <AttachmentDownloadButton
+        fileId="file-1"
+        fileName="diagram.png"
+        mediaType="image/png"
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: "预览附件" });
+    fireEvent.click(trigger);
+
+    expect(
+      await screen.findByRole("dialog", { name: "diagram.png 预览" }),
+    ).toBeInTheDocument();
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/files/file-1/preview-url",
+      { method: "POST" },
+    );
+    expect(screen.getByRole("button", { name: "关闭" })).toHaveFocus();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveFocus();
+  });
+
+  it("keeps unsupported attachment types download-only", () => {
+    render(
+      <AttachmentDownloadButton
+        fileId="file-2"
+        fileName="archive.zip"
+        mediaType="application/zip"
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "预览附件" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下载附件" })).toBeInTheDocument();
+  });
+
+  it("shows a recoverable attachment preview error", async () => {
+    csrfFetchMock.mockRejectedValueOnce(new Error("preview failed"));
+    render(
+      <AttachmentDownloadButton
+        fileId="file-3"
+        fileName="report.pdf"
+        mediaType="application/pdf"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "预览附件" }));
+
+    expect(
+      await screen.findByText("操作失败，请稍后重试。"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新加载" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下载附件" })).toBeInTheDocument();
   });
 
   it("filters the admin announcement list by status and query", () => {

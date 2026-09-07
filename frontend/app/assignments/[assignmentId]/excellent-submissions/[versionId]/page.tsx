@@ -91,7 +91,11 @@ export default async function ExcellentSubmissionPage({
                       {formatFileSize(attachment.size_bytes)}
                     </p>
                   </div>
-                  <AttachmentDownloadButton fileId={attachment.id} />
+                  <AttachmentDownloadButton
+                    fileId={attachment.id}
+                    fileName={attachment.file_name}
+                    mediaType={attachment.media_type}
+                  />
                 </div>
               ))}
             </div>

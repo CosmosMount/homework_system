@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HelpRequestResolutionForm } from "@/components/admin/help-request-resolution-form";
+import { NOTIFICATIONS_READ_EVENT } from "@/lib/app-shell-events";
 import { HelpRequestCreateForm } from "@/components/help/help-request-create-form";
 import { AppShell } from "@/components/layout/app-shell";
 import { MarkNotificationsRead } from "@/components/notifications/mark-notifications-read";
@@ -12,7 +13,14 @@ import type {
   User,
 } from "@/lib/api/types";
 
-const { csrfFetchMock, pushMock, refreshMock, replaceMock } = vi.hoisted(() => ({
+const {
+  apiFetchMock,
+  csrfFetchMock,
+  pushMock,
+  refreshMock,
+  replaceMock,
+} = vi.hoisted(() => ({
+  apiFetchMock: vi.fn(),
   csrfFetchMock: vi.fn(),
   pushMock: vi.fn(),
   refreshMock: vi.fn(),
@@ -30,6 +38,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/client")>()),
+  apiFetch: apiFetchMock,
   csrfFetch: csrfFetchMock,
 }));
 
@@ -94,6 +103,8 @@ function adminDetail(
 
 describe("feedback and help request UI", () => {
   beforeEach(() => {
+    apiFetchMock.mockReset();
+    apiFetchMock.mockResolvedValue({ count: 0 });
     csrfFetchMock.mockReset();
     pushMock.mockReset();
     refreshMock.mockReset();
@@ -262,6 +273,32 @@ describe("feedback and help request UI", () => {
       { method: "POST" },
     );
     await waitFor(() => expect(refreshMock).toHaveBeenCalled());
+  });
+
+  it("shows and refreshes the administrator help unread dot", async () => {
+    apiFetchMock
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    render(
+      <AppShell user={admin}>
+        <p>管理内容</p>
+      </AppShell>,
+    );
+
+    const unreadLink = await screen.findByRole("link", {
+      name: "反馈答疑，有未读消息",
+    });
+    expect(unreadLink).toHaveAttribute("href", "/admin/help");
+
+    window.dispatchEvent(new Event(NOTIFICATIONS_READ_EVENT));
+
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "反馈答疑" })).toBeInTheDocument(),
+    );
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+    expect(apiFetchMock).toHaveBeenLastCalledWith(
+      "/admin/help-requests/unread-count",
+    );
   });
 
   it("shows only the role-appropriate feedback navigation target", () => {

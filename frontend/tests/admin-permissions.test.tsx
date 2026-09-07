@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AdminAnnouncementsPage from "@/app/admin/announcements/page";
 import AdminCategoriesPage from "@/app/admin/categories/page";
 import AdminAssignmentsPage from "@/app/admin/assignments/page";
+import AdminSubmissionPage from "@/app/admin/submissions/[submissionId]/page";
 import AdminSessionsPage from "@/app/admin/sessions/page";
 import NewAssignmentPage from "@/app/admin/assignments/new/page";
 import { ProfileEditor } from "@/components/admin/profile-editor";
@@ -13,38 +14,54 @@ import { ApiError } from "@/lib/api/client";
 import type { AdminSession, AssignmentAdmin, User } from "@/lib/api/types";
 
 const {
+  apiFetchMock,
   csrfFetchMock,
+  getAdminAnnouncementMock,
   getAdminAnnouncementsMock,
+  getAdminAssignmentMock,
   getAdminAssignmentsMock,
   getAdminSessionsMock,
   getDirectionsMock,
+  getExcellentSubmissionsMock,
+  getSubmissionMock,
   requireAdminMock,
   replaceMock,
 } = vi.hoisted(() => ({
+  apiFetchMock: vi.fn(),
   csrfFetchMock: vi.fn(),
+  getAdminAnnouncementMock: vi.fn(),
   getAdminAnnouncementsMock: vi.fn(),
+  getAdminAssignmentMock: vi.fn(),
   getAdminAssignmentsMock: vi.fn(),
   getAdminSessionsMock: vi.fn(),
   getDirectionsMock: vi.fn(),
+  getExcellentSubmissionsMock: vi.fn(),
+  getSubmissionMock: vi.fn(),
   requireAdminMock: vi.fn(),
   replaceMock: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
+  notFound: vi.fn(),
   usePathname: () => "/admin/assignments",
   useRouter: () => ({ refresh: vi.fn(), replace: replaceMock }),
 }));
 
 vi.mock("@/lib/api/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/client")>()),
+  apiFetch: apiFetchMock,
   csrfFetch: csrfFetchMock,
 }));
 
 vi.mock("@/lib/api/server", () => ({
+  getAdminAnnouncement: getAdminAnnouncementMock,
   getAdminAnnouncements: getAdminAnnouncementsMock,
+  getAdminAssignment: getAdminAssignmentMock,
   getAdminAssignments: getAdminAssignmentsMock,
   getAdminSessions: getAdminSessionsMock,
   getDirections: getDirectionsMock,
+  getExcellentSubmissions: getExcellentSubmissionsMock,
+  getSubmission: getSubmissionMock,
   requireAdmin: requireAdminMock,
 }));
 
@@ -106,14 +123,51 @@ describe("admin permissions UI", () => {
   });
 
   beforeEach(() => {
+    apiFetchMock.mockReset();
+    apiFetchMock.mockResolvedValue({ count: 0 });
     csrfFetchMock.mockReset();
     replaceMock.mockReset();
     requireAdminMock.mockReset();
     requireAdminMock.mockResolvedValue(admin);
     getDirectionsMock.mockResolvedValue([]);
     getAdminAnnouncementsMock.mockResolvedValue({ items: [] });
+    getAdminAssignmentMock.mockResolvedValue(assignment());
     getAdminAssignmentsMock.mockResolvedValue({ items: [] });
     getAdminSessionsMock.mockResolvedValue([]);
+    getExcellentSubmissionsMock.mockResolvedValue([]);
+    getSubmissionMock.mockResolvedValue({
+      id: "submission-1",
+      assignment_id: "assignment-1",
+      owner_user_id: "student-1",
+      latest_version_id: "version-1",
+      versions: [
+        {
+          id: "version-1",
+          submission_id: "submission-1",
+          version_number: 1,
+          submitted_by: "student-1",
+          text_html: "<p>提交正文</p>",
+          external_url: null,
+          total_file_bytes: 0,
+          submitted_at: "2026-08-25T10:00:00Z",
+          attachments: [],
+          feedback: null,
+        },
+      ],
+    });
+  });
+
+  it("returns from a personal submission to its original assignment", async () => {
+    render(
+      await AdminSubmissionPage({
+        params: Promise.resolve({ submissionId: "submission-1" }),
+      }),
+    );
+
+    expect(screen.getByRole("link", { name: "返回原作业" })).toHaveAttribute(
+      "href",
+      "/admin/assignments/assignment-1/edit",
+    );
   });
 
   it("shows assignment management and logged-in people navigation", () => {

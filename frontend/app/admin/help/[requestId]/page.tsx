@@ -5,6 +5,7 @@ import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { HelpRequestResolutionForm } from "@/components/admin/help-request-resolution-form";
 import { SafeHtml } from "@/components/announcements/safe-html";
 import { AppShell } from "@/components/layout/app-shell";
+import { MarkNotificationsRead } from "@/components/notifications/mark-notifications-read";
 import {
   getAdminHelpRequest,
   requireAdmin,
@@ -33,6 +34,7 @@ export default async function AdminHelpRequestDetailPage({
 
   return (
     <AppShell user={admin}>
+      <MarkNotificationsRead notificationIds={request.notification_ids} />
       <AdminPageHeader
         backHref="/admin/help"
         backLabel="返回反馈答疑"

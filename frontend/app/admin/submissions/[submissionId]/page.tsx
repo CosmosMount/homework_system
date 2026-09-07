@@ -37,8 +37,8 @@ export default async function AdminSubmissionPage({
   return (
     <AppShell user={admin}>
       <AdminPageHeader
-        backHref="/admin/dashboard"
-        backLabel="返回管理概览"
+        backHref={"/admin/assignments/" + submission.assignment_id + "/edit"}
+        backLabel="返回原作业"
         eyebrow="ADMIN / SUBMISSIONS / REVIEW"
         title="审阅个人提交"
         description="正式版本不可变；私密评语仅对个人提交者与管理员可见，优秀标记只属于对应作业。"

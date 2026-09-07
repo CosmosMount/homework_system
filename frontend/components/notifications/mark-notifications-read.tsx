@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { notifyNotificationsRead } from "@/lib/app-shell-events";
 import { ApiError, csrfFetch } from "@/lib/api/client";
 
 function errorMessage(error: unknown): string {
@@ -29,9 +30,15 @@ export function MarkNotificationsRead({
             }),
           ),
         );
-        if (!cancelled) router.refresh();
+        if (!cancelled) {
+          notifyNotificationsRead();
+          router.refresh();
+        }
       } catch (nextError) {
-        if (!cancelled) setError(errorMessage(nextError));
+        if (!cancelled) {
+          notifyNotificationsRead();
+          setError(errorMessage(nextError));
+        }
       }
     }
 
