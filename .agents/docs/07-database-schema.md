@@ -141,10 +141,12 @@ erDiagram
 
 `id`, `user_id`, `notification_type`, `event_key`, `title`, `target_type`, `target_id`, `target_url`, `created_at`, `read_at`。
 
+- 表名是历史兼容名称，语义为任一登录用户的站内提醒；`user_id` 可指向学生或管理员，本次不重命名、不新增字段或 Alembic 迁移。
 - `(user_id, event_key)` 唯一，保证重试不生成重复提醒。
 - 索引 `(user_id, read_at, created_at DESC)`。
 - 工作台按 `target_type/target_url` 把未读提醒归入公告、作业、校内赛和反馈答疑；公告分类只统计仍为 `published` 的目标，历史遗留的归档公告提醒不进入有效未读数。
 - 公告归档在同一事务把该公告当前未读提醒写入 `read_at`；学生读取公告或本人工单详情后仍通过既有受 CSRF 保护的单条已读接口更新，不通过 GET 隐式写入。
+- 学生创建工单时，每个当前 `active admin` 各写一行 `notification_type='help_request_created'`、`event_key='help_request_created:{request_id}'`；唯一约束包含 `user_id`，所以多个管理员可共享同一事件键。固定标题不含工单标题、正文、姓名、学号或邮箱。管理员侧计数和详情均按当前 `user_id` 过滤，打开详情仍通过受保护写接口标记本人行已读。
 - 已发布公告的删除复用归档语义，不删除历史 `student_notifications`；未发布公告尚未生成逐学生提醒。
 
 ## 反馈答疑
@@ -157,10 +159,10 @@ erDiagram
 - `content_html` 和非空的 `resolution_html` 都由统一安全 Markdown 渲染器生成；数据库保存当前答复，不建立公开评论或多轮消息表。
 - `created_by` 以 `ON DELETE CASCADE` 引用 `users`，因此账号擦除删除本人工单；`resolved_by` 可空并以 `ON DELETE SET NULL` 保留其他人的已解决工单。`open` 必须没有答复者、答复时间或答复正文；`resolved` 必须具有非空答复和答复时间，答复管理员已删除时允许答复者为空。
 - 学生列表索引 `(created_by, created_at DESC, id DESC)`；管理员筛选索引 `(status, request_type, created_at DESC, id DESC)`。
-- 管理员首次答复或修订答复时锁定本行、校验 `revision`，并在同一事务写 `audit_logs` 和 `student_notifications`；通知事件键为 `help_request_resolved:{request_id}:{revision}`，只包含安全标题和本人详情链接。
+- 工单创建、审计和全部当前有效管理员的创建提醒在同一事务提交；提醒写入失败会回滚工单。管理员首次答复或修订答复时锁定本行、校验 `revision`，并在同一事务写 `audit_logs` 和学生 `student_notifications`；通知事件键为 `help_request_resolved:{request_id}:{revision}`，只包含安全标题和本人详情链接。首次答复同时把全部管理员对此工单的未读创建提醒写入 `read_at`，修订不重复处理。
 - 不新增 `is_public` 字段或迁移；登录态公开查询固定选择 `request_type='question' AND status='resolved'`，复用管理员筛选索引且不连接 `users`。因此开放问题和全部系统反馈始终私密，问题首次解决即公开，答复修订直接反映最新版本。
 
-- 管理员删除任意状态工单时锁定本行，在同一事务把目标工单未读提醒写入 `read_at`、写脱敏审计并物理删除 `help_requests` 行；历史已读提醒和审计不级联删除。复用现有表与索引，不新增 `deleted_at`、状态枚举或 Alembic 迁移。
+- 管理员删除任意状态工单时锁定本行，在同一事务把目标工单全部未读创建/解决提醒写入 `read_at`、写脱敏审计并物理删除 `help_requests` 行；历史已读提醒和审计不级联删除。复用现有表、约束与索引，不新增 `deleted_at`、状态枚举或 Alembic 迁移。
 ## 作业与受众快照
 
 ### `assignments`

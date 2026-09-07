@@ -116,9 +116,9 @@ stateDiagram-v2
 
 用户上传默认拒绝可执行程序、动态库、安装包、HTML、SVG、脚本快捷方式和未知二进制类型。文件名规范化不得改变用户下载时看到的合理名称，但授权和类型判断不依赖文件名。飞书知识库只读快照的 PE 例外不加入此全局白名单。
 
-首版不内置恶意软件扫描，不在线预览 Office/PDF，也不解压归档；这是部署风险记录，而不是校验通过即安全的承诺。
+首版不内置恶意软件扫描，也不解压归档。Office、压缩包和未知二进制继续只下载；服务端检测为安全 PDF、PNG/JPEG/GIF/WebP、MP4/WebM 或纯文本/源码的对象可在业务页面内预览。这是受限展示能力，不是“校验通过即无恶意内容”的承诺。
 
-## 下载授权
+## 下载与预览授权
 
 `POST /files/{file_id}/download-url` 从文件关联反查权限：
 
@@ -127,7 +127,9 @@ stateDiagram-v2
 - 赛事版本：当前用户是该版本所属队伍的当前成员，或管理员。
 - 优秀作业附件：源版本已被对应作业标记为优秀，且当前学生属于该作业受众，或当前用户是管理员。
 
-授权成功返回 5 分钟 URL、显示文件名、大小、媒体类型和 SHA-256。URL 只允许 GET，不授予列桶或其他对象权限。非授权请求返回 404。
+`POST /files/{file_id}/preview-url` 复用同一个业务反查函数，不建立第二套权限判断。通知附件、本人作业版本、管理员提交审阅及作业内优秀作业均使用该边界；授权失败统一返回 404，不能通过预览错误探测文件存在。
+
+下载授权成功返回 5 分钟 `attachment` URL；预览授权成功返回 5 分钟 `inline` URL。两者都返回显示文件名、大小、服务端媒体类型和 SHA-256，URL 只允许 GET，不授予列桶或其他对象权限。预览仅接受服务端 `detected_media_type` 与扩展名一致的 PDF、PNG/JPEG/GIF/WebP、MP4/WebM，或检测为 `text/plain` 且扩展名属于 `c/cpp/csv/go/h/hpp/java/json/kt/md/py/rs/txt` 的对象；文本响应强制 `text/plain; charset=utf-8`。不得使用 `declared_media_type` 兜底。HTML、SVG、Office、压缩包、EXE、未知或不匹配类型返回 `415 FILE_PREVIEW_NOT_SUPPORTED`，下载能力不受影响。
 
 ## 删除与保留
 
@@ -152,6 +154,7 @@ stateDiagram-v2
 
 - API 初始化/完成请求体很小，Nginx 对 `/api/v1` 保持常规请求限制。
 - `/storage/` 允许分片大小加少量协议开销，不接受整个 2 GiB API 请求。
+- `/storage/` 的下载与预览继续是同源路径；常规页面使用 `X-Frame-Options: DENY`，该 location 为页内预览覆盖为 `SAMEORIGIN`，并显式重复完整安全头，预览响应使用 `Referrer-Policy: no-referrer`。
 - 分片上传读取超时按校内最慢允许带宽设置，默认 10 分钟；预签名本身 15 分钟过期。
 - 禁止请求缓冲把整个分片写入 Nginx 临时磁盘；保留必要限速和并发连接控制。
 

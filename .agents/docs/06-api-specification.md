@@ -356,6 +356,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 | `POST /uploads/{upload_id}/complete` | `{parts:[{part_number,etag,checksum_sha256}],sha256}` → 可引用文件 | FILE-003～FILE-004 |
 | `DELETE /uploads/{upload_id}` | 终止会话并异步清理对象 | FILE-002、FILE-006 |
 | `POST /files/{file_id}/download-url` | 授权后返回 5 分钟预签名 URL | FILE-005 |
+| `POST /files/{file_id}/preview-url` | 复用下载的完整业务授权；仅安全可预览类型返回 5 分钟 inline URL | FILE-005、FILE-007 |
 
 每次预签名最多申请 10 个分片；分片 URL 有效期 15 分钟。完成接口必须带幂等键。
 
@@ -463,7 +464,8 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
 | `GET /admin/help-requests` | `type,status,query,page,page_size`；返回全部工单和提交学生安全身份摘要 | HELP-003 |
-| `GET /admin/help-requests/{request_id}` | 返回学生姓名、学号、学校邮箱、完整工单和当前答复 | HELP-003 |
+| `GET /admin/help-requests/unread-count` | 只返回当前管理员本人 `help_request_created` 未读数量 `{count}`；静态路由先于 UUID 详情注册 | HELP-003、NEWS-005 |
+| `GET /admin/help-requests/{request_id}` | 返回学生姓名、学号、学校邮箱、完整工单、当前答复和当前管理员本人对此工单的未读提醒 ID | HELP-003 |
 | `PUT /admin/help-requests/{request_id}/resolution` | `{resolution_markdown,revision}`；首次答复或修订答复，原子写状态、审计和站内通知 | HELP-004～HELP-005 |
 | `DELETE /admin/help-requests/{request_id}` | 锁定后物理删除工单、使相关未读解决提醒失效并写脱敏审计，返回 204 | HELP-008 |
 
@@ -473,4 +475,6 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 {"resolution_markdown":"已修复移动端按钮，请刷新后重试。","revision":1}
 ```
 
-本人详情额外包含只属于当前用户、当前工单的未读 `notification_ids`，用于调用既有单条已读接口；不返回通知事件键。管理员成功响应包含 `request_type`、`status`、安全正文/答复、提交学生摘要、`resolved_by`、`resolved_at`、时间和 `revision`，不返回日志、通知内部事件键或其他学生工单。删除请求无主体，成功响应无正文；物理删除前把同一 `target_type=help_request,target_id=request_id` 的未读提醒标为已读，历史已读提醒继续保留。空答复返回 `400 VALIDATION_ERROR`，过期 revision 返回 `409 REVISION_CONFLICT`，不可见资源返回 `404 RESOURCE_NOT_FOUND`；学生和管理员学生视图调用管理接口返回 `403 FORBIDDEN`。
+本人详情额外包含只属于当前学生、当前工单的未读解决提醒 `notification_ids`；管理员详情则只包含当前管理员、当前工单、`notification_type=help_request_created` 的未读 `notification_ids`，两者都用于调用既有单条已读接口且不返回通知事件键。学生创建工单时同事务为全部当前有效管理员生成固定脱敏标题的创建提醒；首次解决使该工单全部管理员未读创建提醒失效，修订不重复处理。管理员成功响应还包含 `request_type`、`status`、安全正文/答复、提交学生摘要、`resolved_by`、`resolved_at`、时间和 `revision`，不返回日志、通知内部事件键或其他学生工单。删除请求无主体，成功响应无正文；物理删除前把同一 `target_type=help_request,target_id=request_id` 的全部未读提醒标为已读，历史已读提醒继续保留。空答复返回 `400 VALIDATION_ERROR`，过期 revision 返回 `409 REVISION_CONFLICT`，不可见资源返回 `404 RESOURCE_NOT_FOUND`；学生和管理员学生视图调用管理接口返回 `403 FORBIDDEN`。
+
+`POST /files/{file_id}/preview-url` 与下载端点使用相同 Session、CSRF 和业务关联授权，成功响应字段与下载一致。只有服务端 `detected_media_type` 与扩展名匹配的 PDF、PNG/JPEG/GIF/WebP、MP4/WebM，或已检测为 `text/plain` 的安全文本扩展名可预览；文本签名响应强制 `text/plain; charset=utf-8`。HTML、SVG、Office、压缩包、可执行文件、未知或不匹配类型返回 `415 FILE_PREVIEW_NOT_SUPPORTED`，授权失败仍按既有 404，不得借 415 探测不可见文件。
