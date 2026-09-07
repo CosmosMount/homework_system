@@ -18,7 +18,7 @@ from app.auth.service import AuthenticatedContext, context_effective_role, conte
 from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.core.identifiers import uuid7
-from app.teams.models import Team, TeamMember
+from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile
 from app.teams.repository import TeamRepository
 from app.teams.schemas import (
     AdminCaptainTransferRequest,
@@ -33,7 +33,13 @@ from app.teams.schemas import (
     TeamCreatedResponse,
     TeamDirectoryItem,
     TeamDirectoryResponse,
+    TeamInvitationCreateRequest,
+    TeamInvitationListResponse,
+    TeamInvitationResponse,
     TeamMemberResponse,
+    TeamProfilePage,
+    TeamProfileResponse,
+    TeamProfileUpsertRequest,
     TeamResponse,
     TeamStatus,
 )
@@ -115,13 +121,14 @@ class TeamService:
         target_id: UUID,
         change_summary: dict[str, object],
         now: datetime,
+        target_type: str = "team",
     ) -> None:
         self._audit.add(
             AuditLog(
                 id=uuid7(),
                 actor_user_id=audit_context.actor.user.id,
                 action=action,
-                target_type="team",
+                target_type=target_type,
                 target_id=target_id,
                 request_id=audit_context.request_id,
                 ip_prefix=audit_context.ip_prefix,
@@ -150,11 +157,306 @@ class TeamService:
                     joined_at=record.member.joined_at,
                     added_by_admin=record.member.added_by_admin,
                     is_captain=record.user.id == team.captain_user_id,
+                    direction_name=record.direction_name,
+                    introduction=(record.profile.introduction if record.profile else None),
                 )
                 for record in members
             ],
             can_manage=team.status == "forming" and team.captain_user_id == actor_user_id,
         )
+
+    async def my_profile(self, *, context: AuthenticatedContext) -> TeamProfileResponse | None:
+        self._require_student(context)
+        profile = await self._teams.profile_for_user(context.user.id)
+        if profile is None:
+            return None
+        direction_name: str | None = None
+        if context.user.direction_id is not None:
+            direction = await self._users.get_direction(context.user.direction_id)
+            direction_name = direction.name if direction is not None else None
+        return TeamProfileResponse(
+            user_id=context.user.id,
+            full_name=context.user.full_name,
+            direction_name=direction_name,
+            introduction=profile.introduction,
+            updated_at=profile.updated_at,
+            revision=profile.revision,
+        )
+
+    async def profiles(
+        self,
+        *,
+        context: AuthenticatedContext,
+        query: str | None,
+        page: int,
+        page_size: int,
+    ) -> TeamProfilePage:
+        self._require_student(context)
+        records, total = await self._teams.list_profiles(
+            query=query, page=page, page_size=page_size
+        )
+        actor_team = await self._teams.team_for_user(context.user.id)
+        can_send = False
+        pending_invitees: set[UUID] = set()
+        if actor_team is not None:
+            can_send = await self._teams.member_count(actor_team.id) < actor_team.max_members
+            pending_invitees = await self._teams.pending_invitee_ids(actor_team.id)
+        return TeamProfilePage(
+            items=[
+                TeamProfileResponse(
+                    user_id=record.user.id,
+                    full_name=record.user.full_name,
+                    direction_name=record.direction_name,
+                    introduction=record.profile.introduction,
+                    updated_at=record.profile.updated_at,
+                    revision=record.profile.revision,
+                    can_invite=(
+                        can_send
+                        and record.user.id != context.user.id
+                        and record.team_id is None
+                        and record.user.id not in pending_invitees
+                    ),
+                    invitation_pending=record.user.id in pending_invitees,
+                )
+                for record in records
+            ],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+
+    async def upsert_profile(
+        self,
+        payload: TeamProfileUpsertRequest,
+        *,
+        audit_context: TeamAuditContext,
+    ) -> TeamProfileResponse:
+        self._require_student(audit_context.actor)
+        profile = await self._teams.profile_for_user(audit_context.actor.user.id, for_update=True)
+        now = self._clock()
+        if profile is None:
+            if payload.revision is not None:
+                await self._session.rollback()
+                raise self._conflict("REVISION_CONFLICT", "个人简介已发生变化，请刷新后重试。")
+            profile = TeamProfile(
+                user_id=audit_context.actor.user.id,
+                introduction=payload.introduction,
+                created_at=now,
+                updated_at=now,
+                revision=1,
+            )
+            self._teams.add_profile(profile)
+        else:
+            if payload.revision != profile.revision:
+                await self._session.rollback()
+                raise self._conflict("REVISION_CONFLICT", "个人简介已发生变化，请刷新后重试。")
+            profile.introduction = payload.introduction
+            profile.updated_at = now
+            profile.revision += 1
+        self._add_audit(
+            audit_context,
+            action="team.profile_upsert",
+            target_id=audit_context.actor.user.id,
+            target_type="team_profile",
+            change_summary={"revision": profile.revision},
+            now=now,
+        )
+        await self._session.commit()
+        response = await self.my_profile(context=audit_context.actor)
+        assert response is not None
+        return response
+
+    @staticmethod
+    def _invitation_response(
+        invitation: TeamInvitation, team: Team, invited_by_full_name: str
+    ) -> TeamInvitationResponse:
+        return TeamInvitationResponse(
+            id=invitation.id,
+            team_id=team.id,
+            team_name=team.name,
+            invited_by_full_name=invited_by_full_name,
+            status=cast(Literal["pending", "accepted", "declined", "cancelled"], invitation.status),
+            created_at=invitation.created_at,
+            responded_at=invitation.responded_at,
+            revision=invitation.revision,
+        )
+
+    async def invitations(self, *, context: AuthenticatedContext) -> TeamInvitationListResponse:
+        self._require_student(context)
+        if await self._teams.team_for_user(context.user.id) is not None:
+            return TeamInvitationListResponse(items=[])
+        records = await self._teams.received_pending_invitations(context.user.id)
+        return TeamInvitationListResponse(
+            items=[
+                self._invitation_response(
+                    record.invitation, record.team, record.invited_by.full_name
+                )
+                for record in records
+            ]
+        )
+
+    async def create_invitation(
+        self,
+        payload: TeamInvitationCreateRequest,
+        *,
+        audit_context: TeamAuditContext,
+    ) -> TeamInvitationResponse:
+        self._require_student(audit_context.actor)
+        team = await self._teams.team_for_user(audit_context.actor.user.id, for_update=True)
+        if team is None:
+            await self._session.rollback()
+            raise self._conflict("TEAM_REQUIRED", "请先创建或加入一支队伍，再邀请成员。")
+        if await self._teams.member_count(team.id) >= team.max_members:
+            await self._session.rollback()
+            raise self._conflict("TEAM_FULL", "当前队伍人数已满。")
+        target = await self._users.get_by_id(payload.invitee_user_id, for_update=True)
+        if (
+            target is None
+            or target.id == audit_context.actor.user.id
+            or target.role != "student"
+            or target.status != "active"
+            or await self._teams.profile_for_user(target.id) is None
+        ):
+            await self._session.rollback()
+            raise self._not_found()
+        if await self._teams.team_for_user(target.id, for_update=True) is not None:
+            await self._session.rollback()
+            raise self._conflict("INVITEE_ALREADY_IN_TEAM", "该同学已经加入队伍。")
+        existing = await self._teams.pending_invitation(team.id, target.id)
+        if existing is not None:
+            inviter = await self._users.get_by_id(existing.invited_by_user_id)
+            return self._invitation_response(
+                existing,
+                team,
+                inviter.full_name if inviter is not None else "队伍成员",
+            )
+        now = self._clock()
+        team_id = team.id
+        target_id = target.id
+        invitation = TeamInvitation(
+            id=uuid7(),
+            team_id=team_id,
+            invitee_user_id=target_id,
+            invited_by_user_id=audit_context.actor.user.id,
+            status="pending",
+            responded_at=None,
+            created_at=now,
+            updated_at=now,
+            revision=1,
+        )
+        self._teams.add_invitation(invitation)
+        self._add_audit(
+            audit_context,
+            action="team.invitation_create",
+            target_id=invitation.id,
+            target_type="team_invitation",
+            change_summary={"team_id": str(team_id)},
+            now=now,
+        )
+        try:
+            await self._session.commit()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            existing = await self._teams.pending_invitation(team_id, target_id)
+            recovered_team = await self._teams.get_team(team_id) if existing is not None else None
+            if existing is not None and recovered_team is not None:
+                inviter = await self._users.get_by_id(existing.invited_by_user_id)
+                return self._invitation_response(
+                    existing,
+                    recovered_team,
+                    inviter.full_name if inviter is not None else "队伍成员",
+                )
+            raise self._conflict(
+                "TEAM_INVITATION_CONFLICT", "邀请状态发生变化，请刷新后重试。"
+            ) from exc
+        return self._invitation_response(invitation, team, audit_context.actor.user.full_name)
+
+    async def respond_to_invitation(
+        self,
+        invitation_id: UUID,
+        *,
+        accept: bool,
+        audit_context: TeamAuditContext,
+    ) -> TeamResponse | OperationResponse:
+        self._require_student(audit_context.actor)
+        invitation = await self._teams.invitation_for_invitee(
+            invitation_id, audit_context.actor.user.id, for_update=True
+        )
+        if invitation is None:
+            await self._session.rollback()
+            raise self._not_found()
+        if invitation.status != "pending":
+            await self._session.rollback()
+            raise self._conflict("INVITATION_NOT_PENDING", "该邀请已经处理。")
+        now = self._clock()
+        if not accept:
+            invitation.status = "declined"
+            invitation.responded_at = now
+            invitation.updated_at = now
+            invitation.revision += 1
+            self._add_audit(
+                audit_context,
+                action="team.invitation_decline",
+                target_id=invitation.id,
+                target_type="team_invitation",
+                change_summary={"team_id": str(invitation.team_id)},
+                now=now,
+            )
+            await self._session.commit()
+            return OperationResponse()
+        team = await self._teams.get_team(invitation.team_id, for_update=True)
+        if team is None or team.status != "forming":
+            invitation.status = "cancelled"
+            invitation.responded_at = now
+            invitation.updated_at = now
+            invitation.revision += 1
+            await self._session.commit()
+            raise self._conflict("INVITATION_UNAVAILABLE", "邀请对应的队伍已不可加入。")
+        if (
+            await self._teams.team_for_user(audit_context.actor.user.id, for_update=True)
+            is not None
+        ):
+            await self._session.rollback()
+            raise self._conflict("ALREADY_IN_TEAM", "当前账号已经加入一支队伍。")
+        if await self._teams.member_count(team.id) >= team.max_members:
+            await self._session.rollback()
+            raise self._conflict("TEAM_FULL", "目标队伍人数已满。")
+        self._teams.add_member(
+            TeamMember(
+                id=uuid7(),
+                team_id=team.id,
+                user_id=audit_context.actor.user.id,
+                joined_at=now,
+                left_at=None,
+                added_by_admin=False,
+                admin_reason=None,
+            )
+        )
+        invitation.status = "accepted"
+        invitation.responded_at = now
+        invitation.updated_at = now
+        invitation.revision += 1
+        team.updated_at = now
+        team.revision += 1
+        await self._teams.cancel_pending_for_invitee(
+            audit_context.actor.user.id, responded_at=now, exclude_id=invitation.id
+        )
+        self._add_audit(
+            audit_context,
+            action="team.invitation_accept",
+            target_id=invitation.id,
+            target_type="team_invitation",
+            change_summary={"team_id": str(team.id)},
+            now=now,
+        )
+        try:
+            await self._session.commit()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise self._conflict(
+                "TEAM_MEMBERSHIP_CONFLICT", "组队状态发生变化，请刷新后重试。"
+            ) from exc
+        return await self._team_response(team, actor_user_id=audit_context.actor.user.id)
 
     async def public_teams(
         self,
@@ -588,6 +890,7 @@ class TeamService:
         team.dissolved_at = now
         team.updated_at = now
         team.revision += 1
+        await self._teams.cancel_pending_for_team(team.id, responded_at=now)
         self._add_audit(
             audit_context,
             action="team.dissolve",

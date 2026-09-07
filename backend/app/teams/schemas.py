@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 TeamStatus = Literal["forming", "dissolved"]
+TeamInvitationStatus = Literal["pending", "accepted", "declined", "cancelled"]
 
 
 class TeamCreateRequest(BaseModel):
@@ -25,6 +26,23 @@ class TeamJoinRequest(BaseModel):
 
 class CaptainTransferRequest(BaseModel):
     new_captain_user_id: UUID
+
+
+class TeamProfileUpsertRequest(BaseModel):
+    introduction: str = Field(min_length=1, max_length=2_000)
+    revision: int | None = Field(default=None, ge=1)
+
+    @field_validator("introduction")
+    @classmethod
+    def normalize_introduction(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("个人简介不能为空")
+        return normalized
+
+
+class TeamInvitationCreateRequest(BaseModel):
+    invitee_user_id: UUID
 
 
 class AdminReasonRequest(BaseModel):
@@ -56,6 +74,9 @@ class TeamMemberResponse(BaseModel):
     joined_at: datetime
     added_by_admin: bool
     is_captain: bool
+
+    direction_name: str | None = None
+    introduction: str | None = None
 
 
 class TeamResponse(BaseModel):
@@ -94,6 +115,39 @@ class TeamDirectoryItem(BaseModel):
     member_count: int
     max_members: int
     can_join: bool
+
+
+class TeamProfileResponse(BaseModel):
+    user_id: UUID
+    full_name: str
+    direction_name: str | None
+    introduction: str
+    updated_at: datetime
+    revision: int
+    can_invite: bool = False
+    invitation_pending: bool = False
+
+
+class TeamProfilePage(BaseModel):
+    items: list[TeamProfileResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class TeamInvitationResponse(BaseModel):
+    id: UUID
+    team_id: UUID
+    team_name: str
+    invited_by_full_name: str
+    status: TeamInvitationStatus
+    created_at: datetime
+    responded_at: datetime | None
+    revision: int
+
+
+class TeamInvitationListResponse(BaseModel):
+    items: list[TeamInvitationResponse]
 
 
 class TeamDirectoryResponse(BaseModel):

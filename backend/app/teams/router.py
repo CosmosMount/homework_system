@@ -24,7 +24,13 @@ from app.teams.schemas import (
     TeamCreatedResponse,
     TeamCreateRequest,
     TeamDirectoryResponse,
+    TeamInvitationCreateRequest,
+    TeamInvitationListResponse,
+    TeamInvitationResponse,
     TeamJoinRequest,
+    TeamProfilePage,
+    TeamProfileResponse,
+    TeamProfileUpsertRequest,
     TeamResponse,
 )
 from app.teams.service import TeamAuditContext, TeamService
@@ -49,6 +55,89 @@ def _audit_context(
         request_id=current_request_id() or "unknown",
         ip_prefix=request_ip_prefix(request),
     )
+
+
+@router.get("/team-profiles", response_model=TeamProfilePage)
+async def list_team_profiles(
+    service: TeamServiceDependency,
+    context: AuthenticatedContextDependency,
+    query: Annotated[str | None, Query(max_length=120)] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> TeamProfilePage:
+    return await service.profiles(context=context, query=query, page=page, page_size=page_size)
+
+
+@router.get("/team-profiles/me", response_model=TeamProfileResponse | None)
+async def get_my_team_profile(
+    service: TeamServiceDependency,
+    context: AuthenticatedContextDependency,
+) -> TeamProfileResponse | None:
+    return await service.my_profile(context=context)
+
+
+@router.put("/team-profiles/me", response_model=TeamProfileResponse)
+async def upsert_my_team_profile(
+    payload: TeamProfileUpsertRequest,
+    request: Request,
+    service: TeamServiceDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> TeamProfileResponse:
+    return await service.upsert_profile(payload, audit_context=_audit_context(request, context))
+
+
+@router.get("/team-invitations", response_model=TeamInvitationListResponse)
+async def list_team_invitations(
+    service: TeamServiceDependency,
+    context: AuthenticatedContextDependency,
+) -> TeamInvitationListResponse:
+    return await service.invitations(context=context)
+
+
+@router.post(
+    "/team-invitations",
+    response_model=TeamInvitationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_team_invitation(
+    payload: TeamInvitationCreateRequest,
+    request: Request,
+    service: TeamServiceDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> TeamInvitationResponse:
+    return await service.create_invitation(payload, audit_context=_audit_context(request, context))
+
+
+@router.post("/team-invitations/{invitation_id}/accept", response_model=TeamResponse)
+async def accept_team_invitation(
+    invitation_id: UUID,
+    request: Request,
+    service: TeamServiceDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> TeamResponse:
+    response = await service.respond_to_invitation(
+        invitation_id, accept=True, audit_context=_audit_context(request, context)
+    )
+    assert isinstance(response, TeamResponse)
+    return response
+
+
+@router.post("/team-invitations/{invitation_id}/decline", response_model=OperationResponse)
+async def decline_team_invitation(
+    invitation_id: UUID,
+    request: Request,
+    service: TeamServiceDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> OperationResponse:
+    response = await service.respond_to_invitation(
+        invitation_id, accept=False, audit_context=_audit_context(request, context)
+    )
+    assert isinstance(response, OperationResponse)
+    return response
 
 
 @router.get("/teams", response_model=TeamDirectoryResponse)

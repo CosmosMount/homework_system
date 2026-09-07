@@ -83,6 +83,10 @@ stateDiagram-v2
 - **TEAM-007**：当前产品状态只允许 forming 和 dissolved。dissolved 队伍不进入本人队伍、公开目录或常规管理员目录；成员关系历史以 left_at 保留。
 - **TEAM-008**：真实管理员可以在填写 1～2,000 字符内部原因后补录/移除成员、变更队长或物理删除独立队伍；所有操作后端独立鉴权、校验 CSRF、事务锁定并写脱敏审计。删除队伍级联删除成员关系，不连接或删除 legacy 赛事提交。
 - **TEAM-009**：队伍只承担组队，不拥有作业或赛事提交。所有当前正式提交均为个人作业提交；管理员不能替学生或队伍代交。
+- **TEAM-010**：active student 可以自愿创建或按 revision 修改 1～2,000 字符纯文本组队简介。只有已提交简介的 active student 进入登录态简介目录；目录返回姓名、技术方向、简介及更新时间，不返回邮箱、学号、邀请码或 Session 信息。本人队伍详情可显示当前成员已提交的简介。
+- **TEAM-011**：未满 `forming` 队伍的任一当前成员都可以从简介目录向另一名已提交简介、当前无队伍的 active student 发出站内邀请；邀请固定关联当前队伍，不包含或暴露邀请码。同队对同一目标最多一条 `pending` 邀请，重复请求返回现有邀请。
+- **TEAM-012**：受邀者只能读取和处理发给本人的 `pending` 邀请。接受时必须锁定邀请和队伍并重新校验队伍状态、容量及本人全局无当前队伍，成功后加入队伍并取消本人其他待处理邀请；拒绝只改变邀请状态。邀请不得自动加人、发送邮件或绕过 `team_members` 的一人一队唯一约束。
+- **TEAM-013**：创建者初始成为队长，但队长不是永久身份；当前队长可以随时把身份转让给另一名当前成员，管理员保留带原因纠错。所有简介和邀请写入要求有效学生权限、同源、CSRF 与脱敏审计，审计不得记录简介正文、姓名、学号、邮箱或邀请码。
 
 独立队伍状态关系：
 
@@ -179,6 +183,7 @@ stateDiagram-v2
 | 创建作业版本 | 禁止 | 仅本人且未截止 | 禁止代交 |
 | 查看作业评语 | 禁止 | 仅本人 | 全部 |
 | 创建、加入或自动分配队伍 | 禁止 | active student 且本人当前无队伍 | 管理与纠错 |
+| 查看/维护组队简介、发送或处理组队邀请 | 禁止 | 仅 active student；只能改本人简介、处理本人邀请 | 仅学生视图按有效学生权限 |
 | 创建队伍提交 | 禁止 | 禁止 | 禁止 |
 | 查看 legacy 赛事版本与评语 | 禁止 | 禁止 | 禁止 |
 | 查看优秀作业 | 禁止 | 仅所属受众的作业内 | 全部作业 |
@@ -206,7 +211,7 @@ stateDiagram-v2
 | HW-001～HW-008 | 作业列表/详情、个人版本、管理员作业/提交 | `/assignments*`、`/admin/assignments*` | `assignments`、受众配置、`assignment_audience_users`、`assignment_extensions` | HW-T01～HW-T17 |
 | SUB-001～SUB-008 | 作业版本、管理员提交反馈 | `/submission-versions`、`/submissions/*`、管理员反馈接口 | `submissions`、`submission_versions`、`version_files`、`feedback` | HW-T04～HW-T09、HW-T13 |
 | COMP-001～COMP-006 | 已退出当前产品，仅保留 legacy 数据 | 无运行时 API | legacy 赛事表 | 迁移回归 |
-| TEAM-001～TEAM-009 | 校内赛队伍中心、我的队伍、管理员队伍 | /teams*、/admin/teams* | teams、team_members | TEAM-T01～TEAM-T12 |
+| TEAM-001～TEAM-013 | 校内赛队伍中心、个人简介与邀请、我的队伍、管理员队伍 | `/teams*`、`/team-profiles*`、`/team-invitations*`、`/admin/teams*` | `teams`、`team_members`、`team_profiles`、`team_invitations` | TEAM-T01～TEAM-T18 |
 | INT-001～INT-010 | 学生问卷列表/填写、管理员问卷查看/非归档编辑/永久删除/技术组填写范围/统计/实名名单/二维码/三范围邮件/第一志愿方向配置 | `/intentions*`、`/admin/intentions*` | `intention_surveys`、`intention_survey_directions`、`intention_questions`、`intention_options`、`intention_responses`、`intention_response_options`、`users.direction_id`、`outbox_jobs`、审计 | INT-T01～INT-T27 |
 | KB-001～KB-008 | 培训文档阅读器、管理员同步页 | `/knowledge*`、`/admin/knowledge*` | `knowledge_sync_runs`、节点、文档、媒体及引用表、`outbox_jobs` | KB-T01～KB-T12 |
 | HELP-001～HELP-008 | 学生本人反馈答疑、登录态匿名公开答疑、管理员反馈答疑管理/提醒/处理/删除 | `/help-requests*`、`/admin/help-requests*` | `help_requests`、`student_notifications`、审计 | HELP-T01～HELP-T15 |

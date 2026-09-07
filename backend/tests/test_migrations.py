@@ -13,7 +13,25 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260904_0020"]
+    assert script.get_heads() == ["20260907_0021"]
+
+
+def test_team_profiles_invitations_migration_is_reversible() -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+    migration_path = (
+        backend_root / "migrations" / "versions" / "20260907_0021_team_profiles_invitations.py"
+    )
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260907_0021"' in source
+    assert 'down_revision: str | None = "20260904_0020"' in source
+    assert '"team_profiles"' in source
+    assert '"team_invitations"' in source
+    assert "uq_team_invitations_pending_team_invitee" in source
+    assert "response_state_consistent" in source
+    assert source.index('op.drop_table("team_invitations")') < source.index(
+        'op.drop_table("team_profiles")'
+    )
 
 
 def test_persistent_login_migration_is_reversible_and_follows_account_deletion() -> None:

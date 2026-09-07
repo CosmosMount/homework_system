@@ -7,6 +7,11 @@ def test_openapi_exposes_independent_teams_without_competition_domain() -> None:
     paths = schema["paths"]
 
     expected_team_paths = {
+        "/api/v1/team-profiles",
+        "/api/v1/team-profiles/me",
+        "/api/v1/team-invitations",
+        "/api/v1/team-invitations/{invitation_id}/accept",
+        "/api/v1/team-invitations/{invitation_id}/decline",
         "/api/v1/teams",
         "/api/v1/teams/me",
         "/api/v1/teams/join",
@@ -29,9 +34,26 @@ def test_openapi_exposes_independent_teams_without_competition_domain() -> None:
     assert delete_operation["requestBody"]["required"] is True
     assert "AdminReasonRequest" in str(delete_operation["requestBody"])
 
+    team_directory_schema = paths["/api/v1/teams"]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]
+    profile_directory_schema = paths["/api/v1/team-profiles"]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]
+    assert team_directory_schema == {"$ref": "#/components/schemas/TeamDirectoryResponse"}
+    assert profile_directory_schema == {"$ref": "#/components/schemas/TeamProfilePage"}
+
     directory = schema["components"]["schemas"]["TeamDirectoryItem"]["properties"]
     assert "invite_code" not in directory
     assert "members" not in directory
+    profile = schema["components"]["schemas"]["TeamProfileResponse"]["properties"]
+    assert "email" not in profile
+    assert "student_number" not in profile
+    assert "introduction" in profile
+
+    invitation = schema["components"]["schemas"]["TeamInvitationResponse"]["properties"]
+    assert "invite_code" not in invitation
+    assert "team_name" in invitation
 
     purpose_schema = schema["components"]["schemas"]["UploadInitRequest"]["properties"]["purpose"]
     assert set(purpose_schema["enum"]) == {

@@ -470,6 +470,8 @@ export type TeamMember = {
   joined_at: string;
   added_by_admin: boolean;
   is_captain: boolean;
+  direction_name: string | null;
+  introduction: string | null;
 };
 
 export type Team = {
@@ -514,6 +516,35 @@ export type InviteCodeRotated = {
   team_id: string;
   invite_code: string;
   rotated_at: string;
+  revision: number;
+};
+
+export type TeamProfile = {
+  user_id: string;
+  full_name: string;
+  direction_name: string | null;
+  introduction: string;
+  updated_at: string;
+  revision: number;
+  can_invite: boolean;
+  invitation_pending: boolean;
+};
+
+export type TeamProfilePage = {
+  items: TeamProfile[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export type TeamInvitation = {
+  id: string;
+  team_id: string;
+  team_name: string;
+  invited_by_full_name: string;
+  status: "pending" | "accepted" | "declined" | "cancelled";
+  created_at: string;
+  responded_at: string | null;
   revision: number;
 };
 

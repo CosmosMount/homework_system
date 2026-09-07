@@ -26,6 +26,7 @@
 │       ├── /assignments/[assignmentId]/submissions/[submissionId]
 │       └── /assignments/[assignmentId]/excellent-submissions/[versionId]
 ├── /competitions（独立队伍中心）
+│   ├── /competitions/profiles（组队个人简介与站内邀请）
 │   └── /competitions/[competitionId]*（旧赛事详情、队伍与赛题路径统一重定向回 /competitions）
 ├── /intentions
 │   └── /intentions/[surveyId]
@@ -85,6 +86,8 @@ flowchart TD
     Assignment --> Submission[个人版本与评语]
     TeamCenter --> Team[我的队伍]
     Intention --> Response[本人最新回答与提交次数]
+    TeamCenter --> Profiles[组队个人简介目录]
+    Profiles --> Invitation[发出或处理站内邀请]
     Help --> HelpRequest[本人反馈答疑记录]
     Help --> PublicHelp[已解答匿名公开答疑]
     Assignment --> ExcellentWork[优秀作业]
@@ -106,7 +109,7 @@ flowchart TD
 
 ### 独立组队
 
-`校内赛队伍中心 → 直接创建队伍、输入邀请码加入或申请自动分配 → 查看本人队伍 → 队长维护成员和邀请码，或管理员纠错`。整个流程不依赖赛事实体、报名窗口或阶段推进。
+`校内赛队伍中心 → 自愿发布并浏览组队简介 → 已在未满队伍的任一成员发出邀请 → 受邀者接受后加入，或直接创建队伍、输入邀请码加入、申请自动分配 → 查看本人队伍与成员简介 → 当前队长按需把队长身份转让给另一成员，或管理员纠错`。整个流程不依赖赛事实体、报名窗口或阶段推进，邀请不自动加人也不发送邮件。
 
 ### 学生问卷填写
 
@@ -126,7 +129,7 @@ flowchart TD
 
 ## 搜索与过滤
 
-- 通知和作业列表支持标题关键词搜索；校内赛入口只展示独立队伍，队伍目录支持名称搜索与分页；优秀作业和问卷不提供跨域搜索。
+- 通知和作业列表支持标题关键词搜索；校内赛入口只展示独立队伍，队伍目录支持名称搜索与分页，组队简介目录支持姓名、技术方向和简介搜索与分页；优秀作业和问卷不提供跨域搜索。
 - 学生列表默认按“与我相关”过滤，不显示不可访问内容。
 - 管理员列表支持状态、方向、日期范围和提交状态过滤；过滤条件进入 URL 查询参数，便于刷新和分享内部链接。
 - 管理员用户列表在服务端对全体账号执行姓名、邮箱、学号、角色和状态搜索，并可按一个现有技术组筛选人员；技术组、搜索、活跃度和页码共同保存在 URL。不得只加载固定前 100 条后在浏览器内过滤。越界页回到实际末页，用户写操作成功后按同一 URL 查询刷新并在末页收缩时回退。
@@ -155,7 +158,7 @@ flowchart TD
 | 注册、验证、账号管理与本人注销 | AUTH-001～AUTH-012 |
 | 工作台、通知 | NEWS-001～NEWS-009、MAIL-001 |
 | 作业、个人提交 | HW-001～HW-008、SUB-001～SUB-008、FILE-001～FILE-007 |
-| 校内赛队伍中心 | TEAM-001～TEAM-009；COMP-001～COMP-006 仅作 legacy 迁移追溯 |
+| 校内赛队伍中心与组队简介 | TEAM-001～TEAM-013；COMP-001～COMP-006 仅作 legacy 迁移追溯 |
 | 学生问卷 | INT-001～INT-006、INT-009～INT-010 |
 | 反馈答疑 | HELP-001～HELP-008 |
 | 培训文档、知识库同步 | KB-001～KB-008 |

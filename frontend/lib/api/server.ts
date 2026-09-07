@@ -43,6 +43,9 @@ import type {
   Submission,
   Team,
   TeamDirectoryPage,
+  TeamInvitation,
+  TeamProfile,
+  TeamProfilePage,
   User,
 } from "@/lib/api/types";
 
@@ -370,6 +373,26 @@ export async function getTeams(search = ""): Promise<TeamDirectoryPage> {
 
 export async function getMyTeam(): Promise<Team | null> {
   return resolveProtectedResult(await serverApi<Team | null>("/teams/me"));
+}
+
+export async function getTeamProfiles(search = ""): Promise<TeamProfilePage> {
+  const suffix = search ? "?" + search : "";
+  return resolveProtectedResult(
+    await serverApi<TeamProfilePage>("/team-profiles" + suffix),
+  );
+}
+
+export async function getMyTeamProfile(): Promise<TeamProfile | null> {
+  return resolveProtectedResult(
+    await serverApi<TeamProfile | null>("/team-profiles/me"),
+  );
+}
+
+export async function getTeamInvitations(): Promise<TeamInvitation[]> {
+  const result = await serverApi<{ items: TeamInvitation[] }>(
+    "/team-invitations",
+  );
+  return resolveProtectedResult(result).items;
 }
 
 export async function getIntentions(): Promise<IntentionSurveyPage> {

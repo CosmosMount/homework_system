@@ -100,3 +100,66 @@ class TeamMember(Base):
         Boolean, nullable=False, default=False, server_default=text("false")
     )
     admin_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class TeamProfile(TimestampRevisionMixin, Base):
+    __tablename__ = "team_profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "length(trim(introduction)) BETWEEN 1 AND 2000",
+            name="introduction_present",
+        ),
+        Index("ix_team_profiles_updated_at", "updated_at"),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    introduction: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class TeamInvitation(TimestampRevisionMixin, Base):
+    __tablename__ = "team_invitations"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'accepted', 'declined', 'cancelled')",
+            name="status_allowed",
+        ),
+        CheckConstraint(
+            "(status = 'pending' AND responded_at IS NULL) OR "
+            "(status <> 'pending' AND responded_at IS NOT NULL)",
+            name="response_state_consistent",
+        ),
+        CheckConstraint("invitee_user_id <> invited_by_user_id", name="different_users"),
+        Index(
+            "uq_team_invitations_pending_team_invitee",
+            "team_id",
+            "invitee_user_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index(
+            "ix_team_invitations_invitee_status_created",
+            "invitee_user_id",
+            "status",
+            "created_at",
+        ),
+        Index("ix_team_invitations_team_status", "team_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid7)
+    team_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
+    )
+    invitee_user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    invited_by_user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -19,6 +19,7 @@
 | `announcement_status` | `draft`, `scheduled`, `published`, `archived` |
 | `assignment_status` | `draft`, `published`, `closed`, `archived` |
 | `team_status` | 当前独立队伍只允许 `forming`, `dissolved` |
+| `team_invitation_status` | `pending`, `accepted`, `declined`, `cancelled` |
 | legacy `competition_status` | `draft`, `registration_open`, `registration_closed`, `submission_open`, `submission_closed`, `archived` |
 | legacy `registration_status/team_status` | `registered`, `withdrawn`, `disqualified`；原队伍另含 `forming`, `locked`, `invalid`, `dissolved`, `disqualified`, `archived` |
 | `upload_status` | `initialized`, `uploading`, `verifying`, `available`, `rejected`, `aborted`, `expired` |
@@ -41,6 +42,10 @@ erDiagram
     ASSIGNMENTS }o--o{ USERS : snapshots
     ASSIGNMENTS ||--o{ ASSIGNMENT_EXTENSIONS : grants
     TEAMS ||--o{ TEAM_MEMBERS : has
+    USERS ||--o| TEAM_PROFILES : publishes
+    TEAMS ||--o{ TEAM_INVITATIONS : receives
+    USERS ||--o{ TEAM_INVITATIONS : invited
+    USERS ||--o{ TEAM_INVITATIONS : sends
     USERS ||--o{ INTENTION_RESPONSES : submits
     INTENTION_SURVEYS ||--o{ INTENTION_OPTIONS : defines
     INTENTION_SURVEYS ||--o{ INTENTION_RESPONSES : receives
@@ -205,7 +210,7 @@ erDiagram
 - `captain_user_id` 使用 `users.id RESTRICT` 外键，并由延迟约束触发器保证队长是本队当前成员。
 - 邀请码只保存带服务端 pepper 的 HMAC，不保存明文。公开目录只从队伍和有效成员计数生成，不连接用户身份字段。
 - 自动分配锁定 forming 候选队伍，按成员数、created_at 和 id 选择；无候选时创建新队伍。
-- 管理员删除独立队伍时物理删除本行并级联当前/历史成员关系；该表不被任何当前提交引用。
+- 管理员删除独立队伍时物理删除本行并级联当前/历史成员关系与邀请；学生解散先取消 pending 邀请。该表不被任何当前提交引用。
 
 ### `team_members`
 
@@ -214,6 +219,23 @@ erDiagram
 - 部分唯一索引 `user_id WHERE left_at IS NULL` 保证每名学生全局最多一支当前队伍。
 - 唯一 `team_id, user_id, joined_at` 保留重新加入历史；索引 `team_id, left_at` 支持成员装载。
 - `team_id` 和 `user_id` 分别使用 `CASCADE` 外键；管理员补录必须同时保存非空 `admin_reason`，普通加入不得保存原因。
+
+### `team_profiles`
+
+字段：`user_id`、`introduction`、`created_at`、`updated_at`、`revision`。
+
+- `user_id` 同时为主键和 `users.id ON DELETE CASCADE` 外键，每个账号最多一份简介；账号删除时简介随个人数据清理。
+- `length(trim(introduction)) BETWEEN 1 AND 2000` 保证非空纯文本边界，`updated_at` 索引支持目录按最近更新排序。
+- 是否进入目录同时由关联用户当前 `role=student/status=active` 决定；方向和姓名从用户表读取，不在简介表复制，简介不承担通用账号资料职责。
+
+### `team_invitations`
+
+字段：`id`、`team_id`、`invitee_user_id`、`invited_by_user_id`、`status`、`responded_at`、`created_at`、`updated_at`、`revision`。
+
+- `team_id`、受邀者和发送者分别以 `ON DELETE CASCADE` 关联当前 `teams/users`；邀请不保存邮箱、姓名、简介副本或邀请码。
+- `status` 只允许 `pending/accepted/declined/cancelled`；pending 必须没有 `responded_at`，其他状态必须有处理时间，且发送者不能等于受邀者。
+- 部分唯一索引 `(team_id, invitee_user_id) WHERE status='pending'` 保证同队同目标最多一条待处理邀请；受邀者+状态+创建时间和队伍+状态索引支持本人列表与取消。
+- 接受邀请仍以 `team_members.user_id WHERE left_at IS NULL` 为一人一队最终约束；成功后当前邀请为 accepted，本人其他 pending 邀请为 cancelled。
 
 ### legacy 赛事与原队伍
 
@@ -454,6 +476,8 @@ CHECK (
 
 19. 问卷技术组受众迁移 20260904_0019 接在 0018 后，为问卷增加 all_students 和受限技术组关联；旧问卷默认面向全部学生。
 20. 独立队伍迁移 20260904_0020 接在 0019 后：原队伍表重命名为 legacy 表，新建空的全局 teams/team_members；赛事、报名、赛题、历史提交和 MinIO 对象不删除。downgrade 把新队伍以 UUID 后缀名称挂到占位赛事后恢复旧表，可完成 0019 → 0020 → 0019 → 0020。生产应用前必须备份，但迁移本身不执行跨系统对象删除。
+
+21. 组队简介与邀请迁移 `20260907_0021` 接在 `0020` 后，新建 `team_profiles/team_invitations`、检查约束、级联外键、查询索引和同队同目标 pending 部分唯一索引，不回填用户或队伍数据。downgrade 先删除邀请再删除简介，会丢失已产生的简介与邀请；可在隔离 PostgreSQL 执行 `0020 → 0021 → 0020 → 0021`。生产应用前必须完成 PostgreSQL/MinIO 同点备份，本迁移不读写 MinIO。
 
 ## 飞书知识库快照
 

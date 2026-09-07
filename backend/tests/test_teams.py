@@ -14,16 +14,29 @@ from app.auth.repository import AuthRepository
 from app.auth.service import AuthenticatedContext
 from app.core.config import Settings
 from app.core.errors import ApplicationError
-from app.teams.models import Team, TeamMember
-from app.teams.repository import TeamListRecord, TeamRepository
+from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile
+from app.teams.repository import TeamListRecord, TeamProfileRecord, TeamRepository
+from app.teams.schemas import (
+    TeamInvitationCreateRequest,
+    TeamProfileUpsertRequest,
+    TeamResponse,
+)
 from app.teams.service import TeamAuditContext, TeamService
+from app.users.models import User
+from app.users.repository import UserRepository
 
 
 def make_context(*, role: str = "student") -> AuthenticatedContext:
     return cast(
         AuthenticatedContext,
         SimpleNamespace(
-            user=SimpleNamespace(id=uuid4(), role=role),
+            user=SimpleNamespace(
+                id=uuid4(),
+                role=role,
+                full_name="测试同学",
+                direction_id=None,
+                status="active",
+            ),
             effective_role=role,
             is_admin=role == "admin",
             session=SimpleNamespace(student_view=False),
@@ -251,3 +264,282 @@ async def test_auto_assign_rolls_back_global_membership_conflict() -> None:
 
     assert captured.value.code == "TEAM_MEMBERSHIP_CONFLICT"
     session.rollback.assert_awaited_once()
+
+
+def test_team_profile_and_invitation_models_enforce_privacy_boundaries() -> None:
+    profile_table = cast(Table, TeamProfile.__table__)
+    invitation_table = cast(Table, TeamInvitation.__table__)
+
+    assert set(profile_table.columns.keys()) == {
+        "user_id",
+        "introduction",
+        "created_at",
+        "updated_at",
+        "revision",
+    }
+    assert "email" not in invitation_table.columns
+    assert "invite_code" not in invitation_table.columns
+    pending_index = next(
+        index
+        for index in invitation_table.indexes
+        if index.name == "uq_team_invitations_pending_team_invitee"
+    )
+    assert pending_index.unique is True
+    assert str(pending_index.dialect_options["postgresql"]["where"])
+
+
+@pytest.mark.asyncio
+async def test_student_creates_team_profile_and_audit_omits_body() -> None:
+    now = datetime.now(UTC)
+    audit_context = make_audit_context()
+    service, session = make_service(now)
+    profiles: list[TeamProfile] = []
+
+    async def profile_for_user(_user_id: object, *, for_update: bool = False) -> TeamProfile | None:
+        del for_update
+        return profiles[0] if profiles else None
+
+    def add_profile(profile: TeamProfile) -> None:
+        profiles.append(profile)
+
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            profile_for_user=profile_for_user,
+            add_profile=add_profile,
+        ),
+    )
+
+    result = await service.upsert_profile(
+        TeamProfileUpsertRequest(introduction="  擅长视觉，希望学习嵌入式。  "),
+        audit_context=audit_context,
+    )
+
+    assert result.introduction == "擅长视觉，希望学习嵌入式。"
+    assert profiles[0].revision == 1
+    audit = cast(Mock, service._audit.add).call_args.args[0]
+    assert audit.action == "team.profile_upsert"
+    assert "introduction" not in audit.change_summary
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_profile_directory_allows_any_team_member_to_invite_available_student() -> None:
+    now = datetime.now(UTC)
+    context = make_context()
+    team = make_team("开放邀请队", captain_user_id=uuid4())
+    target = SimpleNamespace(id=uuid4(), full_name="候选同学")
+    profile = TeamProfile(
+        user_id=target.id,
+        introduction="熟悉机械设计。",
+        created_at=now,
+        updated_at=now,
+        revision=1,
+    )
+    service, _session = make_service(now)
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            list_profiles=AsyncMock(
+                return_value=(
+                    [
+                        TeamProfileRecord(
+                            profile=profile,
+                            user=cast(User, target),
+                            direction_name="机械组",
+                            team_id=None,
+                        )
+                    ],
+                    1,
+                )
+            ),
+            team_for_user=AsyncMock(return_value=team),
+            member_count=AsyncMock(return_value=2),
+            pending_invitee_ids=AsyncMock(return_value=set()),
+        ),
+    )
+
+    result = await service.profiles(context=context, query=None, page=1, page_size=20)
+
+    assert result.items[0].can_invite is True
+    assert result.items[0].direction_name == "机械组"
+    assert "student_number" not in result.items[0].model_dump()
+
+
+@pytest.mark.asyncio
+async def test_non_captain_team_member_can_create_profile_invitation() -> None:
+    now = datetime.now(UTC)
+    audit_context = make_audit_context()
+    team = make_team("开放邀请队", captain_user_id=uuid4())
+    target_id = uuid4()
+    target = SimpleNamespace(id=target_id, role="student", status="active")
+    target_profile = TeamProfile(
+        user_id=target_id,
+        introduction="希望组队。",
+        created_at=now,
+        updated_at=now,
+        revision=1,
+    )
+    service, session = make_service(now)
+    add_invitation = Mock()
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            team_for_user=AsyncMock(side_effect=[team, None]),
+            member_count=AsyncMock(return_value=2),
+            profile_for_user=AsyncMock(return_value=target_profile),
+            pending_invitation=AsyncMock(return_value=None),
+            add_invitation=add_invitation,
+        ),
+    )
+    service._users = cast(
+        UserRepository,
+        SimpleNamespace(get_by_id=AsyncMock(return_value=target)),
+    )
+
+    result = await service.create_invitation(
+        TeamInvitationCreateRequest(invitee_user_id=target_id),
+        audit_context=audit_context,
+    )
+
+    invitation = cast(TeamInvitation, add_invitation.call_args.args[0])
+    assert result.team_id == team.id
+    assert invitation.invited_by_user_id == audit_context.actor.user.id
+    assert team.captain_user_id != audit_context.actor.user.id
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_invitation_returns_existing_pending_invitation() -> None:
+    now = datetime.now(UTC)
+    audit_context = make_audit_context()
+    team = make_team("并发邀请队", captain_user_id=uuid4())
+    target_id = uuid4()
+    target = SimpleNamespace(id=target_id, role="student", status="active")
+    inviter = SimpleNamespace(id=uuid4(), full_name="已有发送者")
+    profile = TeamProfile(
+        user_id=target_id,
+        introduction="希望组队。",
+        created_at=now,
+        updated_at=now,
+        revision=1,
+    )
+    existing = TeamInvitation(
+        id=uuid4(),
+        team_id=team.id,
+        invitee_user_id=target_id,
+        invited_by_user_id=inviter.id,
+        status="pending",
+        responded_at=None,
+        created_at=now,
+        updated_at=now,
+        revision=1,
+    )
+    service, session = make_service(now)
+    session.commit.side_effect = IntegrityError("insert", {}, RuntimeError("unique"))
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            team_for_user=AsyncMock(side_effect=[team, None]),
+            member_count=AsyncMock(return_value=2),
+            profile_for_user=AsyncMock(return_value=profile),
+            pending_invitation=AsyncMock(side_effect=[None, existing]),
+            add_invitation=Mock(),
+            get_team=AsyncMock(return_value=team),
+        ),
+    )
+    service._users = cast(
+        UserRepository,
+        SimpleNamespace(get_by_id=AsyncMock(side_effect=[target, inviter])),
+    )
+
+    result = await service.create_invitation(
+        TeamInvitationCreateRequest(invitee_user_id=target_id),
+        audit_context=audit_context,
+    )
+
+    assert result.id == existing.id
+    assert result.invited_by_full_name == "已有发送者"
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_invitee_accepts_invitation_and_other_pending_invitations_are_cancelled() -> None:
+    now = datetime.now(UTC)
+    audit_context = make_audit_context()
+    team = make_team("邀请队")
+    invitation = TeamInvitation(
+        id=uuid4(),
+        team_id=team.id,
+        invitee_user_id=audit_context.actor.user.id,
+        invited_by_user_id=uuid4(),
+        status="pending",
+        responded_at=None,
+        created_at=now,
+        updated_at=now,
+        revision=1,
+    )
+    service, session = make_service(now)
+    add_member = Mock()
+    cancel_pending = AsyncMock()
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            invitation_for_invitee=AsyncMock(return_value=invitation),
+            get_team=AsyncMock(return_value=team),
+            team_for_user=AsyncMock(return_value=None),
+            member_count=AsyncMock(return_value=2),
+            add_member=add_member,
+            cancel_pending_for_invitee=cancel_pending,
+            current_members=AsyncMock(return_value=[]),
+        ),
+    )
+
+    result = await service.respond_to_invitation(
+        invitation.id,
+        accept=True,
+        audit_context=audit_context,
+    )
+
+    assert cast(TeamResponse, result).id == team.id
+    assert invitation.status == "accepted"
+    assert cast(TeamMember, add_member.call_args.args[0]).user_id == audit_context.actor.user.id
+    cancel_pending.assert_awaited_once_with(
+        audit_context.actor.user.id,
+        responded_at=now,
+        exclude_id=invitation.id,
+    )
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_invitee_declines_invitation_without_joining_team() -> None:
+    now = datetime.now(UTC)
+    audit_context = make_audit_context()
+    invitation = TeamInvitation(
+        id=uuid4(),
+        team_id=uuid4(),
+        invitee_user_id=audit_context.actor.user.id,
+        invited_by_user_id=uuid4(),
+        status="pending",
+        responded_at=None,
+        created_at=now,
+        updated_at=now,
+        revision=1,
+    )
+    service, session = make_service(now)
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(invitation_for_invitee=AsyncMock(return_value=invitation)),
+    )
+
+    result = await service.respond_to_invitation(
+        invitation.id,
+        accept=False,
+        audit_context=audit_context,
+    )
+
+    assert result.status == "ok"
+    assert invitation.status == "declined"
+    assert invitation.responded_at == now
+    session.commit.assert_awaited_once()

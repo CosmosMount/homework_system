@@ -45,6 +45,8 @@ function team(overrides: Partial<Team> = {}): Team {
         joined_at: "2026-08-25T00:00:00Z",
         added_by_admin: false,
         is_captain: true,
+        direction_name: null,
+        introduction: null,
       },
     ],
     can_manage: true,
@@ -147,6 +149,8 @@ describe("independent team UI", () => {
           joined_at: "2026-08-25T01:00:00Z",
           added_by_admin: false,
           is_captain: false,
+          direction_name: null,
+          introduction: null,
         },
       ],
     });

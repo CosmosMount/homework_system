@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { TeamEntryPanel } from "@/components/competitions/team-entry-panel";
@@ -43,6 +44,12 @@ export default async function CompetitionsPage({ searchParams }: CompetitionsPag
       <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
         无需等待管理员创建赛事。你可以直接创建队伍、使用邀请码加入，或由系统自动分配队伍。
       </p>
+      <Link
+        className="mt-5 inline-flex min-h-11 items-center border border-[var(--color-info)] px-5 text-sm text-[var(--color-info)]"
+        href="/competitions/profiles"
+      >
+        浏览个人简介与组队邀请
+      </Link>
 
       <TeamEntryPanel hasTeam={team !== null} />
       {team ? (

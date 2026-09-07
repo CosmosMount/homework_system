@@ -246,7 +246,14 @@
 | 方法与路径 | 请求/行为 | 需求 |
 | --- | --- | --- |
 | GET /teams | query、page、page_size；返回 forming 队伍的名称、状态、当前/最大人数和 can_join，不返回成员或邀请码 | TEAM-006 |
-| GET /teams/me | 返回本人当前队伍、成员和 can_manage；无队伍返回 null | TEAM-003、TEAM-006 |
+| GET /teams/me | 返回本人当前队伍、成员、成员技术方向/已提交简介和 can_manage；无队伍返回 null | TEAM-003、TEAM-006、TEAM-010、TEAM-013 |
+| GET /team-profiles | query、page、page_size；返回 active student 自愿发布的姓名、技术方向、纯文本简介、更新时间和当前账号邀请状态 | TEAM-010～TEAM-011 |
+| GET /team-profiles/me | 返回本人已发布简介或 null | TEAM-010 |
+| PUT /team-profiles/me | introduction、revision；创建时 revision 为 null，更新时必须匹配当前版本 | TEAM-010、TEAM-013 |
+| GET /team-invitations | 当前无队伍受邀者读取发给本人的 pending 邀请 | TEAM-012 |
+| POST /team-invitations | invitee_user_id；未满队伍的任一当前成员发出邀请，同队同目标重复 pending 幂等返回现有邀请 | TEAM-011、TEAM-013 |
+| POST /team-invitations/{invitation_id}/accept | 受邀者接受后加入队伍并取消本人其他 pending 邀请，返回本人队伍 | TEAM-012 |
+| POST /team-invitations/{invitation_id}/decline | 受邀者拒绝邀请，返回统一成功响应 | TEAM-012 |
 | POST /teams | name；直接创建队伍并成为队长，201 响应中的 invite_code 只出现一次 | TEAM-001～TEAM-002 |
 | POST /teams/join | invite_code；加入未满 forming 队伍 | TEAM-001～TEAM-004 |
 | POST /teams/auto-assign | 无正文；优先加入人数最少的未满 forming 队伍，否则自动建队 | TEAM-002、TEAM-004～TEAM-005 |
@@ -256,6 +263,8 @@
 | POST /teams/{team_id}/dissolve | 仅剩队长一人时解散 | TEAM-003、TEAM-007 |
 
 创建、加入和自动分配只允许有效角色为 student 的 active 账号。已有当前队伍返回 409 ALREADY_IN_TEAM；队伍已满返回 409 TEAM_FULL；并发分配冲突返回 409 TEAM_MEMBERSHIP_CONFLICT；无效邀请码返回 400 INVITE_CODE_INVALID。邀请码尝试按账号和来源网段限流，超限返回 429 RATE_LIMITED 和 Retry-After。非队长管理返回 403 TEAM_CAPTAIN_REQUIRED，队长直接退出返回 409 CAPTAIN_TRANSFER_REQUIRED，非单人队伍解散返回 409 TEAM_NOT_EMPTY。
+
+组队简介 `introduction` 去空白后为 1～2,000 字符纯文本，不接收 HTML 字段；目录不返回邮箱、学号、邀请码或 Session 信息。发出邀请时目标必须是另一名已提交简介、当前无队伍的 active student，发送者只需是关联队伍当前成员而不要求为队长。接受时重新锁定并校验邀请仍为 pending、队伍仍 `forming` 且未满、本人仍无队伍；已处理邀请返回 `409 INVITATION_NOT_PENDING`，队伍不可用、已在队伍、队伍已满和并发成员冲突分别返回稳定 409。邀请不发送邮件、不自动加入，也不包含邀请码。
 
 ### 管理员队伍接口
 

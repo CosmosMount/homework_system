@@ -193,6 +193,14 @@ export function TeamManagementPanel({
                   {member.student_number} · 加入于 {formatDateTime(member.joined_at)}
                   {member.added_by_admin ? " · 管理员补录" : ""}
                 </p>
+                <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+                  {member.direction_name ?? "未设置技术方向"}
+                </p>
+                {member.introduction ? (
+                  <p className="mt-2 max-w-2xl whitespace-pre-wrap text-sm leading-6 text-[var(--color-text-secondary)]">
+                    {member.introduction}
+                  </p>
+                ) : null}
               </div>
               {canManage && !member.is_captain ? (
                 <button
@@ -276,7 +284,7 @@ export function TeamManagementPanel({
         <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-secondary)]">
           <p>
             {team.status === "forming"
-              ? "队长可以调整成员、轮换邀请码和转让队长；单人成队时可以解散队伍。"
+              ? "所有成员都可从个人简介页邀请同学；当前队长可以调整成员、轮换邀请码并把队长身份转让给其他成员。"
               : "队伍已解散，成员关系只读。"}
           </p>
         </section>

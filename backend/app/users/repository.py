@@ -16,7 +16,7 @@ from app.intentions.models import IntentionResponse
 from app.notifications.models import OutboxJob, StudentNotification
 from app.notifications.repository import MAIL_JOB_TYPES
 from app.submissions.models import Submission
-from app.teams.models import Team, TeamMember
+from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile
 from app.uploads.models import StoredFile, UploadSession
 from app.users.models import Cohort, Direction, User
 
@@ -252,6 +252,14 @@ class UserRepository:
             ),
             "submissions": await count(Submission, Submission.owner_user_id == user_id),
             "team_memberships": await count(TeamMember, TeamMember.user_id == user_id),
+            "team_profile": await count(TeamProfile, TeamProfile.user_id == user_id),
+            "team_invitations": await count(
+                TeamInvitation,
+                or_(
+                    TeamInvitation.invitee_user_id == user_id,
+                    TeamInvitation.invited_by_user_id == user_id,
+                ),
+            ),
             "intention_responses": await count(
                 IntentionResponse,
                 IntentionResponse.user_id == user_id,
@@ -336,6 +344,19 @@ class UserRepository:
                 team.status = "dissolved"
                 team.dissolved_at = now
                 dissolved += 1
+                await self._session.execute(
+                    update(TeamInvitation)
+                    .where(
+                        TeamInvitation.team_id == team.id,
+                        TeamInvitation.status == "pending",
+                    )
+                    .values(
+                        status="cancelled",
+                        responded_at=now,
+                        updated_at=now,
+                        revision=TeamInvitation.revision + 1,
+                    )
+                )
             team.updated_at = now
             team.revision += 1
         return transferred, dissolved, 0
