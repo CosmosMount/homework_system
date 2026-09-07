@@ -942,3 +942,22 @@
 - 备份目录首轮删除 48 个旧文件；目标级深度扫描继续删除散落在 `/tmp` 的 12 个旧生产 dump、1 个旧受众 SQL 快照、1 个旧 MinIO 副本，以及明文恢复解包、Stage 6 备份和测试伪备份目录。PNX 范围内只保留 `pnx-backup-20260905T163853Z-weekly` 的归档、SHA-256、元数据及其状态/锁文件，清理后再次通过 SHA-256。
 - Docker 首轮删除 73 个旧 PNX Backend/Frontend 标签，深度扫描再确认并删除 3 个无容器引用的无标签旧 Backend 构建；两类应用镜像各只保留统一当前版。PostgreSQL、MinIO、Nginx 基础镜像和生产卷未删除。
 - 13 个工作区 `.orig` 的内容哈希均存在于 Git 历史，另两组知识库/图片说明源码备份由当前实现与更多回归覆盖，退役赛事编辑器备份与现行产品约束冲突；均经核对后精确删除。最终工作树干净，`main` 无未合并分支，只有一个 worktree。
+
+## 2026-09-06 管理员答疑提醒、附件页内预览与返回路径部署
+
+### 候选、备份恢复与回滚
+
+- Backend/Worker 与 Frontend 使用固定标签 `help-preview-navigation-20260906` 无缓存构建，镜像分别为 `sha256:284e148326165fc07a5ce7b5d46a5a859dbc220af9423c2ec59e662a7b92c2cb`、`sha256:ed703871114c6f4b745ad13169ab25f2cba0ebbc78cd466796207e5d026c2943`，均以 `appuser` 运行。后端在无网络、只读根文件系统、去 capabilities 容器中通过导入和两个新 OpenAPI 路径断言；前端同等隔离运行 `/health=200`，并包含管理员未读、附件预览和管理作业返回三个构建标记。
+- 候选连接现网 PostgreSQL 执行只读 `alembic check`，结果为无新升级操作。源码与数据库均为 `20260904_0020 (head)`，本任务没有数据库或对象迁移。
+- 新 OpenPGP 每日增量备份 `pnx-backup-20260906T093609Z-daily` 位于 `/tmp/pnx-account-deployment-backups/`，归档 45,530,186 字节、权限 0600；PostgreSQL dump 29,415,587 字节，对象库存 3,318 个/6,804,909,035 字节，相对周基线的增量对象为 27 个/17,931,497 字节。
+- 独立项目 `pnx-restore-help-preview-20260906` 从全新 PostgreSQL/MinIO 卷恢复成功，RPO 78 秒、RTO 178 秒；3,318 个对象全部恢复，数据库引用缺失、大小和 SHA-256 差异均为 0。1,875 个历史未跟踪对象仅告警，隔离容器、网络和卷已清理。
+- 回滚标签 `help-preview-navigation-rollback-20260906` 指向部署前 Backend/Worker `sha256:9c2701a53ab1301874b4ebd87fdd92bf2213d4123b4f0accfc502600f333f12e` 与 Frontend `sha256:2b908afcfcaee84ca2f288c1c52fba3d8c9f3fea20b745081aaf2fd139168506`；应用回滚不需要 Alembic 降级。
+
+### 两阶段发布与运行验收
+
+- `.env` 已固定 `APP_IMAGE_TAG=help-preview-navigation-20260906`。先使用 `--no-deps --force-recreate --wait --no-build` 替换 Backend/Worker，二者 healthy 后再替换 Frontend/Nginx；PostgreSQL、MinIO、网络和数据卷未重建。PostgreSQL/MinIO 容器继续为 `bfa750f66ab0…`、`331150f34f37…`。
+- 六个常驻服务持续 healthy、RestartCount 0。`/login`、`/health/live`、`/health/ready`、`/health/worker`、`/nginx-health`、MinIO 存活入口和 Frontend 容器内部 `/health` 均为 200；外部 `/health` 按既有 Nginx 规则为 301 到 `/health/`。
+- `/admin/help` 匿名访问为 307 到登录页；`GET /api/v1/admin/help-requests/unread-count` 与 `POST /api/v1/files/{file_id}/preview-url` 匿名均为 401。普通 `/login` 响应保持 `X-Frame-Options: DENY`，`/storage/` 响应为 `SAMEORIGIN` 并保留 nosniff、Referrer-Policy 和 Permissions-Policy。
+- 运行 OpenAPI 为 100 条路径并包含两个新接口，Frontend 运行产物包含三个目标标记。部署前后用户、作业、作业受众、提交、版本、文件、答疑、管理员答疑未读、Outbox 及知识库 run/node/document/asset 均保持 `190/3/348/42/50/160/2/0/948/27/5316/4784/1284`。
+- 发布窗口至 4 分钟稳定期，Backend、Worker、Frontend、Nginx 严重错误关键词和 Nginx 5xx 均为 0；六服务重启保持 0。活动 Outbox 仅有 2 个计划于 2026-09-11 执行的 `close_assignment`，知识库运行仍为 `failed=4/succeeded=23`，没有活动同步。
+- 验收没有携带管理员 Session、Cookie 或 CSRF，未创建工单、邮件、上传、删除、评语或飞书同步。当前仍为 `APP_ENV=development` 的校内 HTTP Compose，并非 TLS production Compose；新加密备份与恢复密钥仍同机位于 `/tmp`，1,875 个历史未跟踪对象继续告警，Docker socket 的 `user:pnx:rw-` 临时 ACL 仍需部署方交互撤销。

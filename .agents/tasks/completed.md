@@ -1,3 +1,13 @@
+# 2026-09-06：反馈答疑管理员蓝点、附件页内预览与原作业返回
+
+- 学生创建系统反馈或问题答疑时，同事务为全部当前有效管理员创建固定脱敏站内提醒；管理员侧“反馈答疑”显示本人蓝点，打开详情只清本人提醒，首次解决或删除清理其余待处理提醒，不发送答疑邮件。
+- 普通业务附件新增共享授权的 5 分钟 inline 预览；支持安全 PDF、图片、MP4/WebM 和纯文本/源码，Office、HTML/SVG、压缩包、EXE、未知或不匹配类型只下载。四个附件详情页面复用可访问模态，Nginx 仅对 `/storage/` 放行同源嵌入。
+- 管理员个人提交审阅返回所属作业编辑页；学生个人版本原有返回所属作业详情路径保持并经回归确认。
+- 后端定向 75 项、完整 405 项、Ruff、177 文件格式和 155 文件严格 Mypy；前端定向 43 项、完整 25 文件/148 项、ESLint、严格 TypeScript、Next.js 16.3.2 生产构建及 `git diff --check` 通过。
+- 正式计划为 `.agents/plans/plan_help_admin_notification_attachment_preview_navigation.md`，ADR-062/ADR-063 已接受。无新依赖、数据库字段、对象迁移或 Alembic 迁移。
+- 无缓存候选 Backend/Worker `sha256:284e14832616…` 与 Frontend `sha256:ed703871114c…` 通过非 root、隔离运行和 Alembic 漂移门；固定标签 `help-preview-navigation-20260906` 已按 Backend/Worker、Frontend/Nginx 两阶段上线，回滚标签指向上一统一版本。
+- 新备份 `pnx-backup-20260906T093609Z-daily` 已从全新空卷恢复并零差异对账 3,318 个对象，RPO 78 秒、RTO 178 秒。六服务 healthy、重启 0，运行 OpenAPI/Frontend 产物、匿名权限、安全头、数据聚合及稳定期日志全部通过；PostgreSQL/MinIO 未重建，验收没有业务写入。
+
 # 2026-09-06：统一作业、独立队伍与生产部署
 
 - `published/closed` 作业现可修改受众并按当前激活学生原子替换快照；管理名单完整读取全部分页，分为当前受众已提交、未提交和退出受众历史提交者。历史提交、版本、评语、附件、优秀标记与延期均不删除。

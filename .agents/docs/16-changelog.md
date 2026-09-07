@@ -4,6 +4,18 @@
 
 ## 2026-09-06
 
+### 管理员答疑蓝点、普通附件页内预览与原作业返回（已部署）
+
+- 学生创建系统反馈或问题答疑时，同一事务为全部当前 `active admin` 建立固定脱敏站内提醒；管理员“反馈答疑”入口显示本人蓝点，打开详情只清本人提醒，首次解决或删除使其余管理员的待处理提醒失效。答疑提醒不发送邮件，也不包含工单标题、正文或学生身份。
+- 新增 `GET /admin/help-requests/unread-count` 和管理详情 `notification_ids`；复用历史命名的 `student_notifications`、既有单条已读接口及 `(user_id,event_key)` 唯一约束，无数据库迁移。
+- 新增 `POST /files/{file_id}/preview-url`，与下载共享完整业务授权。服务端检测为 PDF、PNG/JPEG/GIF/WebP、MP4/WebM 或安全纯文本/源码时返回 5 分钟 inline URL；Office、HTML/SVG、压缩包、EXE、未知或不匹配类型返回 415 且继续可下载。
+- 通知、学生个人版本、管理员提交审阅和优秀作业详情复用当前页预览模态；支持 Escape/遮罩/按钮关闭、焦点恢复、失败提示与重试。Nginx 只把同源 `/storage/` 覆盖为 `SAMEORIGIN` 并完整保留安全头，其他页面继续 `DENY`。
+- 管理员提交审阅的“返回原作业”改为 `/admin/assignments/{assignment_id}/edit`；学生个人版本原有 `/assignments/{assignment_id}` 返回路径经回归确认保持。
+- 后端定向 75 项、完整 405 项、Ruff、177 文件格式检查和 155 文件严格 Mypy；前端定向 43 项、完整 25 文件/148 项、ESLint、严格 TypeScript、Next.js 16.3.2 生产构建及 `git diff --check` 全部通过。
+- 本轮无新依赖、数据库字段、对象迁移或 Alembic 迁移。固定标签 `help-preview-navigation-20260906` 已按 Backend/Worker、Frontend/Nginx 两阶段上线；Backend/Worker 镜像为 `sha256:284e14832616…`，Frontend 为 `sha256:ed703871114c…`，六服务 healthy、重启 0，Alembic 保持 `20260904_0020 (head)`。
+- 新备份 `pnx-backup-20260906T093609Z-daily` 已从全新空卷恢复并对账 3,318 个对象，缺失、大小及 SHA-256 差异均为 0，RPO 78 秒、RTO 178 秒。运行 OpenAPI 为 100 条路径并包含两个新接口；匿名管理页面为 307、两个新接口为 401，普通页面 `DENY` 与 `/storage/` 的 `SAMEORIGIN` 均生效。
+- 部署前后用户、作业、受众、提交、版本、文件、答疑、管理员答疑未读、Outbox 与知识库四项聚合完全一致；验收未携带管理员 Session，未创建工单、邮件、上传、评语或飞书同步，稳定期严重错误和 Nginx 5xx 均为 0。PostgreSQL/MinIO 容器和数据卷未重建。
+
 ### 已发布作业受众、完整提交跟踪与评语邮件（已部署）
 
 - `draft/published/closed` 作业均可修改受众，`archived` 继续只读；已发布或已关闭作业保存新范围时，服务端按当前激活学生原子替换 `assignment_audience_users`。移出受众立即失去作业与新版本权限，但提交、版本、评语、优秀标记、附件、延期、提醒和审计保持。
