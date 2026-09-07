@@ -5,7 +5,9 @@
 - 创建者只在建队时成为初始队长；既有队长转让继续支持后期变更。队伍解散取消 pending，管理员删队与账号擦除级联清理简介/邀请，独立队伍仍不拥有提交且不连接 legacy 赛事。
 - 新增 `20260907_0021`；隔离 PostgreSQL 17 完成 `0020 → 0021 → 0020 → 0021`、表/索引存在性和两次 `alembic check`，离线升降级 SQL 通过，临时容器已销毁。迁移无回填或对象操作。
 - 后端完整 413 项 Pytest、Ruff、178 文件格式和 155 文件严格 Mypy；前端完整 26 文件/152 项 Vitest、ESLint、严格 TypeScript 和 Next.js 16.3.2 生产构建通过。OpenAPI 105 条路径并保持赛事 API 为 0。
-- 正式计划为 `.agents/plans/plan_team_profiles_invitations.md`，ADR-064、TEAM-010～TEAM-013 与 TEAM-T13～TEAM-T18 已同步全部受影响权威文档。本轮无新依赖，未连接运行 PostgreSQL/MinIO、未构建镜像或部署。
+- 正式计划为 `.agents/plans/plan_team_profiles_invitations.md`，ADR-064、TEAM-010～TEAM-013 与 TEAM-T13～TEAM-T18 已同步全部受影响权威文档。本轮无新依赖，源码提交为 `c8de297`。
+- 新加密备份 `pnx-backup-20260907T174637Z-daily` 已从全新 PostgreSQL/MinIO 卷恢复并零差异对账 3,260 个对象，RPO 85 秒、RTO 160 秒；恢复副本升级 `0020 → 0021` 后无模型漂移且对象再次零差异，隔离资源已清理。
+- 固定标签 `team-profiles-invitations-20260908` 已两阶段上线；Backend/Worker 为 `sha256:659ac8827f00…`、Frontend 为 `sha256:8003236f7b5f…`。六服务 healthy、重启 0，生产为 `20260907_0021 (head)`，部署前后业务聚合一致，新表初始 `0/0`，运行 OpenAPI、页面产物、匿名权限和稳定期日志均通过。验收未创建真实简介、邀请或其他业务写入，PostgreSQL/MinIO 未重建。
 
 # 2026-09-06：反馈答疑管理员蓝点、附件页内预览与原作业返回
 

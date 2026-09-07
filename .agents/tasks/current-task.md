@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-2026-09-08 “校内赛组队个人简介、站内邀请与后期队长变更”已完成源码、迁移、测试和中文权威文档，完成记录已移入 `.agents/tasks/completed.md`。正式计划为 `.agents/plans/plan_team_profiles_invitations.md`，ADR-064 已接受；后端完整 413 项、前端 26 文件/152 项及全部静态/构建门通过，隔离 PostgreSQL 17 完成 `0020 → 0021 → 0020 → 0021` 且无模型漂移。候选未连接或迁移运行 PostgreSQL/MinIO，未构建镜像或部署；生产继续保持 `help-preview-navigation-20260906` 与 `20260904_0020 (head)`，上线前须先完成双存储同点可恢复备份。
+2026-09-08 “校内赛组队个人简介、站内邀请与后期队长变更”已完成源码、迁移、测试、中文权威文档和生产部署，完成记录已移入 `.agents/tasks/completed.md`。正式计划为 `.agents/plans/plan_team_profiles_invitations.md`，ADR-064 已接受；后端完整 413 项、前端 26 文件/152 项及全部静态/构建门通过。新加密双存储备份已完成空卷恢复和 3,260 对象零差异对账，恢复副本与生产均成功执行 `0020 → 0021` 且无模型漂移。当前固定标签为 `team-profiles-invitations-20260908`，六服务 healthy、重启 0，运行 OpenAPI、匿名权限、业务聚合和稳定期日志均通过；PostgreSQL/MinIO 容器与数据卷未重建，验收未创建真实简介或邀请。
 
 2026-09-06 “反馈答疑管理员蓝点、普通业务附件页内预览与个人作业返回上下文”已完成实现、完整质量门、无缓存候选构建、加密备份空卷恢复、两阶段部署和稳定期验收，完成记录已移入 `.agents/tasks/completed.md`。当前标签为 `help-preview-navigation-20260906`，六服务 healthy、重启 0，Alembic 保持 `20260904_0020 (head)`；PostgreSQL/MinIO 未重建，关键业务聚合无变化。本次源码、基础设施和中文文档已按逻辑分步提交，未推送；远端写权限问题仍需仓库所有者提供 HTTPS 凭据或授权 SSH 公钥后处理。
 

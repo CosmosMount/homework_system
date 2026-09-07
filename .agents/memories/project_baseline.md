@@ -21,9 +21,9 @@
 
 阶段 1～6 已完成实现与真实 Linux Docker/浏览器/运维验收，首版发布候选已经形成。系统源码具备认证与两角色授权、通知与工作台、个人作业、独立队伍、问卷、反馈答疑、飞书知识库只读同步与阅读，以及共享 MinIO 存储；管理员可维护资料和登录人员，并可在当前 Session 临时切换学生视图。
 
-2026-09-06 当前生产版本为 `help-preview-navigation-20260906`：Backend/Worker `sha256:284e14832616…`、Frontend `sha256:ed703871114c…`，六服务 healthy、重启 0，Alembic 保持 `20260904_0020 (head)` 且无模型漂移。已发布/已关闭作业受众维护、完整提交跟踪、批量附件、评语邮件和独立队伍能力继续保留；新增管理员答疑蓝点、普通业务安全附件页内预览和管理提交返回原作业，运行 OpenAPI 为 100 条路径且仍不暴露赛事 API。
+2026-09-08 当前生产版本为 `team-profiles-invitations-20260908`：Backend/Worker `sha256:659ac8827f00…`、Frontend `sha256:8003236f7b5f…`，六服务 healthy、重启 0，Alembic 为 `20260907_0021 (head)` 且无模型漂移。登录学生可自愿发布组队简介、浏览其他已发布简介并使用站内邀请组队；创建者只是初始队长，既有成员间队长转让继续支持后期变更。运行 OpenAPI 为 105 条路径并继续不暴露赛事 API。
 
-本次新备份 `pnx-backup-20260906T093609Z-daily` 已从空 PostgreSQL/MinIO 卷恢复，3,318 个对象的数据库引用缺失、大小和 SHA-256 差异均为 0，RPO 78 秒、RTO 178 秒；PostgreSQL/MinIO 容器及数据卷未重建。正式计划为 `.agents/plans/plan_help_admin_notification_attachment_preview_navigation.md`，ADR-062/ADR-063 已接受；源码与部署验证均通过，且未使用真实管理员 Session 或产生工单、邮件、上传、评语、同步等验收写入。
+本次新备份 `pnx-backup-20260907T174637Z-daily` 已从空 PostgreSQL/MinIO 卷恢复，3,260 个对象的数据库引用缺失、大小和 SHA-256 差异均为 0，RPO 85 秒、RTO 160 秒；恢复副本随后完成 `0020 → 0021` 并再次零差异对账，隔离容器、网络和卷已清理。生产 PostgreSQL/MinIO 容器及数据卷未重建。正式计划为 `.agents/plans/plan_team_profiles_invitations.md`，ADR-064 已接受；源码提交为 `c8de297`，部署验收未使用真实管理员 Session，也未创建简介、邀请或其他业务写入。
 
 当前知识库发布候选通过 29 项后端知识库定向测试、完整后端 213 项测试、前端 20 个文件/76 项测试、Ruff、格式检查、严格 Mypy、ESLint、严格 TypeScript 和 Next.js 生产构建；此前容器构建、依赖审计、三浏览器、秘密扫描和镜像安全门继续有效。
 
@@ -523,10 +523,10 @@
 - 后端与数据库业务实现不变：Service 在正式绑定事务中逐文件复核所有者、目的、作业上下文、状态、占用、扩展名和合计大小，`version_files.display_order` 保留选择顺序。无新依赖、API 形状、数据库字段或 Alembic 迁移。
 - 前端定向 8 项、完整 25 文件/141 项、ESLint、严格 TypeScript 和 Next.js 16.3.2 生产构建通过；后端提交定向 4 项、完整 382 项、Ruff、155 文件格式检查与严格 Mypy 通过。源码候选尚未构建镜像或部署。
 
-## 2026-09-08 组队个人简介与站内邀请源码候选基线
+## 2026-09-08 组队个人简介与站内邀请源码及生产基线
 
 - ADR-064 已接受：组队简介是 `teams` 域内由 active student 自愿发布的 1～2,000 字符纯文本；登录学生目录只展示姓名、技术方向、简介和更新时间。未满 `forming` 队伍的任一成员可发出不含邀请码的站内邀请，受邀者接受后才加入；创建者只是初始队长，既有队长转让继续支持后期变更。
 - 新增 `/competitions/profiles`、`/team-profiles*`、`/team-invitations*`；队伍成员详情显示已提交简介。接受邀请时重新锁定并校验队伍/容量/一人一队，成功后取消本人其他 pending；同队同目标顺序或并发重复邀请幂等返回现有记录。队伍解散取消 pending，管理员删队或账号擦除依级联清理。
 - 新迁移 `20260907_0021` 只创建 `team_profiles/team_invitations` 及检查、级联外键和索引，不回填现有学生/队伍，不连接文件对象。隔离 PostgreSQL 17 已完成 `0020 → 0021 → 0020 → 0021` 与两次 `alembic check`；离线升降级 SQL 有效，临时容器已销毁。
 - 后端完整 413 项 Pytest、Ruff、178 文件格式和 155 文件严格 Mypy；前端完整 26 文件/152 项 Vitest、ESLint、严格 TypeScript 与 Next.js 16.3.2 构建通过。OpenAPI 为 105 条路径，新增简介/邀请路径并继续不暴露赛事 API。
-- 本候选无新依赖，不发送邀请邮件，不恢复赛事实体或团队提交。未连接或迁移运行 PostgreSQL/MinIO，未构建镜像或部署；运行环境仍保持 `help-preview-navigation-20260906` 与 `20260904_0020 (head)`。
+- 本功能无新依赖，不发送邀请邮件，不恢复赛事实体或团队提交。固定标签 `team-profiles-invitations-20260908` 已两阶段上线，生产为 `20260907_0021 (head)`；新备份已完成空卷恢复及对象零差异对账，六服务 healthy、重启 0，PostgreSQL/MinIO 容器和数据卷未重建。

@@ -961,3 +961,20 @@
 - 运行 OpenAPI 为 100 条路径并包含两个新接口，Frontend 运行产物包含三个目标标记。部署前后用户、作业、作业受众、提交、版本、文件、答疑、管理员答疑未读、Outbox 及知识库 run/node/document/asset 均保持 `190/3/348/42/50/160/2/0/948/27/5316/4784/1284`。
 - 发布窗口至 4 分钟稳定期，Backend、Worker、Frontend、Nginx 严重错误关键词和 Nginx 5xx 均为 0；六服务重启保持 0。活动 Outbox 仅有 2 个计划于 2026-09-11 执行的 `close_assignment`，知识库运行仍为 `failed=4/succeeded=23`，没有活动同步。
 - 验收没有携带管理员 Session、Cookie 或 CSRF，未创建工单、邮件、上传、删除、评语或飞书同步。当前仍为 `APP_ENV=development` 的校内 HTTP Compose，并非 TLS production Compose；新加密备份与恢复密钥仍同机位于 `/tmp`，1,875 个历史未跟踪对象继续告警，Docker socket 的 `user:pnx:rw-` 临时 ACL 仍需部署方交互撤销。
+
+## 2026-09-08 校内赛组队个人简介与站内邀请部署
+
+### 候选、备份恢复与回滚
+
+- 源码提交 `c8de297` 使用固定标签 `team-profiles-invitations-20260908` 无缓存构建。Backend/Worker 镜像为 `sha256:659ac8827f00c1a1c026fe52db766338fe171b7a478c7a123858a78a463781ca`，Frontend 为 `sha256:8003236f7b5f7d598ea6945d3c420a89ab2709806d01a2d38711a11f2de8802f`；均以 `appuser` 运行，并在无网络、只读根文件系统和去 capabilities 容器中通过 OpenAPI、迁移文件、页面标记与健康检查。
+- OpenPGP 每日增量备份 `pnx-backup-20260907T174637Z-daily` 为 46,707,044 字节，数据库 dump 29,462,877 字节，对象库存 3,260 个/6,780,807,704 字节，本次增量 35 个/18,719,053 字节；归档权限 0600，SHA-256 `d7ab8119a7e6ac36daef26d11cff3aa38847e1ed9a7b93ebe83b91dea3a2f271` 通过。
+- 独立项目 `pnx-restore-team-profiles-20260908` 从全新 PostgreSQL/MinIO 卷恢复成功，RPO 85 秒、RTO 160 秒；缺失、大小及 SHA-256 差异均为 0，1,875 个历史未跟踪对象仅告警保留。恢复副本随后用候选镜像执行 `0020 → 0021`、通过 `alembic check` 并再次零差异对账，容器、网络、卷和临时环境文件已精确清理。
+- 回滚标签 `team-profiles-invitations-rollback-20260908` 分别指向部署前 Backend/Worker `sha256:284e148326165fc07a5ce7b5d46a5a859dbc220af9423c2ec59e662a7b92c2cb` 与 Frontend `sha256:ed703871114c6f4b745ad13169ab25f2cba0ebbc78cd466796207e5d026c2943`。旧应用会忽略 `0021` 新表，应用回滚优先保留数据库结构；降级会删除简介/邀请，只能在显式数据备份后执行。
+
+### 迁移、两阶段替换与验收
+
+- 本次手工发布记录标识为 `pnx-release-20260907T180625Z`，`.env` 已固定 `APP_IMAGE_TAG=team-profiles-invitations-20260908`。生产迁移一次执行 `20260904_0020 → 20260907_0021` 成功，新表初始为空，`alembic check` 无待生成操作；先替换 Backend/Worker 并完成健康、OpenAPI、匿名权限及日志门，再替换 Frontend/Nginx。
+- 最终 Backend、Worker、Frontend、Nginx 容器分别为 `6e34799c2c1b…`、`e5aade6b6982…`、`ee8252ec48cc…`、`bec8db43ac76…`。PostgreSQL/MinIO 容器继续为 `bfa750f66ab0…`、`331150f34f37…`，未重建容器、网络或数据卷；六服务持续 healthy、RestartCount 0。
+- `/login`、Backend live/ready、Worker、Nginx 与 Frontend 内部健康均为 200；`/competitions/profiles` 匿名为 307 到登录页，简介列表、本人简介、邀请列表及接受/拒绝接口匿名均为 401。运行 OpenAPI 为 105 条路径，包含 5 个新增简介/邀请路径且赛事 API 为 0；Frontend 运行产物包含“我的组队简介”和“邀请组队”。
+- 部署前后用户、队伍、当前成员、作业、提交、版本、文件、Outbox 和知识库 run/node/document/asset 聚合均为 `194/1/0/3/48/56/173/956/27/5316/4784/1284`，简介/邀请为 `0/0`。发布窗口至稳定期，Backend、Worker、Frontend、Nginx 严重错误关键词和 HTTP 5xx 均为 0；六服务重启保持 0。
+- 验收没有携带管理员 Session、Cookie 或 CSRF，未创建简介、邀请、队伍、邮件、上传、删除、评语或飞书同步。当前仍为 `APP_ENV=development` 的校内 HTTP Compose，并非 TLS production Compose；新加密归档与恢复密钥仍同机位于 `/tmp`，必须迁移到受控异机介质并分离保存，1,875 个历史未跟踪对象继续保持既有告警。
