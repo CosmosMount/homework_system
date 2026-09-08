@@ -4,6 +4,12 @@
 
 ## 2026-09-08
 
+### 管理员控制学生组队开放与简介技术组筛选（已部署）
+
+- 新增持久化单例 `team_settings`、学生只读 `/team-settings` 和管理员 `GET/PATCH /admin/team-settings`；迁移 `20260908_0022` 默认关闭组队。关闭时后端阻断学生组队与公开队伍目录，简介填写、浏览、搜索及 `direction_id` 技术组筛选继续可用。
+- 后端完整 416 项、Ruff、格式和严格 Mypy；前端 26 文件/153 项、ESLint、严格 TypeScript 与生产构建通过。新备份完成 3,259 个对象空卷恢复和零差异对账，恢复副本成功演练 `0021 → 0022` 且无模型漂移。
+- 固定标签 `team-participation-controls-20260908` 已两阶段上线，Backend/Worker `sha256:530b82af532a…`、Frontend `sha256:01607e537a88…`；六服务 healthy、重启 0，生产为 `20260908_0022 (head)`，运行 OpenAPI 107 条路径。PostgreSQL/MinIO 未重建，验收未使用真实登录态或产生业务写入。
+
 ### 校内赛组队个人简介与站内邀请（已部署）
 
 - 新增 `/competitions/profiles`：active student 可自愿发布或按 revision 更新 1～2,000 字符纯文本简介，登录学生可按姓名、技术方向或简介搜索分页目录；响应只包含姓名、技术方向、简介、更新时间和邀请状态，不返回邮箱、学号、邀请码或 Session。

@@ -11,7 +11,13 @@
 1. 新迁移 `20260908_0022` 创建并写入单例设置，downgrade 只删除该表。
 2. `/team-profiles` 支持 `direction_id`，同响应提供启用技术组选项和 `team_open`；新增学生只读 `/team-settings` 与管理员读写 `/admin/team-settings`。
 3. 学生/管理员界面分别显示关闭提示与开关；补齐服务、迁移、前端筛选/关闭状态测试。
-4. 已通过后端定向 30 项、Ruff/格式、前端定向 10 项、ESLint 与严格 TypeScript；完整回归、隔离 PostgreSQL 迁移演练和生产部署留待后续发布流程。
+4. 已通过后端完整 416 项、Ruff、179 文件格式、155 文件严格 Mypy；前端 26 文件/153 项、ESLint、严格 TypeScript 与 Next.js 生产构建。隔离恢复副本已完成 `0021 → 0022` 和模型漂移检查，生产已部署。
+
+### 增补部署结果
+
+- 新加密备份 `pnx-backup-20260908T024438Z-daily` 为 46,522,256 字节，SHA-256 为 `a1d7d25b837e3607f963d491bb77090c0a0fa07f23ae958225a0dbacc17f7e76`；空卷恢复 3,259 个清单对象零差异，RPO 109 秒、RTO 162 秒。
+- 恢复副本与生产均成功执行 `20260907_0021 → 20260908_0022`，默认设置行值为 `false/revision 1`，`alembic check` 无待生成操作。
+- 固定标签 `team-participation-controls-20260908` 已两阶段上线；Backend/Worker `sha256:530b82af532a…`、Frontend `sha256:01607e537a88…`，六服务 healthy、重启 0。生产数据聚合不变，仅新增一条设置记录；无真实登录态或业务写入。
 
 ### 分步提交
 

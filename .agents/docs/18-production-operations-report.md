@@ -978,3 +978,19 @@
 - `/login`、Backend live/ready、Worker、Nginx 与 Frontend 内部健康均为 200；`/competitions/profiles` 匿名为 307 到登录页，简介列表、本人简介、邀请列表及接受/拒绝接口匿名均为 401。运行 OpenAPI 为 105 条路径，包含 5 个新增简介/邀请路径且赛事 API 为 0；Frontend 运行产物包含“我的组队简介”和“邀请组队”。
 - 部署前后用户、队伍、当前成员、作业、提交、版本、文件、Outbox 和知识库 run/node/document/asset 聚合均为 `194/1/0/3/48/56/173/956/27/5316/4784/1284`，简介/邀请为 `0/0`。发布窗口至稳定期，Backend、Worker、Frontend、Nginx 严重错误关键词和 HTTP 5xx 均为 0；六服务重启保持 0。
 - 验收没有携带管理员 Session、Cookie 或 CSRF，未创建简介、邀请、队伍、邮件、上传、删除、评语或飞书同步。当前仍为 `APP_ENV=development` 的校内 HTTP Compose，并非 TLS production Compose；新加密归档与恢复密钥仍同机位于 `/tmp`，必须迁移到受控异机介质并分离保存，1,875 个历史未跟踪对象继续保持既有告警。
+
+## 2026-09-08 学生组队开放开关与简介技术组筛选部署
+
+### 候选、备份与恢复演练
+
+- 源码按后端、前端、文档分步提交，并以 `0f6684c` 独立修正完整发布门发现的仓储返回类型、迁移格式及旧页面测试 Mock。最终后端 416 项 Pytest、Ruff、179 文件格式、155 文件严格 Mypy，前端 26 文件/153 项 Vitest、ESLint、严格 TypeScript 和 Next.js 16.3.2 构建通过；Alembic 只有 `20260908_0022` 单 head。
+- OpenPGP 每日增量备份 `pnx-backup-20260908T024438Z-daily` 为 46,522,256 字节，数据库 dump 29,473,299 字节，对象库存 3,259 个/6,780,596,674 字节，本次增量 34 个/18,508,023 字节；归档权限 0600，SHA-256 `a1d7d25b837e3607f963d491bb77090c0a0fa07f23ae958225a0dbacc17f7e76` 通过。
+- 独立项目 `pnx-restore-team-settings-20260908` 从全新 PostgreSQL/MinIO 卷恢复成功，RPO 109 秒、RTO 162 秒；清单对象缺失、大小和 SHA-256 差异均为 0，1,875 个历史未跟踪对象仅报告保留。恢复副本用候选镜像执行 `0021 → 0022`，默认行是 `is_team_open=false/revision=1`，`alembic check` 无待生成操作。
+- 固定候选 Backend/Worker `sha256:530b82af532a31031e8fe2ed1bda8a84976e41d595df143498fd50f84c45dd3f`、Frontend `sha256:01607e537a883661da2a572e8714b36d2d392e17145d9a424afcf246dcdf0cb6` 均为 `appuser`，在无网络、只读根文件系统和去 capabilities 环境通过；运行 OpenAPI 为 107 条路径并包含两个设置接口。
+
+### 迁移、两阶段替换与验收
+
+- `.env` 已固定 `APP_IMAGE_TAG=team-participation-controls-20260908`。生产一次执行 `20260907_0021 → 20260908_0022` 并通过模型漂移检查；先替换 Backend/Worker 并完成健康、鉴权、OpenAPI 与日志门，再替换 Frontend/Nginx。
+- 六服务持续 healthy、RestartCount 0；Backend/Worker 使用 `sha256:530b82af532a…`，Frontend 使用 `sha256:01607e537a88…`。PostgreSQL/MinIO 容器继续为 `bfa750f66ab0…`、`331150f34f37…`，数据卷保持 `pnx-training_postgres_data`、`pnx-training_minio_data`，未重建。
+- `/competitions/profiles` 匿名为 307 到登录页，学生与管理员设置接口匿名均为 401；设置表只有默认关闭的一行。发布前后用户/队伍/当前成员/简介/邀请/提交聚合保持 `196/1/2/0/0/48`，仅新增设置单例。生产对象对账缺失、大小和 SHA-256 差异均为 0；稳定期严重错误与 HTTP 5xx 为 0。
+- 验收未携带管理员 Session、Cookie 或 CSRF，未调用开关 PATCH，也未创建简介、邀请、队伍或其他业务写入。当前仍为 `APP_ENV=development` 的校内 HTTP Compose；加密归档和恢复密钥仍同机位于 `/tmp`，必须迁移到受控异机介质并分离保存，1,875 个历史未跟踪对象继续告警。
