@@ -15,7 +15,7 @@ import {
 import { isAdminView } from "@/lib/api/types";
 
 type TeamProfilesPageProps = Readonly<{
-  searchParams: Promise<{ q?: string; page?: string }>;
+  searchParams: Promise<{ direction_id?: string; q?: string; page?: string }>;
 }>;
 
 export default async function TeamProfilesPage({
@@ -32,18 +32,21 @@ export default async function TeamProfilesPage({
     Number.isSafeInteger(requestedPage) && requestedPage > 0
       ? requestedPage
       : 1;
+  const directionId = (filters.direction_id ?? "").trim();
   const search = new URLSearchParams({
     ...(query ? { query } : {}),
+    ...(directionId ? { direction_id: directionId } : {}),
     page: String(page),
     page_size: "20",
   }).toString();
-  const [dashboard, team, profile, profiles, invitations] = await Promise.all([
+  const [dashboard, profile, profiles] = await Promise.all([
     getDashboard(),
-    getMyTeam(),
     getMyTeamProfile(),
     getTeamProfiles(search),
-    getTeamInvitations(),
   ]);
+  const [team, invitations] = profiles.team_open
+    ? await Promise.all([getMyTeam(), getTeamInvitations()])
+    : [null, []];
 
   return (
     <AppShell unreadCounts={dashboard.unread_counts} user={user}>
@@ -54,7 +57,9 @@ export default async function TeamProfilesPage({
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">组队个人简介</h1>
           <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-            查看同学自愿发布的组队简介。队伍中的任一成员都可以发出邀请，对方接受后才会加入。
+            {profiles.team_open
+              ? "查看同学自愿发布的组队简介。队伍中的任一成员都可以发出邀请，对方接受后才会加入。"
+              : "管理员暂未开放组队。你仍可填写个人简介、查看同学简介，并按技术组筛选。"}
           </p>
         </div>
         <Link className={buttonClassName} href="/competitions">
@@ -64,11 +69,13 @@ export default async function TeamProfilesPage({
       <TeamProfileDirectory
         currentUserId={user.id}
         hasTeam={team !== null}
+        directionId={directionId}
         initialInvitations={invitations}
         initialProfile={profile}
         initialProfiles={profiles}
         query={query}
-        teamCanInvite={team !== null && team.member_count < team.max_members}
+        teamCanInvite={profiles.team_open && team !== null && team.member_count < team.max_members}
+        teamOpen={profiles.team_open}
       />
     </AppShell>
   );

@@ -1,9 +1,10 @@
 import Link from "next/link";
 
+import { TeamSettingsPanel } from "@/components/competitions/team-settings-panel";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AppShell } from "@/components/layout/app-shell";
 import { buttonClassName, inputClassName } from "@/components/ui/form-controls";
-import { getAdminTeams, requireAdmin } from "@/lib/api/server";
+import { getAdminTeams, getAdminTeamSettings, requireAdmin } from "@/lib/api/server";
 import { statusTagClass, teamStatusLabel } from "@/lib/competition-labels";
 
 type AdminCompetitionsPageProps = Readonly<{
@@ -13,7 +14,7 @@ type AdminCompetitionsPageProps = Readonly<{
 export default async function AdminCompetitionsPage({
   searchParams,
 }: AdminCompetitionsPageProps) {
-  const [admin, filters] = await Promise.all([requireAdmin(), searchParams]);
+  const [admin, filters, teamSettings] = await Promise.all([requireAdmin(), searchParams, getAdminTeamSettings()]);
   const query = (filters.q ?? "").trim().slice(0, 120);
   const requestedPage = Number(filters.page ?? "1");
   const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
@@ -39,8 +40,9 @@ export default async function AdminCompetitionsPage({
       <AdminPageHeader
         eyebrow="ADMIN / CAMPUS TEAMS"
         title="校内赛队伍"
-        description="此页面只管理独立队伍；学生无需等待管理员创建赛事即可直接组队。"
+        description="管理独立队伍并决定是否向学生开放组队。"
       />
+      <TeamSettingsPanel initialSettings={teamSettings} />
 
       <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[var(--shadow-card)] sm:p-6">
         <div className="flex flex-wrap items-end justify-between gap-3">

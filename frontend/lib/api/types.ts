@@ -530,11 +530,18 @@ export type TeamProfile = {
   invitation_pending: boolean;
 };
 
+export type TeamProfileDirection = {
+  id: string;
+  name: string;
+};
+
 export type TeamProfilePage = {
   items: TeamProfile[];
   total: number;
   page: number;
   page_size: number;
+  team_open: boolean;
+  directions: TeamProfileDirection[];
 };
 
 export type TeamInvitation = {
@@ -545,6 +552,12 @@ export type TeamInvitation = {
   status: "pending" | "accepted" | "declined" | "cancelled";
   created_at: string;
   responded_at: string | null;
+  revision: number;
+};
+
+export type TeamSettings = {
+  is_team_open: boolean;
+  updated_at: string;
   revision: number;
 };
 

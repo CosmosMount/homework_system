@@ -35,6 +35,11 @@ const targetProfile: TeamProfile = {
 
 const profilePage: TeamProfilePage = {
   items: [targetProfile],
+  team_open: true,
+  directions: [
+    { id: "direction-vision", name: "视觉组" },
+    { id: "direction-mechanical", name: "机械组" },
+  ],
   total: 1,
   page: 1,
   page_size: 20,
@@ -57,12 +62,14 @@ function renderDirectory(
   render(
     <TeamProfileDirectory
       currentUserId="student-1"
+      directionId=""
       hasTeam
       initialInvitations={[]}
       initialProfile={null}
       initialProfiles={profilePage}
       query=""
       teamCanInvite
+      teamOpen
       {...overrides}
     />,
   );
@@ -156,3 +163,14 @@ describe("team profile invitations", () => {
     expect(screen.queryByText("第一队")).not.toBeInTheDocument();
   });
 });
+
+  it("keeps technical-group filtering while closed and hides invitation controls", () => {
+    renderDirectory({
+      initialProfiles: { ...profilePage, team_open: false },
+      teamOpen: false,
+    });
+
+    expect(screen.getByLabelText("技术组")).toBeInTheDocument();
+    expect(screen.getByText("组队暂未开放；个人简介仍可正常填写、浏览和按技术组筛选。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "邀请组队" })).not.toBeInTheDocument();
+  });

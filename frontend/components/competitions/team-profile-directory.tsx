@@ -24,20 +24,24 @@ function errorMessage(error: unknown): string {
 
 export function TeamProfileDirectory({
   currentUserId,
+  directionId,
   hasTeam,
   initialInvitations,
   initialProfile,
   initialProfiles,
   query,
   teamCanInvite,
+  teamOpen,
 }: Readonly<{
   currentUserId: string;
+  directionId: string;
   hasTeam: boolean;
   initialInvitations: TeamInvitation[];
   initialProfile: TeamProfile | null;
   initialProfiles: TeamProfilePage;
   query: string;
   teamCanInvite: boolean;
+  teamOpen: boolean;
 }>) {
   const router = useRouter();
   const [introduction, setIntroduction] = useState(
@@ -140,6 +144,7 @@ export function TeamProfileDirectory({
   function pageHref(nextPage: number): string {
     const params = new URLSearchParams();
     if (query) params.set("q", query);
+    if (directionId) params.set("direction_id", directionId);
     if (nextPage > 1) params.set("page", String(nextPage));
     const suffix = params.toString();
     return "/competitions/profiles" + (suffix ? "?" + suffix : "");
@@ -196,7 +201,7 @@ export function TeamProfileDirectory({
         </div>
       </section>
 
-      {invitations.length > 0 ? (
+      {teamOpen && invitations.length > 0 ? (
         <section className="mt-8 rounded-2xl border border-[var(--color-info)] bg-[var(--color-surface)] p-5 sm:p-6">
           <p className="text-xs font-medium tracking-[0.14em] text-[var(--color-info)]">
             PENDING INVITATIONS
@@ -253,8 +258,8 @@ export function TeamProfileDirectory({
             共 {initialProfiles.total} 份
           </p>
         </div>
-        <form className="mt-5 flex flex-col gap-3 sm:flex-row" role="search">
-          <label className="min-w-0 flex-1 text-sm font-medium">
+        <form className="mt-5 grid gap-3 sm:grid-cols-[minmax(0,1fr)_13rem_auto]" role="search">
+          <label className="min-w-0 text-sm font-medium">
             搜索姓名、方向或简介
             <input
               className={inputClassName}
@@ -265,11 +270,26 @@ export function TeamProfileDirectory({
               type="search"
             />
           </label>
+          <label className="text-sm font-medium">
+            技术组
+            <select className={inputClassName} defaultValue={directionId} name="direction_id">
+              <option value="">全部技术组</option>
+              {initialProfiles.directions.map((direction) => (
+                <option key={direction.id} value={direction.id}>
+                  {direction.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <button className={buttonClassName + " sm:self-end"} type="submit">
             搜索
           </button>
         </form>
-        {!hasTeam ? (
+        {!teamOpen ? (
+          <p className="mt-4 text-sm text-[var(--color-text-secondary)]">
+            组队暂未开放；个人简介仍可正常填写、浏览和按技术组筛选。
+          </p>
+        ) : !hasTeam ? (
           <p className="mt-4 text-sm text-[var(--color-text-secondary)]">
             你可以浏览所有已发布简介；创建或加入队伍后即可邀请同学。
           </p>
@@ -306,7 +326,7 @@ export function TeamProfileDirectory({
                   <span className="text-xs text-[var(--color-text-muted)]">
                     更新于 {formatDateTime(item.updated_at)}
                   </span>
-                  {item.can_invite && !sent ? (
+                  {teamOpen && item.can_invite && !sent ? (
                     <button
                       className={buttonClassName}
                       disabled={pendingAction !== null}
@@ -317,7 +337,7 @@ export function TeamProfileDirectory({
                         ? "发送中…"
                         : "邀请组队"}
                     </button>
-                  ) : sent ? (
+                  ) : teamOpen && sent ? (
                     <span className="text-xs text-[var(--color-info)]">已邀请</span>
                   ) : null}
                 </div>
