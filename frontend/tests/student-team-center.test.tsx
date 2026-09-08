@@ -7,11 +7,13 @@ import type { Dashboard, TeamDirectoryPage, User } from "@/lib/api/types";
 const {
   getDashboardMock,
   getMyTeamMock,
+  getTeamSettingsMock,
   getTeamsMock,
   requireUserMock,
 } = vi.hoisted(() => ({
   getDashboardMock: vi.fn(),
   getMyTeamMock: vi.fn(),
+  getTeamSettingsMock: vi.fn(),
   getTeamsMock: vi.fn(),
   requireUserMock: vi.fn(),
 }));
@@ -25,6 +27,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/api/server", () => ({
   getDashboard: getDashboardMock,
   getMyTeam: getMyTeamMock,
+  getTeamSettings: getTeamSettingsMock,
   getTeams: getTeamsMock,
   requireUser: requireUserMock,
 }));
@@ -84,6 +87,11 @@ describe("student campus team center", () => {
     requireUserMock.mockResolvedValue(student);
     getDashboardMock.mockResolvedValue(dashboard);
     getMyTeamMock.mockResolvedValue(null);
+    getTeamSettingsMock.mockResolvedValue({
+      is_team_open: true,
+      updated_at: "2026-09-08T00:00:00Z",
+      revision: 1,
+    });
     getTeamsMock.mockResolvedValue(teams);
   });
 

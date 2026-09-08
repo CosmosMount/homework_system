@@ -4,8 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminCompetitionsPage from "@/app/admin/competitions/page";
 import type { AdminTeamList, User } from "@/lib/api/types";
 
-const { getAdminTeamsMock, requireAdminMock } = vi.hoisted(() => ({
+const { getAdminTeamsMock, getAdminTeamSettingsMock, requireAdminMock } = vi.hoisted(() => ({
   getAdminTeamsMock: vi.fn(),
+  getAdminTeamSettingsMock: vi.fn(),
   requireAdminMock: vi.fn(),
 }));
 
@@ -15,6 +16,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/api/server", () => ({
+  getAdminTeamSettings: getAdminTeamSettingsMock,
   getAdminTeams: getAdminTeamsMock,
   requireAdmin: requireAdminMock,
 }));
@@ -52,6 +54,11 @@ const teams: AdminTeamList = {
 describe("admin campus team page", () => {
   beforeEach(() => {
     requireAdminMock.mockResolvedValue(admin);
+    getAdminTeamSettingsMock.mockResolvedValue({
+      is_team_open: true,
+      updated_at: "2026-09-08T00:00:00Z",
+      revision: 1,
+    });
     getAdminTeamsMock.mockResolvedValue(teams);
   });
 
