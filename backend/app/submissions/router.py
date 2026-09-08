@@ -14,6 +14,7 @@ from app.core.request_context import current_request_id
 from app.submissions.schemas import (
     FeedbackPutRequest,
     FeedbackResponse,
+    SubmissionCompletionResponse,
     SubmissionResponse,
     SubmissionVersionCreatedResponse,
     SubmissionVersionCreateRequest,
@@ -113,6 +114,40 @@ async def get_submission_version(
         submission_id,
         version_id,
         context=context,
+    )
+
+
+@router.post(
+    "/admin/submissions/{submission_id}/completion",
+    response_model=SubmissionCompletionResponse,
+)
+async def confirm_submission_completion(
+    submission_id: UUID,
+    request: Request,
+    service: SubmissionServiceDependency,
+    admin: AdminContextDependency,
+    _csrf: CsrfDependency,
+) -> SubmissionCompletionResponse:
+    return await service.confirm_completion(
+        submission_id,
+        audit=_audit_context(request, admin),
+    )
+
+
+@router.delete(
+    "/admin/submissions/{submission_id}/completion",
+    response_model=SubmissionCompletionResponse,
+)
+async def revoke_submission_completion(
+    submission_id: UUID,
+    request: Request,
+    service: SubmissionServiceDependency,
+    admin: AdminContextDependency,
+    _csrf: CsrfDependency,
+) -> SubmissionCompletionResponse:
+    return await service.revoke_completion(
+        submission_id,
+        audit=_audit_context(request, admin),
     )
 
 

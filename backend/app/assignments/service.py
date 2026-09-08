@@ -221,6 +221,7 @@ class AssignmentService:
             stats=AssignmentStatsResponse(
                 target_count=stats.target_count,
                 submitted_count=stats.submitted_count,
+                completed_count=stats.completed_count,
                 unsubmitted_count=max(0, stats.target_count - stats.submitted_count),
                 feedback_submission_count=stats.feedback_submission_count,
                 last_submitted_at=stats.last_submitted_at,
@@ -1090,6 +1091,15 @@ class AssignmentService:
                         if record.latest_version is not None
                         else None
                     ),
+                    completed_version_id=(
+                        record.submission.completed_version_id
+                        if record.submission is not None
+                        else None
+                    ),
+                    completed_at=(
+                        record.submission.completed_at if record.submission is not None else None
+                    ),
+                    is_completed=record.is_completed,
                     has_feedback=record.has_feedback,
                     in_current_audience=record.in_current_audience,
                 )

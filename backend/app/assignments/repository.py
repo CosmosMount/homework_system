@@ -38,6 +38,7 @@ class StudentAssignmentRecord:
 class AssignmentStats:
     target_count: int
     submitted_count: int
+    completed_count: int
     feedback_submission_count: int
     last_submitted_at: datetime | None
 
@@ -56,6 +57,7 @@ class AdminSubmissionRecord:
     submission: Submission | None
     latest_version: SubmissionVersion | None
     has_feedback: bool
+    is_completed: bool
     in_current_audience: bool
 
 
@@ -492,6 +494,24 @@ class AssignmentRepository:
             )
             or 0
         )
+        completed_count = int(
+            await self._session.scalar(
+                select(func.count(func.distinct(Submission.id)))
+                .select_from(Submission)
+                .join(
+                    AssignmentAudienceUser,
+                    and_(
+                        AssignmentAudienceUser.assignment_id == assignment_id,
+                        AssignmentAudienceUser.user_id == Submission.owner_user_id,
+                    ),
+                )
+                .where(
+                    Submission.assignment_id == assignment_id,
+                    Submission.completed_version_id == Submission.latest_version_id,
+                )
+            )
+            or 0
+        )
         feedback_submission_count = int(
             await self._session.scalar(
                 select(func.count(func.distinct(Submission.id)))
@@ -518,6 +538,7 @@ class AssignmentRepository:
             submitted_count=submitted_count,
             feedback_submission_count=feedback_submission_count,
             last_submitted_at=last_submitted_at,
+            completed_count=completed_count,
         )
 
     async def last_submitted_at(self, assignment_id: UUID) -> datetime | None:
@@ -544,6 +565,10 @@ class AssignmentRepository:
             Feedback.version_id == SubmissionVersion.id,
         )
         in_current_audience = AssignmentAudienceUser.user_id.is_not(None)
+        is_completed = and_(
+            Submission.completed_version_id.is_not(None),
+            Submission.completed_version_id == Submission.latest_version_id,
+        )
         filters: list[ColumnElement[bool]] = [or_(in_current_audience, Submission.id.is_not(None))]
         if cohort_id is not None:
             filters.append(
@@ -571,6 +596,7 @@ class AssignmentRepository:
                 SubmissionVersion,
                 feedback_exists.label("has_feedback"),
                 in_current_audience.label("in_current_audience"),
+                is_completed.label("is_completed"),
             )
             .select_from(User)
             .outerjoin(
@@ -611,6 +637,7 @@ class AssignmentRepository:
                     latest_version=row[2],
                     has_feedback=bool(row[3]),
                     in_current_audience=bool(row[4]),
+                    is_completed=bool(row[5]),
                 )
                 for row in rows
             ],

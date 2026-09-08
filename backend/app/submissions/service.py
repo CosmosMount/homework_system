@@ -29,6 +29,7 @@ from app.submissions.schemas import (
     FeedbackPutRequest,
     FeedbackResponse,
     SubmissionAttachmentResponse,
+    SubmissionCompletionResponse,
     SubmissionResponse,
     SubmissionVersionCreatedResponse,
     SubmissionVersionCreateRequest,
@@ -99,13 +100,14 @@ class SubmissionService:
         ip_prefix: str,
         change_summary: dict[str, object],
         now: datetime,
+        target_type: str = "submission_version",
     ) -> None:
         self._audit.add(
             AuditLog(
                 id=uuid7(),
                 actor_user_id=actor_user_id,
                 action=action,
-                target_type="submission_version",
+                target_type=target_type,
                 target_id=target_id,
                 request_id=request_id,
                 ip_prefix=ip_prefix,
@@ -428,6 +430,12 @@ class SubmissionService:
             assignment_id=submission.assignment_id,
             owner_user_id=submission.owner_user_id,
             latest_version_id=submission.latest_version_id,
+            completed_version_id=submission.completed_version_id,
+            completed_at=submission.completed_at,
+            is_completed=(
+                submission.completed_version_id is not None
+                and submission.completed_version_id == submission.latest_version_id
+            ),
             versions=[await self._version_response(version) for version in versions],
         )
 
@@ -462,6 +470,108 @@ class SubmissionService:
         if version is None:
             raise self._not_found()
         return await self._version_response(version)
+
+    @staticmethod
+    def _completion_response(submission: Submission) -> SubmissionCompletionResponse:
+        if submission.latest_version_id is None:
+            raise SubmissionService._not_found()
+        return SubmissionCompletionResponse(
+            submission_id=submission.id,
+            latest_version_id=submission.latest_version_id,
+            completed_version_id=submission.completed_version_id,
+            completed_at=submission.completed_at,
+            is_completed=(
+                submission.completed_version_id is not None
+                and submission.completed_version_id == submission.latest_version_id
+            ),
+        )
+
+    async def confirm_completion(
+        self,
+        submission_id: UUID,
+        *,
+        audit: SubmissionAuditContext,
+    ) -> SubmissionCompletionResponse:
+        submission = await self._submissions.get_by_id(submission_id, for_update=True)
+        if (
+            submission is None
+            or submission.assignment_id is None
+            or submission.latest_version_id is None
+        ):
+            await self._session.rollback()
+            raise self._not_found()
+        if submission.completed_version_id == submission.latest_version_id:
+            await self._session.commit()
+            return self._completion_response(submission)
+
+        version = await self._submissions.get_version(
+            submission.latest_version_id,
+            submission_id=submission.id,
+        )
+        if version is None:
+            await self._session.rollback()
+            raise self._not_found()
+        now = self._clock()
+        submission.completed_version_id = version.id
+        submission.completed_at = now
+        submission.completed_by = audit.actor.user.id
+        submission.updated_at = now
+        self._add_audit(
+            actor_user_id=audit.actor.user.id,
+            action="submission.completion_confirm",
+            target_id=submission.id,
+            request_id=audit.request_id,
+            ip_prefix=audit.ip_prefix,
+            change_summary={
+                "assignment_id": str(submission.assignment_id),
+                "completed_version_id": str(version.id),
+                "version_number": version.version_number,
+            },
+            now=now,
+            target_type="submission",
+        )
+        await self._session.commit()
+        return self._completion_response(submission)
+
+    async def revoke_completion(
+        self,
+        submission_id: UUID,
+        *,
+        audit: SubmissionAuditContext,
+    ) -> SubmissionCompletionResponse:
+        submission = await self._submissions.get_by_id(submission_id, for_update=True)
+        if (
+            submission is None
+            or submission.assignment_id is None
+            or submission.latest_version_id is None
+        ):
+            await self._session.rollback()
+            raise self._not_found()
+        if submission.completed_version_id is None:
+            await self._session.commit()
+            return self._completion_response(submission)
+
+        previous_version_id = submission.completed_version_id
+        now = self._clock()
+        submission.completed_version_id = None
+        submission.completed_at = None
+        submission.completed_by = None
+        submission.updated_at = now
+        self._add_audit(
+            actor_user_id=audit.actor.user.id,
+            action="submission.completion_revoke",
+            target_id=submission.id,
+            request_id=audit.request_id,
+            ip_prefix=audit.ip_prefix,
+            change_summary={
+                "assignment_id": str(submission.assignment_id),
+                "previous_completed_version_id": str(previous_version_id),
+            },
+            now=now,
+            target_type="submission",
+        )
+        await self._session.commit()
+        return self._completion_response(submission)
 
     async def put_feedback(
         self,

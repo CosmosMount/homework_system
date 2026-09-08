@@ -197,7 +197,7 @@ function SubmissionGroup({
   title: string;
 }>) {
   return (
-    <section>
+    <section className="min-w-0 border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
       <h3 className="text-base font-semibold">
         {title} <span className="font-mono text-xs">({items.length})</span>
       </h3>
@@ -209,7 +209,7 @@ function SubmissionGroup({
         <div className="mt-3 space-y-3">
           {items.map((item) => (
             <article
-              className="border border-[var(--color-border)] p-4"
+              className="border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
               key={item.user_id}
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -232,6 +232,12 @@ function SubmissionGroup({
                   </span>
                 )}
               </div>
+              {item.completed_at ? (
+                <p className="mt-3 text-xs text-[var(--color-text-secondary)]">
+                  {item.is_completed ? "当前版本确认于 " : "历史版本确认于 "}
+                  {formatDateTime(item.completed_at)}
+                </p>
+              ) : null}
               {item.in_current_audience ? (
                 <ExtensionControls
                   assignmentId={assignmentId}
@@ -475,7 +481,13 @@ export function AssignmentEditor({
   const rulesEditable =
     assignment === null || assignment.status === "draft";
   const submitted = initialSubmissions.filter(
-    (item) => item.in_current_audience && item.submission_id !== null,
+    (item) =>
+      item.in_current_audience &&
+      item.submission_id !== null &&
+      !item.is_completed,
+  );
+  const completed = initialSubmissions.filter(
+    (item) => item.in_current_audience && item.is_completed,
   );
   const unsubmitted = initialSubmissions.filter(
     (item) => item.in_current_audience && item.submission_id === null,
@@ -683,12 +695,21 @@ export function AssignmentEditor({
         {assignment && assignment.status !== "draft" ? (
           <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
             <h2 className="text-xl font-semibold">目标学生与提交</h2>
-            <div className="mt-5 space-y-7">
+            <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
+              已提交表示已有正式版本但尚未确认；管理员确认当前最新版本后进入已完成。
+            </p>
+            <div className="mt-5 grid items-start gap-5 xl:grid-cols-3">
               <SubmissionGroup
                 assignmentId={assignment.id}
-                emptyMessage="当前受众中暂无已提交学生。"
+                emptyMessage="暂无待管理员确认的提交。"
                 items={submitted}
                 title="已提交"
+              />
+              <SubmissionGroup
+                assignmentId={assignment.id}
+                emptyMessage="暂无已确认完成的提交。"
+                items={completed}
+                title="已完成"
               />
               <SubmissionGroup
                 assignmentId={assignment.id}
@@ -696,15 +717,17 @@ export function AssignmentEditor({
                 items={unsubmitted}
                 title="未提交"
               />
-              {historical.length > 0 ? (
+            </div>
+            {historical.length > 0 ? (
+              <div className="mt-7">
                 <SubmissionGroup
                   assignmentId={assignment.id}
                   emptyMessage=""
                   items={historical}
                   title="历史提交（已不在当前受众）"
                 />
-              ) : null}
-            </div>
+              </div>
+            ) : null}
           </section>
         ) : null}
       </form>
@@ -721,8 +744,20 @@ export function AssignmentEditor({
               </dd>
             </div>
             <div className="flex justify-between gap-3">
-              <dt className="text-[var(--color-text-muted)]">已提交</dt>
-              <dd>{assignment?.stats.submitted_count ?? 0}</dd>
+              <dt className="text-[var(--color-text-muted)]">已提交待确认</dt>
+              <dd>
+                {assignment
+                  ? Math.max(
+                      0,
+                      assignment.stats.submitted_count -
+                        assignment.stats.completed_count,
+                    )
+                  : 0}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-[var(--color-text-muted)]">已完成</dt>
+              <dd>{assignment?.stats.completed_count ?? 0}</dd>
             </div>
             <div className="flex justify-between gap-3">
               <dt className="text-[var(--color-text-muted)]">未提交</dt>

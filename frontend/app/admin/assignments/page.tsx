@@ -46,6 +46,10 @@ export default async function AdminAssignmentsPage() {
                     {assignment.stats.submitted_count} /{" "}
                     {assignment.stats.target_count} 已提交
                   </span>
+                  <span className="border border-[var(--color-accent)] px-2 py-0.5 text-[var(--color-accent-hover)]">
+                    {assignment.stats.completed_count} /{" "}
+                    {assignment.stats.target_count} 已完成
+                  </span>
                 </div>
                 <h2 className="mt-3 text-xl font-medium">{assignment.title}</h2>
               </div>

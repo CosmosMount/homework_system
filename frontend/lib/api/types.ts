@@ -293,6 +293,7 @@ export type AssignmentAudience = {
 export type AssignmentStats = {
   target_count: number;
   submitted_count: number;
+  completed_count: number;
   unsubmitted_count: number;
   feedback_submission_count: number;
   last_submitted_at: string | null;
@@ -406,7 +407,18 @@ export type Submission = {
   assignment_id: string;
   owner_user_id: string;
   latest_version_id: string;
+  completed_version_id: string | null;
+  completed_at: string | null;
+  is_completed: boolean;
   versions: SubmissionVersion[];
+};
+
+export type SubmissionCompletion = {
+  submission_id: string;
+  latest_version_id: string;
+  completed_version_id: string | null;
+  completed_at: string | null;
+  is_completed: boolean;
 };
 
 export type SubmissionVersionCreated = {
@@ -439,6 +451,9 @@ export type AssignmentSubmissionAdminItem = {
   submission_id: string | null;
   latest_version_number: number | null;
   last_submitted_at: string | null;
+  completed_version_id: string | null;
+  completed_at: string | null;
+  is_completed: boolean;
   has_feedback: boolean;
   in_current_audience: boolean;
 };

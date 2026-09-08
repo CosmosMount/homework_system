@@ -375,7 +375,12 @@ class UserRepository:
         await self._session.execute(
             update(Submission)
             .where(Submission.owner_user_id == user.id)
-            .values(latest_version_id=None)
+            .values(
+                latest_version_id=None,
+                completed_version_id=None,
+                completed_at=None,
+                completed_by=None,
+            )
         )
 
         owned_files = list(

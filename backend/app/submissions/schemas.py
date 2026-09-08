@@ -76,7 +76,18 @@ class SubmissionResponse(BaseModel):
     assignment_id: UUID
     owner_user_id: UUID
     latest_version_id: UUID
+    completed_version_id: UUID | None
+    completed_at: datetime | None
+    is_completed: bool
     versions: list[SubmissionVersionResponse]
+
+
+class SubmissionCompletionResponse(BaseModel):
+    submission_id: UUID
+    latest_version_id: UUID
+    completed_version_id: UUID | None
+    completed_at: datetime | None
+    is_completed: bool
 
 
 class FeedbackPutRequest(BaseModel):

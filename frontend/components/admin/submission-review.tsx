@@ -15,6 +15,7 @@ import type {
   ExcellentSubmissionSummary,
   Feedback,
   Submission,
+  SubmissionCompletion,
 } from "@/lib/api/types";
 import { formatDateTime, formatFileSize } from "@/lib/format";
 
@@ -49,6 +50,11 @@ export function SubmissionReview({
       submission.versions[0],
     [selectedId, submission.versions],
   );
+  const completedVersion = submission.completed_version_id
+    ? submission.versions.find(
+        (version) => version.id === submission.completed_version_id,
+      )
+    : undefined;
 
   if (selected === undefined) {
     return <FormMessage>提交聚合中没有正式版本。</FormMessage>;
@@ -119,6 +125,39 @@ export function SubmissionReview({
       setPending(false);
     }
   }
+  async function toggleCompletion() {
+    const revoking = submission.is_completed;
+    const latestVersion = submission.versions.find(
+      (version) => version.id === submission.latest_version_id,
+    );
+    const prompt = revoking
+      ? "确认撤销当前最新版本的完成确认？"
+      : `确认已审阅并完成 v${latestVersion?.version_number ?? "最新"}？学生提交新版本后需要重新确认。`;
+    if (!window.confirm(prompt)) return;
+
+    setPending(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const completion = await csrfFetch<SubmissionCompletion>(
+        "/admin/submissions/" + submission.id + "/completion",
+        { method: revoking ? "DELETE" : "POST" },
+      );
+      setSubmission((current) => ({
+        ...current,
+        completed_version_id: completion.completed_version_id,
+        completed_at: completion.completed_at,
+        is_completed: completion.is_completed,
+      }));
+      setMessage(revoking ? "已撤销完成确认。" : "已确认当前最新版本完成。");
+      router.refresh();
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setPending(false);
+    }
+  }
+
 
   return (
     <div className="mt-8 grid gap-8 xl:grid-cols-[16rem_minmax(0,1fr)]">
@@ -164,20 +203,42 @@ export function SubmissionReview({
               <h2 className="mt-2 text-2xl font-semibold">
                 正式版本 v{selected.version_number}
               </h2>
+              <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
+                {submission.is_completed
+                  ? `最新 v${completedVersion?.version_number ?? "—"} 已由管理员确认完成 · ${submission.completed_at ? formatDateTime(submission.completed_at) : "时间未知"}`
+                  : completedVersion
+                    ? `v${completedVersion.version_number} 曾确认完成；最新版本已更新，需重新确认。`
+                    : "当前最新版本尚未确认完成。"}
+              </p>
             </div>
-            <button
-              className={
-                "min-h-11 border px-4 text-sm " +
-                (excellentIds.has(selected.id)
-                  ? "border-[var(--color-danger)] text-[var(--color-danger)]"
-                  : "border-[var(--color-info)] text-[var(--color-info)]")
-              }
-              disabled={pending}
-              onClick={toggleExcellent}
-              type="button"
-            >
-              {excellentIds.has(selected.id) ? "取消优秀标记" : "标记为优秀"}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className={
+                  "min-h-11 border px-4 text-sm " +
+                  (submission.is_completed
+                    ? "border-[var(--color-danger)] text-[var(--color-danger)]"
+                    : "border-[var(--color-accent)] bg-[var(--color-accent)] text-white")
+                }
+                disabled={pending}
+                onClick={toggleCompletion}
+                type="button"
+              >
+                {submission.is_completed ? "撤销完成确认" : "确认最新版本完成"}
+              </button>
+              <button
+                className={
+                  "min-h-11 border px-4 text-sm " +
+                  (excellentIds.has(selected.id)
+                    ? "border-[var(--color-danger)] text-[var(--color-danger)]"
+                    : "border-[var(--color-info)] text-[var(--color-info)]")
+                }
+                disabled={pending}
+                onClick={toggleExcellent}
+                type="button"
+              >
+                {excellentIds.has(selected.id) ? "取消优秀标记" : "标记为优秀"}
+              </button>
+            </div>
           </div>
 
           {selected.text_html ? (

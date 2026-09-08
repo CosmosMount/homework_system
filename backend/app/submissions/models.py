@@ -36,6 +36,20 @@ class Submission(Base):
             initially="DEFERRED",
             use_alter=True,
         ),
+        ForeignKeyConstraint(
+            ["id", "completed_version_id"],
+            ["submission_versions.submission_id", "submission_versions.id"],
+            name="fk_submissions_completed_version_same_submission",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+            use_alter=True,
+        ),
+        CheckConstraint(
+            "(completed_version_id IS NULL AND completed_at IS NULL) OR "
+            "(completed_version_id IS NOT NULL AND completed_at IS NOT NULL)",
+            name="completion_state_consistent",
+        ),
         Index(
             "uq_submissions_assignment_owner",
             "assignment_id",
@@ -67,6 +81,19 @@ class Submission(Base):
     )
     latest_version_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
+        nullable=True,
+    )
+    completed_version_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=True,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    completed_by: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

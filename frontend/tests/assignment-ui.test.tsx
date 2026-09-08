@@ -46,6 +46,9 @@ function submission(): Submission {
     assignment_id: "assignment-1",
     owner_user_id: "student-id",
     latest_version_id: "version-1",
+    completed_version_id: null,
+    completed_at: null,
+    is_completed: false,
     versions: [
       {
         id: "version-1",

@@ -73,6 +73,7 @@ class AssignmentPatchRequest(AssignmentCreateRequest):
 class AssignmentStatsResponse(BaseModel):
     target_count: int
     submitted_count: int
+    completed_count: int
     unsubmitted_count: int
     feedback_submission_count: int
     last_submitted_at: datetime | None
@@ -203,6 +204,9 @@ class AssignmentSubmissionAdminItem(BaseModel):
     submission_id: UUID | None
     latest_version_number: int | None
     last_submitted_at: datetime | None
+    completed_version_id: UUID | None
+    completed_at: datetime | None
+    is_completed: bool
     has_feedback: bool
     in_current_audience: bool
 

@@ -13,7 +13,7 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260908_0022"]
+    assert script.get_heads() == ["20260908_0023"]
 
 
 def test_team_profiles_invitations_migration_is_reversible() -> None:
@@ -62,6 +62,28 @@ def test_team_participation_settings_migration_is_reversible() -> None:
     assert "VALUES (true, false)" in source
     assert 'CheckConstraint("id", name="singleton_id_true")' in source
     assert 'op.drop_table("team_settings")' in source
+
+
+def test_assignment_submission_completion_migration_is_reversible() -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+    migration_path = (
+        backend_root
+        / "migrations"
+        / "versions"
+        / "20260908_0023_assignment_submission_completion.py"
+    )
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260908_0023"' in source
+    assert 'down_revision: str | None = "20260908_0022"' in source
+    assert '"completed_version_id"' in source
+    assert '"completed_at"' in source
+    assert '"completed_by"' in source
+    assert "fk_submissions_completed_version_same_submission" in source
+    assert "ck_submissions_completion_state_consistent" in source
+    assert source.index("op.drop_constraint") < source.index(
+        'op.drop_column("submissions", "completed_version_id")'
+    )
 
 
 def test_admin_content_deleted_visibility_migration_has_safe_contract() -> None:
