@@ -13,7 +13,7 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260907_0021"]
+    assert script.get_heads() == ["20260908_0022"]
 
 
 def test_team_profiles_invitations_migration_is_reversible() -> None:
@@ -35,6 +35,7 @@ def test_team_profiles_invitations_migration_is_reversible() -> None:
 
 
 def test_persistent_login_migration_is_reversible_and_follows_account_deletion() -> None:
+
     backend_root = Path(__file__).resolve().parents[1]
     migration_path = (
         backend_root / "migrations" / "versions" / "20260830_0016_persistent_login_ip_binding.py"
@@ -45,6 +46,22 @@ def test_persistent_login_migration_is_reversible_and_follows_account_deletion()
     assert 'down_revision: str | None = "20260829_0015"' in source
     assert 'sa.Column("ip_binding_hash", sa.String(length=64), nullable=True)' in source
     assert 'op.drop_column("sessions", "ip_binding_hash")' in source
+
+
+def test_team_participation_settings_migration_is_reversible() -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+    migration_path = (
+        backend_root / "migrations" / "versions" / "20260908_0022_team_participation_settings.py"
+    )
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260908_0022"' in source
+    assert 'down_revision: str | None = "20260907_0021"' in source
+    assert '"team_settings"' in source
+    assert '"is_team_open"' in source
+    assert "VALUES (true, false)" in source
+    assert 'CheckConstraint("id", name="singleton_id_true")' in source
+    assert 'op.drop_table("team_settings")' in source
 
 
 def test_admin_content_deleted_visibility_migration_has_safe_contract() -> None:

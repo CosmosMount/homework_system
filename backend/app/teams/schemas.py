@@ -45,6 +45,11 @@ class TeamInvitationCreateRequest(BaseModel):
     invitee_user_id: UUID
 
 
+class TeamSettingsUpdateRequest(BaseModel):
+    is_team_open: bool
+    revision: int = Field(ge=1)
+
+
 class AdminReasonRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=2_000)
 
@@ -128,11 +133,24 @@ class TeamProfileResponse(BaseModel):
     invitation_pending: bool = False
 
 
+class TeamProfileDirectionResponse(BaseModel):
+    id: UUID
+    name: str
+
+
 class TeamProfilePage(BaseModel):
     items: list[TeamProfileResponse]
     total: int
     page: int
     page_size: int
+    team_open: bool
+    directions: list[TeamProfileDirectionResponse]
+
+
+class TeamSettingsResponse(BaseModel):
+    is_team_open: bool
+    updated_at: datetime
+    revision: int
 
 
 class TeamInvitationResponse(BaseModel):

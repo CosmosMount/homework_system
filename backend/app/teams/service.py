@@ -18,7 +18,7 @@ from app.auth.service import AuthenticatedContext, context_effective_role, conte
 from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.core.identifiers import uuid7
-from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile
+from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile, TeamSettings
 from app.teams.repository import TeamRepository
 from app.teams.schemas import (
     AdminCaptainTransferRequest,
@@ -37,10 +37,13 @@ from app.teams.schemas import (
     TeamInvitationListResponse,
     TeamInvitationResponse,
     TeamMemberResponse,
+    TeamProfileDirectionResponse,
     TeamProfilePage,
     TeamProfileResponse,
     TeamProfileUpsertRequest,
     TeamResponse,
+    TeamSettingsResponse,
+    TeamSettingsUpdateRequest,
     TeamStatus,
 )
 from app.users.repository import UserRepository
@@ -66,6 +69,7 @@ class TeamService:
         self._session = session
         self._settings = settings
         self._teams = TeamRepository(session)
+        self._team_settings = TeamRepository(session)
         self._users = UserRepository(session)
         self._auth = AuthRepository(session)
         self._audit = AuditRepository(session)
@@ -138,6 +142,27 @@ class TeamService:
             )
         )
 
+    async def _team_settings_record(self, *, for_update: bool = False) -> TeamSettings:
+        settings = await self._team_settings.team_settings(for_update=for_update)
+        if settings is None:
+            raise RuntimeError("team_settings singleton is missing")
+        return settings
+
+    async def _require_team_open(self) -> None:
+        if not (await self._team_settings_record()).is_team_open:
+            raise self._conflict(
+                "TEAM_REGISTRATION_CLOSED",
+                "管理员暂未开放组队，请先完善个人简介。",
+            )
+
+    @staticmethod
+    def _settings_response(settings: TeamSettings) -> TeamSettingsResponse:
+        return TeamSettingsResponse(
+            is_team_open=settings.is_team_open,
+            updated_at=settings.updated_at,
+            revision=settings.revision,
+        )
+
     async def _team_response(self, team: Team, *, actor_user_id: UUID) -> TeamResponse:
         members = await self._teams.current_members(team.id)
         return TeamResponse(
@@ -165,6 +190,10 @@ class TeamService:
             can_manage=team.status == "forming" and team.captain_user_id == actor_user_id,
         )
 
+    async def team_settings(self, *, context: AuthenticatedContext) -> TeamSettingsResponse:
+        self._require_student(context)
+        return self._settings_response(await self._team_settings_record())
+
     async def my_profile(self, *, context: AuthenticatedContext) -> TeamProfileResponse | None:
         self._require_student(context)
         profile = await self._teams.profile_for_user(context.user.id)
@@ -188,14 +217,22 @@ class TeamService:
         *,
         context: AuthenticatedContext,
         query: str | None,
+        direction_id: UUID | None,
         page: int,
         page_size: int,
     ) -> TeamProfilePage:
         self._require_student(context)
+        settings = await self._team_settings_record()
         records, total = await self._teams.list_profiles(
-            query=query, page=page, page_size=page_size
+            query=query,
+            direction_id=direction_id,
+            page=page,
+            page_size=page_size,
         )
-        actor_team = await self._teams.team_for_user(context.user.id)
+        directions = await self._teams.list_active_directions()
+        actor_team = (
+            await self._teams.team_for_user(context.user.id) if settings.is_team_open else None
+        )
         can_send = False
         pending_invitees: set[UUID] = set()
         if actor_team is not None:
@@ -211,18 +248,24 @@ class TeamService:
                     updated_at=record.profile.updated_at,
                     revision=record.profile.revision,
                     can_invite=(
-                        can_send
+                        settings.is_team_open
+                        and can_send
                         and record.user.id != context.user.id
                         and record.team_id is None
                         and record.user.id not in pending_invitees
                     ),
-                    invitation_pending=record.user.id in pending_invitees,
+                    invitation_pending=settings.is_team_open and record.user.id in pending_invitees,
                 )
                 for record in records
             ],
             total=total,
             page=page,
             page_size=page_size,
+            team_open=settings.is_team_open,
+            directions=[
+                TeamProfileDirectionResponse(id=direction.id, name=direction.name)
+                for direction in directions
+            ],
         )
 
     async def upsert_profile(
@@ -283,6 +326,8 @@ class TeamService:
 
     async def invitations(self, *, context: AuthenticatedContext) -> TeamInvitationListResponse:
         self._require_student(context)
+        if not (await self._team_settings_record()).is_team_open:
+            return TeamInvitationListResponse(items=[])
         if await self._teams.team_for_user(context.user.id) is not None:
             return TeamInvitationListResponse(items=[])
         records = await self._teams.received_pending_invitations(context.user.id)
@@ -302,6 +347,7 @@ class TeamService:
         audit_context: TeamAuditContext,
     ) -> TeamInvitationResponse:
         self._require_student(audit_context.actor)
+        await self._require_team_open()
         team = await self._teams.team_for_user(audit_context.actor.user.id, for_update=True)
         if team is None:
             await self._session.rollback()
@@ -379,6 +425,7 @@ class TeamService:
         audit_context: TeamAuditContext,
     ) -> TeamResponse | OperationResponse:
         self._require_student(audit_context.actor)
+        await self._require_team_open()
         invitation = await self._teams.invitation_for_invitee(
             invitation_id, audit_context.actor.user.id, for_update=True
         )
@@ -467,6 +514,7 @@ class TeamService:
         page_size: int,
     ) -> TeamDirectoryResponse:
         self._require_student(context)
+        await self._require_team_open()
         records, total = await self._teams.list_public_teams(
             query=query,
             page=page,
@@ -508,6 +556,7 @@ class TeamService:
         audit_context: TeamAuditContext,
     ) -> TeamCreatedResponse:
         self._require_student(audit_context.actor)
+        await self._require_team_open()
         if (
             await self._teams.team_for_user(
                 audit_context.actor.user.id,
@@ -606,6 +655,7 @@ class TeamService:
         audit_context: TeamAuditContext,
     ) -> TeamResponse:
         self._require_student(audit_context.actor)
+        await self._require_team_open()
         now = self._clock()
         await self._record_invite_attempt(
             user_id=audit_context.actor.user.id,
@@ -665,6 +715,7 @@ class TeamService:
 
     async def auto_assign(self, *, audit_context: TeamAuditContext) -> AutoAssignResponse:
         self._require_student(audit_context.actor)
+        await self._require_team_open()
         if (
             await self._teams.team_for_user(
                 audit_context.actor.user.id,
@@ -765,6 +816,7 @@ class TeamService:
         audit_context: TeamAuditContext,
     ) -> InviteCodeRotatedResponse:
         self._require_student(audit_context.actor)
+        await self._require_team_open()
         team = await self._mutable_team_for_captain(team_id, audit_context.actor.user.id)
         now = self._clock()
         invite_code = self._new_invite_code()
@@ -795,6 +847,7 @@ class TeamService:
         audit_context: TeamAuditContext,
     ) -> OperationResponse:
         self._require_student(audit_context.actor)
+        await self._require_team_open()
         team = await self._teams.get_team(team_id, for_update=True)
         if team is None or team.status != "forming":
             await self._session.rollback()
@@ -841,6 +894,7 @@ class TeamService:
         audit_context: TeamAuditContext,
     ) -> TeamResponse:
         self._require_student(audit_context.actor)
+        await self._require_team_open()
         team = await self._mutable_team_for_captain(team_id, audit_context.actor.user.id)
         if (
             await self._teams.current_member(
@@ -877,6 +931,7 @@ class TeamService:
         audit_context: TeamAuditContext,
     ) -> OperationResponse:
         self._require_student(audit_context.actor)
+        await self._require_team_open()
         team = await self._mutable_team_for_captain(team_id, audit_context.actor.user.id)
         members = await self._teams.current_members_for_update(team.id)
         if len(members) > 1:
@@ -931,6 +986,39 @@ class TeamService:
             page=page,
             page_size=page_size,
         )
+
+    async def admin_team_settings(self, *, context: AuthenticatedContext) -> TeamSettingsResponse:
+        self._require_admin(context)
+        return self._settings_response(await self._team_settings_record())
+
+    async def update_admin_team_settings(
+        self,
+        payload: TeamSettingsUpdateRequest,
+        *,
+        audit_context: TeamAuditContext,
+    ) -> TeamSettingsResponse:
+        self._require_admin(audit_context.actor)
+        settings = await self._team_settings_record(for_update=True)
+        if payload.revision != settings.revision:
+            await self._session.rollback()
+            raise self._conflict("REVISION_CONFLICT", "组队开放状态已发生变化，请刷新后重试。")
+        if payload.is_team_open == settings.is_team_open:
+            await self._session.rollback()
+            return self._settings_response(settings)
+        now = self._clock()
+        settings.is_team_open = payload.is_team_open
+        settings.updated_at = now
+        settings.revision += 1
+        self._add_audit(
+            audit_context,
+            action="team.settings_update",
+            target_id=audit_context.actor.user.id,
+            target_type="team_settings",
+            change_summary={"is_team_open": settings.is_team_open},
+            now=now,
+        )
+        await self._session.commit()
+        return self._settings_response(settings)
 
     async def admin_team(
         self,

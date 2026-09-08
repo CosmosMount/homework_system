@@ -6,7 +6,7 @@ from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
-from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile
+from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile, TeamSettings
 from app.users.models import Direction, User
 
 
@@ -54,6 +54,12 @@ class TeamRepository:
 
     def add_invitation(self, invitation: TeamInvitation) -> None:
         self._session.add(invitation)
+
+    async def team_settings(self, *, for_update: bool = False) -> TeamSettings | None:
+        statement = select(TeamSettings).where(TeamSettings.id.is_(True))
+        if for_update:
+            statement = statement.with_for_update()
+        return await self._session.scalar(statement)
 
     async def delete_team(self, team: Team) -> None:
         await self._session.delete(team)
@@ -240,7 +246,12 @@ class TeamRepository:
         )
 
     async def list_profiles(
-        self, *, query: str | None, page: int, page_size: int
+        self,
+        *,
+        query: str | None,
+        direction_id: UUID | None,
+        page: int,
+        page_size: int,
     ) -> tuple[list[TeamProfileRecord], int]:
         memberships = self._current_memberships()
         filters = [User.role == "student", User.status == "active"]
@@ -253,6 +264,8 @@ class TeamRepository:
                     Direction.name.ilike(pattern),
                 )
             )
+        if direction_id is not None:
+            filters.append(User.direction_id == direction_id)
         base = (
             select(TeamProfile)
             .join(User, User.id == TeamProfile.user_id)
@@ -278,6 +291,17 @@ class TeamRepository:
             TeamProfileRecord(profile=row[0], user=row[1], direction_name=row[2], team_id=row[3])
             for row in rows
         ], total
+
+    async def list_active_directions(self) -> list[Direction]:
+        return list(
+            (
+                await self._session.scalars(
+                    select(Direction)
+                    .where(Direction.is_active.is_(True))
+                    .order_by(Direction.name, Direction.code)
+                )
+            ).all()
+        )
 
     async def pending_invitee_ids(self, team_id: UUID) -> set[UUID]:
         return set(

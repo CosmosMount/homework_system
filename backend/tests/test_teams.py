@@ -14,12 +14,13 @@ from app.auth.repository import AuthRepository
 from app.auth.service import AuthenticatedContext
 from app.core.config import Settings
 from app.core.errors import ApplicationError
-from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile
+from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile, TeamSettings
 from app.teams.repository import TeamListRecord, TeamProfileRecord, TeamRepository
 from app.teams.schemas import (
     TeamInvitationCreateRequest,
     TeamProfileUpsertRequest,
     TeamResponse,
+    TeamSettingsUpdateRequest,
 )
 from app.teams.service import TeamAuditContext, TeamService
 from app.users.models import User
@@ -75,6 +76,16 @@ def make_team(
     )
 
 
+def make_team_settings(now: datetime, *, is_team_open: bool) -> TeamSettings:
+    return TeamSettings(
+        id=True,
+        is_team_open=is_team_open,
+        created_at=now,
+        updated_at=now,
+        revision=1,
+    )
+
+
 def make_service(now: datetime) -> tuple[TeamService, AsyncMock]:
     session = AsyncMock(spec=AsyncSession)
     service = TeamService(
@@ -83,6 +94,12 @@ def make_service(now: datetime) -> tuple[TeamService, AsyncMock]:
         clock=lambda: now,
     )
     service._audit = cast(AuditRepository, SimpleNamespace(add=Mock()))
+    service._team_settings = cast(
+        TeamRepository,
+        SimpleNamespace(
+            team_settings=AsyncMock(return_value=make_team_settings(now, is_team_open=True))
+        ),
+    )
     return service, session
 
 
@@ -108,6 +125,71 @@ def test_team_models_have_no_competition_dependency_and_enforce_global_membershi
     assert str(current_user_index.dialect_options["postgresql"]["where"])
     team_indexes = {index.name for index in team_table.indexes}
     assert "uq_teams_active_name" in team_indexes
+
+
+@pytest.mark.asyncio
+async def test_closed_team_enrollment_blocks_mutation_but_not_profile_editing() -> None:
+    now = datetime.now(UTC)
+    audit_context = make_audit_context()
+    service, session = make_service(now)
+    service._team_settings = cast(
+        TeamRepository,
+        SimpleNamespace(
+            team_settings=AsyncMock(return_value=make_team_settings(now, is_team_open=False))
+        ),
+    )
+    profiles: list[TeamProfile] = []
+
+    async def profile_for_user(_user_id: object, *, for_update: bool = False) -> TeamProfile | None:
+        del for_update
+        return profiles[0] if profiles else None
+
+    def add_profile(profile: TeamProfile) -> None:
+        profiles.append(profile)
+
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            profile_for_user=profile_for_user,
+            add_profile=add_profile,
+        ),
+    )
+
+    profile = await service.upsert_profile(
+        TeamProfileUpsertRequest(introduction="仍可完善简介"),
+        audit_context=audit_context,
+    )
+    assert profile.introduction == "仍可完善简介"
+
+    with pytest.raises(ApplicationError) as captured:
+        await service.create_team("尚未开放", audit_context=audit_context)
+
+    assert captured.value.code == "TEAM_REGISTRATION_CLOSED"
+    assert session.commit.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_can_update_team_opening_with_revision_and_audit() -> None:
+    now = datetime.now(UTC)
+    audit_context = make_audit_context(role="admin")
+    service, session = make_service(now)
+    settings = make_team_settings(now, is_team_open=False)
+    service._team_settings = cast(
+        TeamRepository,
+        SimpleNamespace(team_settings=AsyncMock(return_value=settings)),
+    )
+
+    result = await service.update_admin_team_settings(
+        TeamSettingsUpdateRequest(is_team_open=True, revision=1),
+        audit_context=audit_context,
+    )
+
+    assert result.is_team_open is True
+    assert result.revision == 2
+    audit = cast(Mock, service._audit.add).call_args.args[0]
+    assert audit.action == "team.settings_update"
+    assert audit.change_summary == {"is_team_open": True}
+    session.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -269,6 +351,14 @@ async def test_auto_assign_rolls_back_global_membership_conflict() -> None:
 def test_team_profile_and_invitation_models_enforce_privacy_boundaries() -> None:
     profile_table = cast(Table, TeamProfile.__table__)
     invitation_table = cast(Table, TeamInvitation.__table__)
+    settings_table = cast(Table, TeamSettings.__table__)
+    assert set(settings_table.columns.keys()) == {
+        "id",
+        "is_team_open",
+        "created_at",
+        "updated_at",
+        "revision",
+    }
 
     assert set(profile_table.columns.keys()) == {
         "user_id",
@@ -354,12 +444,19 @@ async def test_profile_directory_allows_any_team_member_to_invite_available_stud
                 )
             ),
             team_for_user=AsyncMock(return_value=team),
+            list_active_directions=AsyncMock(return_value=[]),
             member_count=AsyncMock(return_value=2),
             pending_invitee_ids=AsyncMock(return_value=set()),
         ),
     )
 
-    result = await service.profiles(context=context, query=None, page=1, page_size=20)
+    result = await service.profiles(
+        context=context,
+        query=None,
+        direction_id=None,
+        page=1,
+        page_size=20,
+    )
 
     assert result.items[0].can_invite is True
     assert result.items[0].direction_name == "机械组"

@@ -32,6 +32,8 @@ from app.teams.schemas import (
     TeamProfileResponse,
     TeamProfileUpsertRequest,
     TeamResponse,
+    TeamSettingsResponse,
+    TeamSettingsUpdateRequest,
 )
 from app.teams.service import TeamAuditContext, TeamService
 
@@ -57,15 +59,30 @@ def _audit_context(
     )
 
 
+@router.get("/team-settings", response_model=TeamSettingsResponse)
+async def get_team_settings(
+    service: TeamServiceDependency,
+    context: AuthenticatedContextDependency,
+) -> TeamSettingsResponse:
+    return await service.team_settings(context=context)
+
+
 @router.get("/team-profiles", response_model=TeamProfilePage)
 async def list_team_profiles(
     service: TeamServiceDependency,
     context: AuthenticatedContextDependency,
     query: Annotated[str | None, Query(max_length=120)] = None,
     page: Annotated[int, Query(ge=1)] = 1,
+    direction_id: UUID | None = None,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> TeamProfilePage:
-    return await service.profiles(context=context, query=query, page=page, page_size=page_size)
+    return await service.profiles(
+        context=context,
+        query=query,
+        direction_id=direction_id,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/team-profiles/me", response_model=TeamProfileResponse | None)
@@ -275,6 +292,28 @@ async def list_admin_teams(
         query=query,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get("/admin/team-settings", response_model=TeamSettingsResponse)
+async def get_admin_team_settings(
+    service: TeamServiceDependency,
+    admin: AdminContextDependency,
+) -> TeamSettingsResponse:
+    return await service.admin_team_settings(context=admin)
+
+
+@router.patch("/admin/team-settings", response_model=TeamSettingsResponse)
+async def update_admin_team_settings(
+    payload: TeamSettingsUpdateRequest,
+    request: Request,
+    service: TeamServiceDependency,
+    admin: AdminContextDependency,
+    _csrf: CsrfDependency,
+) -> TeamSettingsResponse:
+    return await service.update_admin_team_settings(
+        payload,
+        audit_context=_audit_context(request, admin),
     )
 
 

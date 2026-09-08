@@ -163,3 +163,23 @@ class TeamInvitation(TimestampRevisionMixin, Base):
         String(16), nullable=False, default="pending", server_default="pending"
     )
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TeamSettings(TimestampRevisionMixin, Base):
+    """管理员维护的全局学生组队开放状态。"""
+
+    __tablename__ = "team_settings"
+    __table_args__ = (CheckConstraint("id", name="singleton_id_true"),)
+
+    id: Mapped[bool] = mapped_column(
+        Boolean,
+        primary_key=True,
+        default=True,
+        server_default=text("true"),
+    )
+    is_team_open: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
