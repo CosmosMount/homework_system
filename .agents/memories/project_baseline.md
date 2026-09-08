@@ -23,7 +23,7 @@
 
 2026-09-08 当前生产版本为 `team-participation-controls-20260908`：Backend/Worker `sha256:530b82af532a…`、Frontend `sha256:01607e537a88…`，六服务 healthy、重启 0，Alembic 为 `20260908_0022 (head)` 且无模型漂移。管理员可决定是否向学生开放组队；当前默认关闭，简介填写、浏览、搜索与按技术组筛选继续开放。运行 OpenAPI 为 107 条路径。
 
-本次新备份 `pnx-backup-20260908T024438Z-daily` 已从空 PostgreSQL/MinIO 卷恢复，3,259 个清单对象的数据库引用缺失、大小和 SHA-256 差异均为 0，RPO 109 秒、RTO 162 秒；恢复副本完成 `0021 → 0022` 并通过 `alembic check`。生产 PostgreSQL/MinIO 容器及数据卷未重建；部署验收未使用真实登录态，也未创建简介、邀请、队伍或其他业务写入。
+当前备份链已收敛为 `pnx-backup-20260905T163853Z-weekly` 周基线与 `pnx-backup-20260908T032301Z-daily` 最新每日增量。后者已从空 PostgreSQL/MinIO 卷恢复 1,384 个对象，缺失、大小、SHA-256 与未引用差异均为 0，RPO 61 秒、RTO 161 秒。生产已删除 1,875 个超过 7 天且无数据库引用的历史知识库对象，释放 1,336,875,776 字节；生产 PostgreSQL/MinIO 容器及数据卷未重建。
 
 当前知识库发布候选通过 29 项后端知识库定向测试、完整后端 213 项测试、前端 20 个文件/76 项测试、Ruff、格式检查、严格 Mypy、ESLint、严格 TypeScript 和 Next.js 生产构建；此前容器构建、依赖审计、三浏览器、秘密扫描和镜像安全门继续有效。
 
