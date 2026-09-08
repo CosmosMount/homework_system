@@ -1,3 +1,23 @@
+## 组队开放控制增补（2026-09-08）
+
+### 背景、范围与决策
+
+- 管理员需要在不影响简介准备期的前提下，单独决定何时向学生开放组队。采用数据库单例 `team_settings`，而非环境变量；默认 `is_team_open=false`，管理员可在队伍管理页切换并以 revision 防止覆盖。
+- 关闭时，学生仍可创建/更新个人简介、查看全部已发布简介、搜索并按启用技术组筛选；不显示邀请、邀请响应、建队、邀请码加入、自动分配、队伍目录或成员管理操作。
+- 后端将所有学生组队写入和公开队伍目录强制拒绝为 `409 TEAM_REGISTRATION_CLOSED`；管理员纠错不受开关影响，`/teams/me` 保持只读。关闭时待处理邀请列表为空，避免页面误导。
+
+### 实施、验证与回滚
+
+1. 新迁移 `20260908_0022` 创建并写入单例设置，downgrade 只删除该表。
+2. `/team-profiles` 支持 `direction_id`，同响应提供启用技术组选项和 `team_open`；新增学生只读 `/team-settings` 与管理员读写 `/admin/team-settings`。
+3. 学生/管理员界面分别显示关闭提示与开关；补齐服务、迁移、前端筛选/关闭状态测试。
+4. 已通过后端定向 30 项、Ruff/格式、前端定向 10 项、ESLint 与严格 TypeScript；完整回归、隔离 PostgreSQL 迁移演练和生产部署留待后续发布流程。
+
+### 分步提交
+
+- `b947e1d feat: add team participation settings`
+- `6c0a7d4 feat: add team availability controls to frontend`
+
 # 校内赛个人简介与邀请组队计划
 
 ## 背景与必要性

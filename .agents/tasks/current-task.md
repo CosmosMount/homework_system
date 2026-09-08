@@ -1,6 +1,8 @@
 # 当前任务
 
 ## 当前状态
+2026-09-08 “管理员控制学生组队开放、简介按技术组筛选”已完成源码与分步提交，正式计划仍为 `.agents/plans/plan_team_profiles_invitations.md`。`20260908_0022` 默认关闭学生组队；关闭时个人简介填写、浏览、搜索和技术组筛选继续可用，学生组队写接口由后端强制阻断。管理员可在 `/admin/competitions` 以 CSRF 与 revision 保护的唯一开关更新状态，管理员纠错不受影响。后端定向 30 项、Ruff/格式，前端定向 10 项、ESLint、严格 TypeScript 均已通过；尚未部署。
+
 
 2026-09-08 “校内赛组队个人简介、站内邀请与后期队长变更”已完成源码、迁移、测试、中文权威文档和生产部署，完成记录已移入 `.agents/tasks/completed.md`。正式计划为 `.agents/plans/plan_team_profiles_invitations.md`，ADR-064 已接受；后端完整 413 项、前端 26 文件/152 项及全部静态/构建门通过。新加密双存储备份已完成空卷恢复和 3,260 对象零差异对账，恢复副本与生产均成功执行 `0020 → 0021` 且无模型漂移。当前固定标签为 `team-profiles-invitations-20260908`，六服务 healthy、重启 0，运行 OpenAPI、匿名权限、业务聚合和稳定期日志均通过；PostgreSQL/MinIO 容器与数据卷未重建，验收未创建真实简介或邀请。
 

@@ -245,6 +245,11 @@
 
 | 方法与路径 | 请求/行为 | 需求 |
 | --- | --- | --- |
+| GET /team-settings | active student 读取当前 `is_team_open`、更新时间和 revision | TEAM-014 |
+| GET /team-profiles | 支持 `direction_id`；返回简介分页、启用技术组选项和 `team_open` | TEAM-010、TEAM-014 |
+| GET /admin/team-settings | 真实管理员读取唯一学生组队开关 | TEAM-014 |
+| PATCH /admin/team-settings | is_team_open、revision；同源、CSRF、乐观锁与脱敏审计 | TEAM-014 |
+
 | GET /teams | query、page、page_size；返回 forming 队伍的名称、状态、当前/最大人数和 can_join，不返回成员或邀请码 | TEAM-006 |
 | GET /teams/me | 返回本人当前队伍、成员、成员技术方向/已提交简介和 can_manage；无队伍返回 null | TEAM-003、TEAM-006、TEAM-010、TEAM-013 |
 | GET /team-profiles | query、page、page_size；返回 active student 自愿发布的姓名、技术方向、纯文本简介、更新时间和当前账号邀请状态 | TEAM-010～TEAM-011 |

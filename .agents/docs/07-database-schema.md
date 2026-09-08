@@ -221,6 +221,12 @@ erDiagram
 - `team_id` 和 `user_id` 分别使用 `CASCADE` 外键；管理员补录必须同时保存非空 `admin_reason`，普通加入不得保存原因。
 
 ### `team_profiles`
+### `team_settings`
+
+固定单例行：`id=true`、`is_team_open`、`created_at`、`updated_at`、`revision`。`id` 检查约束确保单行语义，迁移默认插入关闭状态。
+
+- 不存储学生个人资料或组队内容；downgrade 只删除该设置表，不影响当前队伍、简介、邀请或历史赛事表。
+
 
 字段：`user_id`、`introduction`、`created_at`、`updated_at`、`revision`。
 
