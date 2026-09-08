@@ -1004,3 +1004,22 @@
 - 独立项目 `pnx-restore-object-cleanup-20260908` 从全新 PostgreSQL/MinIO 卷恢复成功，RPO 61 秒、RTO 161 秒，1,384 个对象全部恢复且未引用对象为 0；隔离容器、网络、卷和临时环境文件随后删除。
 - 备份目录最终只保留 `pnx-backup-20260905T163853Z-weekly` 及上述最新每日增量。已删除 2026-09-06、09-07、清理前 09-08 三套每日备份和三组 Pytest 伪备份；这些旧时间点副本不再可直接恢复，保留链仍通过外层校验和空卷恢复。
 - 生产六服务持续 healthy，PostgreSQL/MinIO 容器与数据卷未重建；操作没有修改数据库行、调用业务接口、触发邮件或飞书同步。
+
+## 2026-09-08 作业提交完成确认与三栏总览部署
+
+### 候选、备份恢复与回滚
+
+- 源码候选由 `cb551f5`、`25ff1aa` 与发布门补充提交 `f145ec8` 组成。完整质量门为后端 422 项 Pytest、Ruff、180 文件格式和 155 文件严格 Mypy，前端 26 文件/156 项 Vitest、ESLint、严格 TypeScript 与 Next.js 16.3.2 生产构建；离线升降级 SQL 有效。
+- 固定标签 `assignment-completion-20260908` 使用无缓存构建：Backend/Worker 为 `sha256:41e4bf16bb57eceff8a0a2e9817b5c9bde08a5e5d02ccb47a8dfe85a6bd8a022`，Frontend 为 `sha256:80dc5b64e94e4fceefc162bcaeb3b45073f6bfab51f7e231248061d914c3d423`。两者均以 `appuser` 运行，并在无网络、只读根文件系统、去 capabilities 容器中通过迁移 head、OpenAPI 和前端产物检查。
+- 发布前 OpenPGP 每日增量备份 `pnx-backup-20260908T045305Z-daily` 为 46,440,942 字节、数据库 dump 29,476,230 字节，对象库存 1,384 个/5,443,720,898 字节；SHA-256 为 `2b0c66b4b782d666ea3f1caafcf917babb9f942f42179d985957f9ebb8b93ea1`，归档与元数据权限均为 0600。
+- 备份在全新 `pnx-restore-assignment-final-20260908` PostgreSQL/MinIO 卷恢复成功，RPO 1,331 秒、RTO 157 秒；1,384 个对象的缺失、大小、SHA-256 与未引用差异均为 0。此前 `pnx-restore-assignment-completion-20260908` 恢复副本已用候选镜像完成 `0022 → 0023 → 0022 → 0023`、`alembic check` 和实际约束名检查；两组隔离容器、网络、卷及临时环境文件均已精确清理。
+- 回滚标签 `assignment-completion-rollback-20260908` 指向部署前 Backend/Worker `sha256:530b82af532a31031e8fe2ed1bda8a84976e41d595df143498fd50f84c45dd3f` 与 Frontend `sha256:01607e537a883661da2a572e8714b36d2d392e17145d9a424afcf246dcdf0cb6`。旧应用不理解完成状态，回滚应用前必须评估新写入并优先前滚修复；生产未执行降级。
+
+### 迁移、两阶段替换与验收
+
+- 手工发布记录标识为 `pnx-release-20260908T050351Z`，`.env` 已固定 `APP_IMAGE_TAG=assignment-completion-20260908`。生产只执行一次 `20260908_0022 → 20260908_0023`，检查约束 `ck_submissions_completion_state_consistent` 与同提交复合外键名称正确，`alembic check` 无待生成操作。
+- 先替换 Backend/Worker 并完成健康、运行 OpenAPI、新端点匿名权限和数据库约束门，再替换 Frontend/Nginx。最终 Backend、Worker、Frontend、Nginx 容器分别为 `41c039f90efe…`、`d3ded30f49b1…`、`0df2c6872bdc…`、`bda2b5f14706…`；PostgreSQL/MinIO 容器继续为 `bfa750f66ab0…`、`331150f34f37…`，数据卷仍为 `pnx-training_postgres_data` 与 `pnx-training_minio_data`。
+- 六服务持续 healthy、RestartCount 0；Backend live/ready、Worker 均为 200，`/admin/assignments` 匿名为 307，管理作业 API 与完成确认 POST/DELETE 匿名均为 401。运行 OpenAPI 为 108 条路径，完成确认路径同时暴露 POST/DELETE；Frontend 运行产物包含确认按钮和三栏文案。
+- 发布前后用户、作业、作业受众、提交、版本、文件和 Outbox 聚合均为 `196/3/348/48/56/173/958`；上线后已完成提交与完成审计均为 0，当前受众聚合为已提交待确认 40、已完成 0、未提交 308。对象对账仍为 1,384 个有效对象，缺失、大小、SHA-256 和未引用差异均为 0。
+- 发布窗口与稳定期 Backend、Worker、Frontend、Nginx 的 ERROR/CRITICAL/FATAL、异常和 HTTP 5xx 精确计数均为 0。验收未携带管理员 Session、Cookie 或 CSRF，未调用真实确认/撤销、提交、上传、删除、邮件或飞书同步写接口。
+- 当前仍为 `APP_ENV=development` 的校内 HTTP Compose，仅 Nginx 映射主机 5000，并非 TLS production Compose。新加密归档与恢复私钥材料仍同机位于 `/tmp`，必须迁移到受控异机介质并分离保存；本次部署没有扩大该既有边界。
