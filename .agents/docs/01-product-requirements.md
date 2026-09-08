@@ -55,7 +55,7 @@ stateDiagram-v2
 - **HW-002**：作业受众规则与通知一致，可面向全部学生或已维护方向及其交集；未设置方向的学生只接收全体作业。发布事务生成初始受众快照；后续账号首次激活为普通学生时，只把激活时仍开放且按当时分类匹配的作业追加给该学生。管理员保存 `published/closed` 作业的新受众时，必须按事务开始时当前 `active student` 与方向配置原子替换权威快照；学生自行调整方向不会自动重算历史任务归属。历史届次受众继续按原快照兼容读取。
 - **HW-003**：作业状态为 `draft`、`published`、`closed`、`archived`。草稿不可见；到达截止时间后自动关闭；管理员可以提前关闭或归档。归档作业不进入学生列表、详情或作业内优秀作业读取；手工归档且未删除的留存记录仍可由真实管理员读取，执行删除的归档记录不进入常规管理列表与详情。
 - **HW-004**：管理员可以为单个目标学生设置个人延期时间，延期只能晚于公共截止时间。没有个人延期时默认禁止截止后提交。
-- **HW-005**：管理员可以查看作业当前目标人数、未提交人数、已提交人数、最后提交时间和当前受众中存在反馈的提交数，并按方向和提交状态过滤。提交名单范围是当前受众与历史提交者的并集，必须区分当前受众已提交、当前受众未提交及已退出受众的历史提交者，且不得因单页 100 人上限漏项。
+- **HW-005**：管理员可以查看作业当前目标人数、未提交人数、已提交总人数、已确认完成人数、最后提交时间和当前受众中存在反馈的提交数，并按方向和提交状态过滤。提交名单范围是当前受众与历史提交者的并集；当前受众必须按“已提交待确认 / 已完成 / 未提交”互斥分栏，已退出受众的历史提交者继续单列，且不得因单页 100 人上限漏项。
 - **HW-006**：学生只能查看正式受众快照包含自己的作业；快照成员来自发布时受众和后续学生激活时的开放作业补录。管理员当前 Session 开启学生视图时，为验证学生体验可按当前方向预览已发布作业，但不改变历史受众快照；作业详情必须显示上海时区的截止时间、剩余状态、提交要求、资料链接和自己的最新提交情况。
 - **HW-007**：`published/closed` 作业可以修改标题、说明、外部培训资料链接、提交要求、当前受众和公共截止时间；公共截止可以前移或延后，但不得早于任何已有正式提交时间。保存受众时按 HW-002 替换当前权威快照；移出受众立即撤销列表、详情、上传和新版本资格，但不得删除提交、版本、评语、优秀标记、附件、延期、提醒或审计，提交所有者仍可通过私密提交接口读取本人历史。发布时间、允许附件扩展名和单版本附件上限继续冻结；`archived` 作业只读。
 - **HW-008**：真实管理员可以删除作业并二次确认。未发布 `draft` 作业在同一事务取消活动定时发布任务并物理删除；`published/closed` 作业转为 `archived` 并标记删除，手工归档作业首次删除时补写删除标记；两者都立即从学生入口和常规管理列表/详情隐藏。归档删除不得删除固定受众、正式提交版本、私密评语、优秀标记、附件或审计；对已有删除标记的重复 DELETE 幂等成功，两种模式都写入脱敏审计。
@@ -70,6 +70,7 @@ stateDiagram-v2
 - **SUB-006**：管理员可以为具体版本填写或修订私密评语。作业评语只对该学生和管理员可见；每次新增或修订必须保留审计记录，并在同一事务创建一条唯一邮件 Outbox，邮件只提示评语已更新并链接本人站内提交历史，不包含评语正文。
 - **SUB-007**：系统不提供分数、等级、量规、排名或公开评语字段。
 - **SUB-008**：学生不能删除正式版本。管理员只能在合规删除流程中删除附件；若版本被标记为优秀作业，则必须先取消优秀标记。
+- **SUB-009**：真实管理员可以人工确认个人作业提交的当前最新正式版本完成，并可撤销确认；确认绑定具体不可变版本，重复确认或撤销幂等。学生创建新版本后旧确认事实保留，但提交不再算已完成，必须由管理员重新确认最新版本。该状态不等同评分、等级、优秀标记、评语存在或作业关闭，不发送邮件或站内提醒。
 
 ## 校内赛入口与独立队伍
 
@@ -182,6 +183,7 @@ stateDiagram-v2
 | 查看作业 | 禁止 | 仅本人受众 | 全部 |
 | 创建作业版本 | 禁止 | 仅本人且未截止 | 禁止代交 |
 | 查看作业评语 | 禁止 | 仅本人 | 全部 |
+| 确认或撤销作业提交完成 | 禁止 | 禁止 | 仅真实管理员视图允许 |
 | 创建、加入或自动分配队伍 | 禁止 | active student 且本人当前无队伍 | 管理与纠错 |
 | 查看/维护组队简介、发送或处理组队邀请 | 禁止 | 仅 active student；只能改本人简介、处理本人邀请 | 仅学生视图按有效学生权限 |
 | 创建队伍提交 | 禁止 | 禁止 | 禁止 |
@@ -208,8 +210,8 @@ stateDiagram-v2
 | --- | --- | --- | --- | --- |
 | AUTH-001～AUTH-013 | 注册、邮箱验证、登录、记住登录、管理员用户、个人 Session、个人资料注销 | `/auth/*`、`/admin/users/*` | `users`、Session/令牌与 IP 绑定 HMAC、个人业务外键、共享操作者外键、`files`、`outbox_jobs`、审计 | AUTH-T01～AUTH-T24、FILE-T10、SEC-T01、SEC-T03 |
 | NEWS-001～NEWS-009 | 学生工作台、通知列表/详情、管理员通知 | `/announcements*`、`/admin/announcements*`、`/notifications*` | `announcements`、通知受众关联、`announcement_files`、`student_notifications`、Outbox | NEWS-T01～NEWS-T09 |
-| HW-001～HW-008 | 作业列表/详情、个人版本、管理员作业/提交 | `/assignments*`、`/admin/assignments*` | `assignments`、受众配置、`assignment_audience_users`、`assignment_extensions` | HW-T01～HW-T17 |
-| SUB-001～SUB-008 | 作业版本、管理员提交反馈 | `/submission-versions`、`/submissions/*`、管理员反馈接口 | `submissions`、`submission_versions`、`version_files`、`feedback` | HW-T04～HW-T09、HW-T13 |
+| HW-001～HW-008 | 作业列表/详情、个人版本、管理员作业/提交三栏 | `/assignments*`、`/admin/assignments*` | `assignments`、受众配置、`assignment_audience_users`、`assignment_extensions` | HW-T01～HW-T18 |
+| SUB-001～SUB-009 | 作业版本、管理员提交反馈与完成确认 | `/submission-versions`、`/submissions/*`、管理员反馈/完成确认接口 | `submissions`、`submission_versions`、`version_files`、`feedback` | HW-T04～HW-T09、HW-T13、HW-T18 |
 | COMP-001～COMP-006 | 已退出当前产品，仅保留 legacy 数据 | 无运行时 API | legacy 赛事表 | 迁移回归 |
 | TEAM-001～TEAM-013 | 校内赛队伍中心、个人简介与邀请、我的队伍、管理员队伍 | `/teams*`、`/team-profiles*`、`/team-invitations*`、`/admin/teams*` | `teams`、`team_members`、`team_profiles`、`team_invitations` | TEAM-T01～TEAM-T18 |
 | INT-001～INT-010 | 学生问卷列表/填写、管理员问卷查看/非归档编辑/永久删除/技术组填写范围/统计/实名名单/二维码/三范围邮件/第一志愿方向配置 | `/intentions*`、`/admin/intentions*` | `intention_surveys`、`intention_survey_directions`、`intention_questions`、`intention_options`、`intention_responses`、`intention_response_options`、`users.direction_id`、`outbox_jobs`、审计 | INT-T01～INT-T27 |

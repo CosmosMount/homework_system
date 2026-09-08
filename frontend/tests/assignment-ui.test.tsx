@@ -192,4 +192,93 @@ describe("assignment UI", () => {
       revision: 3,
     });
   });
+  it("confirms and revokes the latest submission completion", async () => {
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    csrfFetchMock.mockResolvedValueOnce({
+      submission_id: "submission-1",
+      latest_version_id: "version-1",
+      completed_version_id: "version-1",
+      completed_at: "2026-09-08T08:00:00Z",
+      is_completed: true,
+    });
+
+    const { unmount } = render(
+      <SubmissionReview
+        assignmentTitle="阶段作业"
+        initialExcellent={[]}
+        initialSubmission={submission()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "确认最新版本完成" }));
+
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledTimes(1));
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/admin/submissions/submission-1/completion",
+      { method: "POST" },
+    );
+    expect(screen.getByText("已确认当前最新版本完成。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "撤销完成确认" })).toBeInTheDocument();
+
+    unmount();
+    csrfFetchMock.mockReset();
+    csrfFetchMock.mockResolvedValueOnce({
+      submission_id: "submission-1",
+      latest_version_id: "version-1",
+      completed_version_id: null,
+      completed_at: null,
+      is_completed: false,
+    });
+    render(
+      <SubmissionReview
+        assignmentTitle="阶段作业"
+        initialExcellent={[]}
+        initialSubmission={{
+          ...submission(),
+          completed_version_id: "version-1",
+          completed_at: "2026-09-08T08:00:00Z",
+          is_completed: true,
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "撤销完成确认" }));
+
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledTimes(1));
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/admin/submissions/submission-1/completion",
+      { method: "DELETE" },
+    );
+    expect(screen.getByText("已撤销完成确认。")).toBeInTheDocument();
+  });
+
+  it("shows that a new version needs fresh completion confirmation", () => {
+    const original = submission();
+    render(
+      <SubmissionReview
+        assignmentTitle="阶段作业"
+        initialExcellent={[]}
+        initialSubmission={{
+          ...original,
+          latest_version_id: "version-2",
+          completed_version_id: "version-1",
+          completed_at: "2026-09-08T08:00:00Z",
+          is_completed: false,
+          versions: [
+            {
+              ...original.versions[0],
+              id: "version-2",
+              version_number: 2,
+              submitted_at: "2026-09-08T09:00:00Z",
+            },
+            original.versions[0],
+          ],
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText("v1 曾确认完成；最新版本已更新，需重新确认。"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认最新版本完成" })).toBeInTheDocument();
+  });
 });

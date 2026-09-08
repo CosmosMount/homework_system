@@ -80,7 +80,7 @@ def test_assignment_submission_completion_migration_is_reversible() -> None:
     assert '"completed_at"' in source
     assert '"completed_by"' in source
     assert "fk_submissions_completed_version_same_submission" in source
-    assert "ck_submissions_completion_state_consistent" in source
+    assert '"completion_state_consistent"' in source
     assert source.index("op.drop_constraint") < source.index(
         'op.drop_column("submissions", "completed_version_id")'
     )

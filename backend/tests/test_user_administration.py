@@ -903,3 +903,28 @@ async def test_repository_erasure_enables_transaction_scoped_version_guard() -> 
 
     statement = session_namespace.execute.await_args.args[0]
     assert str(statement) == "SET LOCAL pnx.account_erasure = 'on'"
+
+
+@pytest.mark.asyncio
+async def test_account_erasure_clears_submission_completion_references() -> None:
+    now = datetime(2026, 9, 8, 8, 0, tzinfo=UTC)
+    target = make_account(now=now, last_active_at=now)
+    empty_rows = Mock()
+    empty_rows.all.return_value = []
+    session_namespace = SimpleNamespace(
+        execute=AsyncMock(),
+        scalars=AsyncMock(return_value=empty_rows),
+        flush=AsyncMock(),
+    )
+    repository = UserRepository(cast(AsyncSession, session_namespace))
+    cast(Any, repository)._prepare_account_teams = AsyncMock(return_value=(0, 0, 0))
+    cast(Any, repository)._account_deletion_counts = AsyncMock(return_value={})
+
+    await repository.prepare_account_erasure(target, now=now)
+
+    submission_update = session_namespace.execute.await_args_list[0].args[0]
+    params = submission_update.compile().params
+    assert params["latest_version_id"] is None
+    assert params["completed_version_id"] is None
+    assert params["completed_at"] is None
+    assert params["completed_by"] is None

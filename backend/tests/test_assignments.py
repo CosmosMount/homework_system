@@ -679,22 +679,26 @@ async def test_assignment_stats_count_only_current_audience_submissions_and_feed
     assignment_id = uuid4()
     last_submitted_at = datetime.now(UTC)
     session = AsyncMock(spec=AsyncSession)
-    session.scalar.side_effect = [2, 1, 0, 1, last_submitted_at]
+    session.scalar.side_effect = [2, 2, 1, 1, last_submitted_at]
     repository = AssignmentRepository(cast(AsyncSession, session))
 
     stats = await repository.stats(assignment_id)
 
     assert stats == AssignmentStats(
         target_count=2,
-        submitted_count=1,
-        completed_count=0,
+        submitted_count=2,
+        completed_count=1,
         feedback_submission_count=1,
         last_submitted_at=last_submitted_at,
     )
     submitted_sql = str(session.scalar.await_args_list[1].args[0])
+    completed_sql = str(session.scalar.await_args_list[2].args[0])
     feedback_sql = str(session.scalar.await_args_list[3].args[0])
     assert "JOIN assignment_audience_users" in submitted_sql
     assert "assignment_audience_users.user_id = submissions.owner_user_id" in submitted_sql
+    assert "JOIN assignment_audience_users" in completed_sql
+    assert "assignment_audience_users.user_id = submissions.owner_user_id" in completed_sql
+    assert "submissions.completed_version_id = submissions.latest_version_id" in completed_sql
     assert "JOIN assignment_audience_users" in feedback_sql
     assert "assignment_audience_users.user_id = submissions.owner_user_id" in feedback_sql
 

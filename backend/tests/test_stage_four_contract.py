@@ -24,6 +24,7 @@ def test_stage_four_openapi_contains_assignments_submissions_and_upload_purpose(
         "/api/v1/submissions/{submission_id}",
         "/api/v1/submissions/{submission_id}/versions/{version_id}",
         "/api/v1/admin/submissions/{submission_id}/versions/{version_id}/feedback",
+        "/api/v1/admin/submissions/{submission_id}/completion",
     }
 
     assert expected_paths <= set(paths)

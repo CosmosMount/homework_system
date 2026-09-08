@@ -306,7 +306,7 @@ Alembic 只精确排除这五张 legacy 表，以及 `submissions` 上已知的�
 
 ### `submissions`
 
-`id`, `assignment_id`, `competition_task_id`, `owner_user_id`, `owner_team_id`, `latest_version_id`, `created_at`, `updated_at`。
+`id`, `assignment_id`, `competition_task_id`, `owner_user_id`, `owner_team_id`, `latest_version_id`, `completed_version_id`, `completed_at`, `completed_by`, `created_at`, `updated_at`。
 
 当前运行时只创建和查询 `assignment_id/owner_user_id` 分支，所有 Repository 查询都限制 `assignment_id IS NOT NULL`。`competition_task_id/owner_team_id` 及下述第二分支仅用于匹配并保留 legacy 数据库结构，不注册读取或写入 API。
 
@@ -325,8 +325,10 @@ CHECK (
 - 部分唯一 `(assignment_id, owner_user_id) WHERE assignment_id IS NOT NULL`。
 - legacy 部分唯一 `(competition_task_id, owner_team_id) WHERE competition_task_id IS NOT NULL`。
 - `latest_version_id` 在创建版本事务结束前指向同一提交的版本；使用延迟外键或迁移后追加外键解决建表循环。
+- `completed_version_id` 使用 `(id, completed_version_id) → submission_versions(submission_id, id)` 可延迟复合外键，禁止跨提交确认；与 `completed_at` 必须同时为空或同时存在。`completed_by` 指向管理员账号并使用 `ON DELETE SET NULL`。
+- “已完成”是查询派生状态：只有 `completed_version_id IS NOT NULL AND completed_version_id = latest_version_id` 时为真。新版本只更新最新指针，保留旧确认版本和时间作为历史事实，因此自动回到待确认；撤销则清空三个完成字段。
 
-- `owner_user_id` 对账号使用 `ON DELETE CASCADE`，只删除目标用户的个人作业提交；`owner_team_id` 继续保留 legacy 团队赛事提交，但当前 Service 不读取。擦除前 Service 把个人提交的 `latest_version_id` 置空，再由提交外键向版本树级联。
+- `owner_user_id` 对账号使用 `ON DELETE CASCADE`，只删除目标用户的个人作业提交；`owner_team_id` 继续保留 legacy 团队赛事提交，但当前 Service 不读取。擦除前 Service 把个人提交的 `latest_version_id`、`completed_version_id`、`completed_at`、`completed_by` 一并置空，再由提交外键向版本树级联。
 
 ### `submission_versions`
 
@@ -484,6 +486,8 @@ CHECK (
 20. 独立队伍迁移 20260904_0020 接在 0019 后：原队伍表重命名为 legacy 表，新建空的全局 teams/team_members；赛事、报名、赛题、历史提交和 MinIO 对象不删除。downgrade 把新队伍以 UUID 后缀名称挂到占位赛事后恢复旧表，可完成 0019 → 0020 → 0019 → 0020。生产应用前必须备份，但迁移本身不执行跨系统对象删除。
 
 21. 组队简介与邀请迁移 `20260907_0021` 接在 `0020` 后，新建 `team_profiles/team_invitations`、检查约束、级联外键、查询索引和同队同目标 pending 部分唯一索引，不回填用户或队伍数据。downgrade 先删除邀请再删除简介，会丢失已产生的简介与邀请；可在隔离 PostgreSQL 执行 `0020 → 0021 → 0020 → 0021`。生产应用前必须完成 PostgreSQL/MinIO 同点备份，本迁移不读写 MinIO。
+22. 组队开关迁移 `20260908_0022` 接在 `0021` 后，新建单例 `team_settings` 并默认关闭学生组队；downgrade 删除该表。生产应用前必须完成同点备份。
+23. 作业提交完成确认迁移 `20260908_0023` 接在 `0022` 后，为 `submissions` 增加三个可空完成字段、同提交复合外键、管理员 `SET NULL` 外键和状态一致性检查，不回填历史提交。downgrade 先删除检查与外键再删列，会丢失确认事实；离线 SQL 必须可完成 `0022 → 0023 → 0022`，生产应用前先完成 PostgreSQL/MinIO 同点可恢复备份。
 
 ## 飞书知识库快照
 

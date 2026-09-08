@@ -141,6 +141,9 @@ describe("admin permissions UI", () => {
       assignment_id: "assignment-1",
       owner_user_id: "student-1",
       latest_version_id: "version-1",
+      completed_version_id: null,
+      completed_at: null,
+      is_completed: false,
       versions: [
         {
           id: "version-1",
@@ -247,6 +250,26 @@ describe("admin permissions UI", () => {
     expect(assignmentLink).toHaveAttribute("href", "/admin/assignments/new");
     expect(assignmentLink.className).toContain("rounded-lg");
     expect(assignmentLink.className).toContain("h-9");
+  });
+
+  it("shows completion progress on assignment cards", async () => {
+    const published = {
+      ...assignment(),
+      status: "published" as const,
+      stats: {
+        ...assignment().stats,
+        target_count: 5,
+        submitted_count: 3,
+        completed_count: 2,
+        unsubmitted_count: 2,
+      },
+    };
+    getAdminAssignmentsMock.mockResolvedValue({ items: [published] });
+
+    render(await AdminAssignmentsPage());
+
+    expect(screen.getByText("3 / 5 已提交")).toBeInTheDocument();
+    expect(screen.getByText("2 / 5 已完成")).toBeInTheDocument();
   });
 
   it("keeps the classification page focused on directions", async () => {
@@ -428,7 +451,7 @@ describe("admin permissions UI", () => {
     expect(screen.getByText("作业已更新。")).toBeInTheDocument();
   });
 
-  it("separates submitted, unsubmitted and historical submitters", () => {
+  it("separates submitted, completed, unsubmitted and historical submitters", () => {
     const published: AssignmentAdmin = {
       ...assignment(),
       status: "published",
@@ -452,6 +475,21 @@ describe("admin permissions UI", () => {
             completed_at: null,
             is_completed: false,
             has_feedback: true,
+            in_current_audience: true,
+          },
+          {
+            user_id: "completed-user",
+            full_name: "已完成同学",
+            student_number: "1004",
+            cohort_id: null,
+            direction_id: null,
+            submission_id: "submission-4",
+            latest_version_number: 1,
+            last_submitted_at: "2026-08-27T10:00:00Z",
+            completed_version_id: "version-4",
+            completed_at: "2026-08-28T10:00:00Z",
+            is_completed: true,
+            has_feedback: false,
             in_current_audience: true,
           },
           {
@@ -489,14 +527,16 @@ describe("admin permissions UI", () => {
     );
 
     expect(screen.getByRole("heading", { name: /已提交.*\(1\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /已完成.*\(1\)/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /未提交.*\(1\)/ })).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: /历史提交（已不在当前受众）.*\(1\)/ }),
     ).toBeInTheDocument();
     expect(screen.getByText("已提交同学")).toBeInTheDocument();
+    expect(screen.getByText("已完成同学")).toBeInTheDocument();
     expect(screen.getByText("未提交同学")).toBeInTheDocument();
     expect(screen.getByText("历史提交同学")).toBeInTheDocument();
-    expect(screen.getAllByText("管理个人延期")).toHaveLength(2);
+    expect(screen.getAllByText("管理个人延期")).toHaveLength(3);
   });
 
   it("publishes an assignment over HTTP when randomUUID is unavailable", async () => {

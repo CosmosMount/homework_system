@@ -14,6 +14,7 @@ from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.notifications.mailer import render_mail
 from app.notifications.repository import OutboxRepository, StudentNotificationRepository
+from app.submissions.models import Submission
 from app.submissions.repository import SubmissionRepository
 from app.submissions.schemas import FeedbackPutRequest, SubmissionVersionCreateRequest
 from app.submissions.service import SubmissionAuditContext, SubmissionService
@@ -412,3 +413,163 @@ async def test_attachment_preview_rejects_active_content_and_download_only_types
     assert unsupported.value.status_code == 415
     assert unsupported.value.code == "FILE_PREVIEW_NOT_SUPPORTED"
     store.presign_inline.assert_not_awaited()
+
+
+def completion_audit_context(admin_id: object) -> SubmissionAuditContext:
+    return SubmissionAuditContext(
+        actor=cast(
+            AuthenticatedContext,
+            SimpleNamespace(user=SimpleNamespace(id=admin_id)),
+        ),
+        request_id="completion-request",
+        ip_prefix="127.0.0.0/24",
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_confirms_latest_submission_version_with_audit() -> None:
+    now = datetime(2026, 9, 8, 8, 0, tzinfo=UTC)
+    submission_id = uuid4()
+    assignment_id = uuid4()
+    version_id = uuid4()
+    admin_id = uuid4()
+    submission = SimpleNamespace(
+        id=submission_id,
+        assignment_id=assignment_id,
+        latest_version_id=version_id,
+        completed_version_id=None,
+        completed_at=None,
+        completed_by=None,
+        updated_at=now,
+    )
+    version = SimpleNamespace(id=version_id, version_number=3)
+    session = AsyncMock(spec=AsyncSession)
+    service = SubmissionService(cast(AsyncSession, session), clock=lambda: now)
+    submissions = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=submission),
+        get_version=AsyncMock(return_value=version),
+    )
+    audit = Mock()
+    service._submissions = cast(SubmissionRepository, submissions)
+    service._audit = audit
+
+    response = await service.confirm_completion(
+        submission_id,
+        audit=completion_audit_context(admin_id),
+    )
+
+    assert response.submission_id == submission_id
+    assert response.latest_version_id == version_id
+    assert response.completed_version_id == version_id
+    assert response.completed_at == now
+    assert response.is_completed is True
+    assert submission.completed_by == admin_id
+    submissions.get_by_id.assert_awaited_once_with(submission_id, for_update=True)
+    submissions.get_version.assert_awaited_once_with(
+        version_id,
+        submission_id=submission_id,
+    )
+    session.commit.assert_awaited_once()
+    session.rollback.assert_not_awaited()
+    entry = audit.add.call_args.args[0]
+    assert entry.action == "submission.completion_confirm"
+    assert entry.target_type == "submission"
+    assert entry.target_id == submission_id
+    assert entry.actor_user_id == admin_id
+    assert entry.change_summary == {
+        "assignment_id": str(assignment_id),
+        "completed_version_id": str(version_id),
+        "version_number": 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_completion_confirmation_is_idempotent_for_current_version() -> None:
+    version_id = uuid4()
+    completed_at = datetime(2026, 9, 8, 8, 0, tzinfo=UTC)
+    submission = SimpleNamespace(
+        id=uuid4(),
+        assignment_id=uuid4(),
+        latest_version_id=version_id,
+        completed_version_id=version_id,
+        completed_at=completed_at,
+    )
+    session = AsyncMock(spec=AsyncSession)
+    service = SubmissionService(cast(AsyncSession, session))
+    submissions = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=submission),
+        get_version=AsyncMock(),
+    )
+    audit = Mock()
+    service._submissions = cast(SubmissionRepository, submissions)
+    service._audit = audit
+
+    response = await service.confirm_completion(
+        submission.id,
+        audit=completion_audit_context(uuid4()),
+    )
+
+    assert response.is_completed is True
+    assert response.completed_at == completed_at
+    submissions.get_version.assert_not_awaited()
+    audit.add.assert_not_called()
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_revokes_completion_and_repeated_revoke_is_idempotent() -> None:
+    now = datetime(2026, 9, 8, 9, 0, tzinfo=UTC)
+    version_id = uuid4()
+    submission = SimpleNamespace(
+        id=uuid4(),
+        assignment_id=uuid4(),
+        latest_version_id=version_id,
+        completed_version_id=version_id,
+        completed_at=now,
+        completed_by=uuid4(),
+        updated_at=now,
+    )
+    session = AsyncMock(spec=AsyncSession)
+    service = SubmissionService(cast(AsyncSession, session), clock=lambda: now)
+    service._submissions = cast(
+        SubmissionRepository,
+        SimpleNamespace(get_by_id=AsyncMock(return_value=submission)),
+    )
+    audit = Mock()
+    service._audit = audit
+
+    first = await service.revoke_completion(
+        submission.id,
+        audit=completion_audit_context(uuid4()),
+    )
+    second = await service.revoke_completion(
+        submission.id,
+        audit=completion_audit_context(uuid4()),
+    )
+
+    assert first.is_completed is False
+    assert second.is_completed is False
+    assert submission.completed_version_id is None
+    assert submission.completed_at is None
+    assert submission.completed_by is None
+    assert audit.add.call_count == 1
+    entry = audit.add.call_args.args[0]
+    assert entry.action == "submission.completion_revoke"
+    assert entry.change_summary["previous_completed_version_id"] == str(version_id)
+    assert session.commit.await_count == 2
+
+
+def test_new_latest_version_requires_fresh_completion_confirmation() -> None:
+    response = SubmissionService._completion_response(
+        cast(
+            Submission,
+            SimpleNamespace(
+                id=uuid4(),
+                latest_version_id=uuid4(),
+                completed_version_id=uuid4(),
+                completed_at=datetime.now(UTC),
+            ),
+        )
+    )
+
+    assert response.is_completed is False

@@ -42,7 +42,7 @@ def upgrade() -> None:
         ondelete="SET NULL",
     )
     op.create_check_constraint(
-        "ck_submissions_completion_state_consistent",
+        "completion_state_consistent",
         "submissions",
         "(completed_version_id IS NULL AND completed_at IS NULL) OR "
         "(completed_version_id IS NOT NULL AND completed_at IS NOT NULL)",
@@ -51,7 +51,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_constraint(
-        "ck_submissions_completion_state_consistent",
+        "completion_state_consistent",
         "submissions",
         type_="check",
     )

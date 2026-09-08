@@ -219,7 +219,7 @@
 | `POST /admin/assignments/{id}/archive` | 归档 | HW-003 |
 | `PUT /admin/assignments/{id}/extensions/{user_id}` | `{extended_deadline,reason}` | HW-004 |
 | `DELETE /admin/assignments/{id}/extensions/{user_id}` | 截止前移除尚未使用的延期 | HW-004 |
-| `GET /admin/assignments/{id}/submissions` | 按方向、提交/反馈状态分页列出“当前受众并集历史提交者”；每项返回 `in_current_audience`，统计口径只计算当前受众，历史届次快照仍可读取 | HW-005 |
+| `GET /admin/assignments/{id}/submissions` | 按方向、提交/反馈状态分页列出“当前受众并集历史提交者”；每项返回 `completed_version_id`、`completed_at`、`is_completed` 与 `in_current_audience`。`is_completed` 仅在确认版本等于最新版本时为真；统计新增当前受众 `completed_count` | HW-005、SUB-009 |
 | `POST /admin/assignments/{id}/excellent-submissions/{version_id}` | 把本作业版本标记为优秀作业 | SHOW-001～SHOW-003 |
 | `DELETE /admin/assignments/{id}/excellent-submissions/{version_id}` | 取消优秀标记 | SHOW-004 |
 
@@ -234,8 +234,10 @@
 | `GET /submissions/{submission_id}` | 所有者/管理员 | 返回个人作业聚合和版本摘要 | SUB-003、SUB-005 |
 | `GET /submissions/{submission_id}/versions/{version_id}` | 所有者/管理员 | 返回不可变版本和当前用户可见评语 | SUB-003、SUB-006 |
 | `PUT /admin/submissions/{submission_id}/versions/{version_id}/feedback` | 管理员 | `{body_markdown,revision?}` 创建或修订私密评语，并同事务创建站内提醒与唯一评语邮件 Outbox | SUB-006、MAIL-001～MAIL-005 |
+| `POST /admin/submissions/{submission_id}/completion` | 管理员 | 锁定提交并确认当前最新正式版本完成；重复确认同一最新版本幂等 | SUB-009、NFR-006 |
+| `DELETE /admin/submissions/{submission_id}/completion` | 管理员 | 锁定提交并撤销最近完成确认；未确认时幂等 | SUB-009、NFR-006 |
 
-评语响应含 `id`、`body_html`、`created_by`、`created_at`、`updated_at`、`revision`，不含评分字段。邮件仅含学生称呼、作业标题和 `/assignments/{assignment_id}/submissions/{submission_id}` 站内链接，不含评语正文。
+提交聚合响应增加 `completed_version_id`、`completed_at`、`is_completed`；完成确认响应含 `submission_id`、`latest_version_id` 及同组三个完成字段。确认绑定具体不可变版本，学生提交新版本后旧 `completed_version_id/completed_at` 保留但 `is_completed=false`；再次确认才更新到最新版本。两个写接口只允许真实管理员并要求 CSRF，不发送提醒或邮件。评语响应仍含 `id`、`body_html`、`created_by`、`created_at`、`updated_at`、`revision`，不含评分字段；评语邮件仅含学生称呼、作业标题和 `/assignments/{assignment_id}/submissions/{submission_id}` 站内链接，不含评语正文。
 
 ## 独立队伍接口
 
