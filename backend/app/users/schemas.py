@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 Role = Literal["student", "admin"]
 UserStatus = Literal["pending_email", "active", "disabled"]
@@ -12,6 +12,18 @@ class CategorySummary(BaseModel):
     id: UUID
     code: str
     name: str
+
+
+class SelfDirectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    direction_id: UUID
+    revision: int = Field(ge=1)
+
+
+class SelfDirectionOptionsResponse(BaseModel):
+    is_direction_change_open: bool
+    directions: list[CategorySummary]
 
 
 class UserResponse(BaseModel):

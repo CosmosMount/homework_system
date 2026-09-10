@@ -183,3 +183,6 @@ class TeamSettings(TimestampRevisionMixin, Base):
         default=False,
         server_default=text("false"),
     )
+    is_direction_change_open: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )

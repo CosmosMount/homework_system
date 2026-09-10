@@ -16,6 +16,7 @@ from app.core.identifiers import uuid7
 from app.core.security import OutboxCipher, is_campus_email, normalize_email
 from app.notifications.models import OutboxJob
 from app.notifications.repository import OutboxRepository
+from app.teams.composition import TeamCompositionService
 from app.users.models import Cohort, Direction, User
 from app.users.repository import UserRepository
 from app.users.schemas import (
@@ -55,6 +56,7 @@ class UserAdministrationService:
         self._outbox = OutboxRepository(session)
         self._auth = AuthenticationService(session, settings, clock=clock)
         self._assignments = AssignmentRepository(session)
+        self._composition = TeamCompositionService(session)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._settings = settings
         self._outbox_cipher = OutboxCipher(settings.outbox_encryption_key.get_secret_value())
@@ -249,6 +251,8 @@ class UserAdministrationService:
         *,
         audit: AuditContext,
     ) -> AdminUserResponse:
+        if "direction_id" in payload.model_fields_set:
+            await self._composition.lock()
         if "email" in payload.model_fields_set:
             await self._auth.lock_sessions_for_user(user_id)
         user = await self._users.get_by_id(user_id, for_update=True)
@@ -313,6 +317,8 @@ class UserAdministrationService:
             user.cohort_id = payload.cohort_id
         if "direction_id" in fields:
             direction_changed = user.direction_id != payload.direction_id
+            if direction_changed:
+                await self._composition.validate_direction_changes({user.id: payload.direction_id})
             if payload.direction_id is not None:
                 direction = await self._users.get_direction(payload.direction_id)
                 if direction is None:
@@ -819,6 +825,7 @@ class UserAdministrationService:
         *,
         audit: AuditContext,
     ) -> DirectionResponse:
+        await self._composition.lock()
         direction = await self._users.get_direction(direction_id, for_update=True)
         if direction is None:
             await self._session.rollback()
@@ -826,6 +833,8 @@ class UserAdministrationService:
         if direction.revision != payload.revision:
             await self._session.rollback()
             raise self._revision_conflict()
+        if payload.name is not None and payload.name.strip() != direction.name:
+            await self._composition.validate_direction_rename(direction_id, payload.name.strip())
         changes: dict[str, Any] = {}
         for field in ("name", "description", "is_active"):
             if field not in payload.model_fields_set:

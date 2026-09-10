@@ -167,6 +167,13 @@ export function AdminTeamCorrectionPanel({
               <h2 className="text-2xl font-semibold">{team.name}</h2>
               <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
                 {team.member_count} / {team.max_members} 人
+                {team.composition ? (
+                  <span className="mt-2 block">
+                    机械 {team.composition.mechanical}/2 · 嵌入式控制/硬件 {team.composition.embedded_hardware}/1～2 · 算法 {team.composition.algorithm}/1
+                    {team.composition.unassigned > 0 ? ` · 未匹配方向 ${team.composition.unassigned} 人` : ""}
+                    {team.composition.is_complete ? " · 配置已齐全" : " · 配置待补齐或调整"}
+                  </span>
+                ) : null}
               </p>
             </div>
             <span className={"border px-2 py-1 font-mono text-xs " + statusTagClass(team.status)}>

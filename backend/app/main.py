@@ -18,6 +18,7 @@ from app.notifications.router import router as notifications_router
 from app.submissions.router import router as submissions_router
 from app.teams.router import router as teams_router
 from app.uploads.router import router as uploads_router
+from app.users.direction_router import router as user_direction_router
 from app.users.router import router as users_router
 
 
@@ -41,6 +42,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(health_router, prefix="/api/v1")
     application.include_router(auth_router, prefix="/api/v1")
     application.include_router(users_router, prefix="/api/v1")
+    application.include_router(user_direction_router, prefix="/api/v1")
     application.include_router(announcements_router, prefix="/api/v1")
     application.include_router(assignments_router, prefix="/api/v1")
     application.include_router(teams_router, prefix="/api/v1")

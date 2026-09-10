@@ -8,7 +8,7 @@ import {
   FormMessage,
   inputClassName,
 } from "@/components/ui/form-controls";
-import { ApiError, csrfFetch } from "@/lib/api/client";
+import { ApiError, apiFetch, csrfFetch } from "@/lib/api/client";
 import type { InviteCodeRotated, Team } from "@/lib/api/types";
 import { teamStatusLabel, statusTagClass } from "@/lib/competition-labels";
 import { formatDateTime } from "@/lib/format";
@@ -74,11 +74,8 @@ export function TeamManagementPanel({
       if (leavingSelf) {
         router.push("/competitions");
       } else {
-        setTeam((current) => ({
-          ...current,
-          member_count: current.member_count - 1,
-          members: current.members.filter((member) => member.user_id !== userId),
-        }));
+        const updated = await apiFetch<Team | null>("/teams/me");
+        if (updated) setTeam(updated);
         setMessage("成员已移除。");
       }
       router.refresh();
@@ -141,6 +138,13 @@ export function TeamManagementPanel({
             <h2 className="text-2xl font-semibold">{team.name}</h2>
             <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
               当前 {team.member_count} / {team.max_members} 人。
+              {team.composition ? (
+                <span className="mt-2 block">
+                  机械 {team.composition.mechanical}/2 · 嵌入式控制/硬件 {team.composition.embedded_hardware}/1～2 · 算法 {team.composition.algorithm}/1
+                  {team.composition.unassigned > 0 ? ` · 未匹配方向 ${team.composition.unassigned} 人` : ""}
+                  {team.composition.is_complete ? " · 配置已齐全" : " · 配置待补齐或调整"}
+                </span>
+              ) : null}
             </p>
           </div>
           <span

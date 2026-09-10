@@ -45,6 +45,7 @@ from app.intentions.service import IntentionAuditContext, IntentionService
 from app.notifications.mailer import PermanentMailError, render_mail
 from app.notifications.models import OutboxJob
 from app.notifications.repository import OutboxRepository
+from app.teams.composition import TeamCompositionService
 from app.users.models import Direction, User
 
 
@@ -130,6 +131,13 @@ def make_service(now: datetime) -> tuple[IntentionService, AsyncMock]:
         clock=lambda: now,
     )
     service._audit = cast(AuditRepository, SimpleNamespace(add=Mock()))
+    service._composition = cast(
+        TeamCompositionService,
+        SimpleNamespace(
+            lock=AsyncMock(),
+            validate_direction_changes=AsyncMock(),
+        ),
+    )
     service._assignments = cast(
         AssignmentRepository,
         SimpleNamespace(

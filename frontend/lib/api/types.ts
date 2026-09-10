@@ -501,6 +501,13 @@ export type Team = {
   revision: number;
   members: TeamMember[];
   can_manage: boolean;
+  composition?: {
+    mechanical: number;
+    embedded_hardware: number;
+    algorithm: number;
+    unassigned: number;
+    is_complete: boolean;
+  };
 };
 
 export type TeamCreated = Team & {
@@ -573,8 +580,14 @@ export type TeamInvitation = {
 
 export type TeamSettings = {
   is_team_open: boolean;
+  is_direction_change_open: boolean;
   updated_at: string;
   revision: number;
+};
+
+export type SelfDirectionOptions = {
+  is_direction_change_open: boolean;
+  directions: { id: string; code: string; name: string }[];
 };
 
 export type AdminTeamListItem = {

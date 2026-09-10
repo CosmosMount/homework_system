@@ -247,10 +247,10 @@
 
 | 方法与路径 | 请求/行为 | 需求 |
 | --- | --- | --- |
-| GET /team-settings | active student 读取当前 `is_team_open`、更新时间和 revision | TEAM-014 |
+| GET /team-settings | active student 读取当前 `is_team_open`、`is_direction_change_open`、更新时间和 revision | TEAM-014、AUTH-014 |
 | GET /team-profiles | 支持 `direction_id`；返回简介分页、启用技术组选项和 `team_open` | TEAM-010、TEAM-014 |
-| GET /admin/team-settings | 真实管理员读取唯一学生组队开关 | TEAM-014 |
-| PATCH /admin/team-settings | is_team_open、revision；同源、CSRF、乐观锁与脱敏审计 | TEAM-014 |
+| GET /admin/team-settings | 真实管理员读取学生组队与自助方向两个独立开关 | TEAM-014、AUTH-014 |
+| PATCH /admin/team-settings | revision 必填，is_team_open 与 is_direction_change_open 至少指定一个且不为 null；未指定值保持；同源、CSRF、乐观锁与脱敏审计 | TEAM-014、AUTH-014 |
 
 | GET /teams | query、page、page_size；返回 forming 队伍的名称、状态、当前/最大人数和 can_join，不返回成员或邀请码 | TEAM-006 |
 | GET /teams/me | 返回本人当前队伍、成员、成员技术方向/已提交简介和 can_manage；无队伍返回 null | TEAM-003、TEAM-006、TEAM-010、TEAM-013 |
@@ -263,7 +263,7 @@
 | POST /team-invitations/{invitation_id}/decline | 受邀者拒绝邀请，返回统一成功响应 | TEAM-012 |
 | POST /teams | name；直接创建队伍并成为队长，201 响应中的 invite_code 只出现一次 | TEAM-001～TEAM-002 |
 | POST /teams/join | invite_code；加入未满 forming 队伍 | TEAM-001～TEAM-004 |
-| POST /teams/auto-assign | 无正文；优先加入人数最少的未满 forming 队伍，否则自动建队 | TEAM-002、TEAM-004～TEAM-005 |
+| POST /teams/auto-assign | 无正文；优先加入当前方向有名额且人数最少的未满 forming 队伍，否则自动建队 | TEAM-002、TEAM-004～TEAM-005 |
 | POST /teams/{team_id}/invite-code/rotate | 队长轮换邀请码，明文只返回一次 | TEAM-003 |
 | DELETE /teams/{team_id}/members/{user_id} | 队长移除非队长成员，或非队长退出本人 | TEAM-003 |
 | POST /teams/{team_id}/captain-transfer | new_captain_user_id | TEAM-003 |
@@ -497,3 +497,10 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 `POST /files/{file_id}/preview-url` 与下载端点使用相同 Session、CSRF 和业务关联授权，成功响应字段与下载一致。只有服务端 `detected_media_type` 与扩展名匹配的 PDF、PNG/JPEG/GIF/WebP、MP4/WebM，或已检测为 `text/plain` 的安全文本扩展名可预览；文本签名响应强制 `text/plain; charset=utf-8`。HTML、SVG、Office、压缩包、可执行文件、未知或不匹配类型返回 `415 FILE_PREVIEW_NOT_SUPPORTED`，授权失败仍按既有 404，不得借 415 探测不可见文件。
 
 `GET /files/{file_id}/content` 是无状态变化的登录态读取，不要求 CSRF；它先复用相同业务关联授权，再要求文件目的为通知附件且服务端检测图片类型与扩展名匹配，成功返回带 `Cache-Control: private, no-store` 的 307。通知管理响应在 `attachment_file_ids` 外返回同序 `attachments` 安全元数据，供编辑器显示文件名并生成专用 Markdown；不返回对象键。
+# 2026-09-10 自助方向与人数分布契约增补
+
+- `GET /users/me/direction-options`：真实 active student 读取 `is_direction_change_open` 和启用方向 `directions: [{id,code,name}]`。
+- `PATCH /users/me/direction`：真实 active student、CSRF，正文 `{direction_id,revision}`，仅非空启用方向；成功返回 `UserResponse`，实际改组同事务追加历史作业受众。关闭为 403 `DIRECTION_CHANGE_CLOSED`，陈旧版本为 409 `REVISION_CONFLICT`，无效方向为 400 `INVALID_DIRECTION`。
+- `GET /team-settings` 与 `GET/PATCH /admin/team-settings` 增加 `is_direction_change_open`；PATCH 两个开关可分别省略但不可为 null，必须携带 revision 并至少指定一个开关，未指定的开关保持。
+- 队伍详情新增 `composition: {mechanical,embedded_hardware,algorithm,unassigned,is_complete}`，完整为 2 + 1～2 + 1；目录加入与简介邀请能力同步检查当前方向名额。
+- 未设置/未知方向建队或加入返回 409 `TEAM_DIRECTION_REQUIRED`；名额冲突为 409 `TEAM_COMPOSITION_CONFLICT`。管理员补录、自助/管理员/问卷改组和方向改名也复核；允许人数不足的组建中队伍，批量修改按最终状态校验。

@@ -42,6 +42,7 @@ import type {
   Session,
   Submission,
   Team,
+  SelfDirectionOptions,
   TeamDirectoryPage,
   TeamInvitation,
   TeamProfile,
@@ -72,6 +73,12 @@ async function serverApi<T>(path: string): Promise<Response | T> {
     return response;
   }
   return (await response.json()) as T;
+}
+
+export async function getSelfDirectionOptions(): Promise<SelfDirectionOptions> {
+  return resolveProtectedResult(
+    await serverApi<SelfDirectionOptions>("/users/me/direction-options"),
+  );
 }
 
 export async function getOptionalUser(): Promise<User | null> {

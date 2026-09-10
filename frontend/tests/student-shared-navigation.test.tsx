@@ -29,6 +29,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/api/server", () => ({
+  getSelfDirectionOptions: vi.fn().mockResolvedValue({ is_direction_change_open: false, directions: [] }),
   getDashboard: getDashboardMock,
   getPublicHelpRequest: getPublicHelpRequestMock,
   getSessions: getSessionsMock,

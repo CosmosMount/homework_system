@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 TeamStatus = Literal["forming", "dissolved"]
 TeamInvitationStatus = Literal["pending", "accepted", "declined", "cancelled"]
@@ -46,8 +46,16 @@ class TeamInvitationCreateRequest(BaseModel):
 
 
 class TeamSettingsUpdateRequest(BaseModel):
-    is_team_open: bool
+    is_team_open: bool | None = None
+    is_direction_change_open: bool | None = None
     revision: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_switches(self) -> "TeamSettingsUpdateRequest":
+        switches = self.model_fields_set & {"is_team_open", "is_direction_change_open"}
+        if not switches or any(getattr(self, field) is None for field in switches):
+            raise ValueError("至少指定一个非空权限开关")
+        return self
 
 
 class AdminReasonRequest(BaseModel):
@@ -84,6 +92,14 @@ class TeamMemberResponse(BaseModel):
     introduction: str | None = None
 
 
+class TeamCompositionResponse(BaseModel):
+    mechanical: int = 0
+    embedded_hardware: int = 0
+    algorithm: int = 0
+    unassigned: int = 0
+    is_complete: bool = False
+
+
 class TeamResponse(BaseModel):
     id: UUID
     name: str
@@ -95,6 +111,7 @@ class TeamResponse(BaseModel):
     revision: int
     members: list[TeamMemberResponse]
     can_manage: bool
+    composition: TeamCompositionResponse = Field(default_factory=TeamCompositionResponse)
 
 
 class TeamCreatedResponse(TeamResponse):
@@ -149,6 +166,7 @@ class TeamProfilePage(BaseModel):
 
 class TeamSettingsResponse(BaseModel):
     is_team_open: bool
+    is_direction_change_open: bool = False
     updated_at: datetime
     revision: int
 

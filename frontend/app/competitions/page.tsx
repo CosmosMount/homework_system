@@ -47,6 +47,10 @@ export default async function CompetitionsPage({ searchParams }: CompetitionsPag
         STUDENT / CAMPUS TEAMS
       </p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">校内赛队伍中心</h1>
+      <p className="mt-3 text-sm text-[var(--color-text-secondary)]">
+        组队配置：机械 2 人 + 嵌入式控制/硬件合计 1～2 人 + 算法 1 人，共 4～5 人。
+        按当前技术组判定，可以先建队再逐步补齐；需改方向请前往<Link className="underline" href="/profile">个人资料</Link>。
+      </p>
       <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
         {teamSettings.is_team_open
           ? "无需等待管理员创建赛事。你可以直接创建队伍、使用邀请码加入，或由系统自动分配队伍。"

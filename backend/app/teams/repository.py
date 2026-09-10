@@ -58,7 +58,7 @@ class TeamRepository:
     async def team_settings(self, *, for_update: bool = False) -> TeamSettings | None:
         statement = select(TeamSettings).where(TeamSettings.id.is_(True))
         if for_update:
-            statement = statement.with_for_update()
+            statement = statement.with_for_update().execution_options(populate_existing=True)
         result: TeamSettings | None = await self._session.scalar(statement)
         return result
 

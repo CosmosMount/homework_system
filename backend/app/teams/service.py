@@ -18,6 +18,7 @@ from app.auth.service import AuthenticatedContext, context_effective_role, conte
 from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.core.identifiers import uuid7
+from app.teams.composition import TeamCompositionService, composition_for
 from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile, TeamSettings
 from app.teams.repository import TeamRepository
 from app.teams.schemas import (
@@ -70,6 +71,7 @@ class TeamService:
         self._settings = settings
         self._teams = TeamRepository(session)
         self._team_settings = TeamRepository(session)
+        self._composition = TeamCompositionService(session)
         self._users = UserRepository(session)
         self._auth = AuthRepository(session)
         self._audit = AuditRepository(session)
@@ -149,7 +151,7 @@ class TeamService:
         return settings
 
     async def _require_team_open(self) -> None:
-        if not (await self._team_settings_record()).is_team_open:
+        if not (await self._team_settings_record(for_update=True)).is_team_open:
             raise self._conflict(
                 "TEAM_REGISTRATION_CLOSED",
                 "管理员暂未开放组队，请先完善个人简介。",
@@ -159,6 +161,7 @@ class TeamService:
     def _settings_response(settings: TeamSettings) -> TeamSettingsResponse:
         return TeamSettingsResponse(
             is_team_open=settings.is_team_open,
+            is_direction_change_open=settings.is_direction_change_open,
             updated_at=settings.updated_at,
             revision=settings.revision,
         )
@@ -171,6 +174,7 @@ class TeamService:
             status=cast(TeamStatus, team.status),
             captain_user_id=team.captain_user_id,
             member_count=len(members),
+            composition=composition_for(record.direction_name for record in members),
             max_members=team.max_members,
             dissolved_at=team.dissolved_at,
             revision=team.revision,
@@ -253,6 +257,8 @@ class TeamService:
                         and record.user.id != context.user.id
                         and record.team_id is None
                         and record.user.id not in pending_invitees
+                        and actor_team is not None
+                        and await self._composition.can_add(actor_team.id, record.user.id)
                     ),
                     invitation_pending=settings.is_team_open and record.user.id in pending_invitees,
                 )
@@ -368,6 +374,7 @@ class TeamService:
         if await self._teams.team_for_user(target.id, for_update=True) is not None:
             await self._session.rollback()
             raise self._conflict("INVITEE_ALREADY_IN_TEAM", "该同学已经加入队伍。")
+        await self._composition.require_add(team.id, target.id)
         existing = await self._teams.pending_invitation(team.id, target.id)
         if existing is not None:
             inviter = await self._users.get_by_id(existing.invited_by_user_id)
@@ -468,6 +475,7 @@ class TeamService:
         if await self._teams.member_count(team.id) >= team.max_members:
             await self._session.rollback()
             raise self._conflict("TEAM_FULL", "目标队伍人数已满。")
+        await self._composition.require_add(team.id, audit_context.actor.user.id)
         self._teams.add_member(
             TeamMember(
                 id=uuid7(),
@@ -533,6 +541,7 @@ class TeamService:
                         not already_in_team
                         and record.team.status == "forming"
                         and record.member_count < record.team.max_members
+                        and await self._composition.can_add(record.team.id, context.user.id)
                     ),
                 )
                 for record in records
@@ -568,6 +577,7 @@ class TeamService:
             raise self._conflict("ALREADY_IN_TEAM", "当前账号已经加入一支队伍。")
         now = self._clock()
         invite_code = self._new_invite_code()
+        await self._composition.require_add(None, audit_context.actor.user.id)
         team = Team(
             id=uuid7(),
             name=name.strip(),
@@ -685,6 +695,7 @@ class TeamService:
         if await self._teams.member_count(team.id) >= team.max_members:
             await self._session.commit()
             raise self._conflict("TEAM_FULL", "目标队伍人数已满。")
+        await self._composition.require_add(team.id, audit_context.actor.user.id)
         self._teams.add_member(
             TeamMember(
                 id=uuid7(),
@@ -727,9 +738,12 @@ class TeamService:
             raise self._conflict("ALREADY_IN_TEAM", "当前账号已经加入一支队伍。")
         selected: Team | None = None
         selected_count = 0
+        await self._composition.require_add(None, audit_context.actor.user.id)
         for candidate in await self._teams.forming_teams_for_update():
             candidate_count = await self._teams.member_count(candidate.id)
             if candidate_count >= candidate.max_members:
+                continue
+            if not await self._composition.can_add(candidate.id, audit_context.actor.user.id):
                 continue
             if selected is None or (
                 candidate_count,
@@ -1002,11 +1016,19 @@ class TeamService:
         if payload.revision != settings.revision:
             await self._session.rollback()
             raise self._conflict("REVISION_CONFLICT", "组队开放状态已发生变化，请刷新后重试。")
-        if payload.is_team_open == settings.is_team_open:
+        changes: dict[str, object] = {
+            field: getattr(payload, field)
+            for field in ("is_team_open", "is_direction_change_open")
+            if field in payload.model_fields_set
+            and getattr(payload, field) != getattr(settings, field)
+        }
+        if not changes:
+            response = self._settings_response(settings)
             await self._session.rollback()
-            return self._settings_response(settings)
+            return response
         now = self._clock()
-        settings.is_team_open = payload.is_team_open
+        for field, value in changes.items():
+            setattr(settings, field, value)
         settings.updated_at = now
         settings.revision += 1
         self._add_audit(
@@ -1014,7 +1036,7 @@ class TeamService:
             action="team.settings_update",
             target_id=audit_context.actor.user.id,
             target_type="team_settings",
-            change_summary={"is_team_open": settings.is_team_open},
+            change_summary=changes,
             now=now,
         )
         await self._session.commit()
@@ -1068,6 +1090,7 @@ class TeamService:
         audit_context: TeamAuditContext,
     ) -> TeamResponse:
         self._require_admin(audit_context.actor)
+        await self._composition.lock()
         team = await self._teams.get_team(team_id, for_update=True)
         user = await self._users.get_by_id(payload.user_id, for_update=True)
         if (
@@ -1086,6 +1109,7 @@ class TeamService:
             await self._session.rollback()
             raise self._conflict("TEAM_FULL", "目标队伍人数已满。")
         now = self._clock()
+        await self._composition.require_add(team.id, user.id)
         self._teams.add_member(
             TeamMember(
                 id=uuid7(),

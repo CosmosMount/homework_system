@@ -13,7 +13,20 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260908_0024"]
+    assert script.get_heads() == ["20260910_0025"]
+
+
+def test_student_direction_permission_migration_is_reversible() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "versions"
+        / "20260910_0025_student_direction_permission.py"
+    ).read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "20260908_0024"' in source
+    assert '"is_direction_change_open"' in source
+    assert 'server_default=sa.text("false")' in source
+    assert 'op.drop_column("team_settings", "is_direction_change_open")' in source
 
 
 def test_team_profiles_invitations_migration_is_reversible() -> None:

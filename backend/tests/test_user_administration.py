@@ -14,6 +14,7 @@ from app.audit.repository import AuditRepository
 from app.auth.service import AuthenticatedContext, AuthenticationService
 from app.core.config import Settings
 from app.core.errors import ApplicationError
+from app.teams.composition import TeamCompositionService
 from app.users.models import User
 from app.users.repository import (
     AccountErasurePreparation,
@@ -231,6 +232,13 @@ async def test_patch_active_student_direction_adds_historical_assignment_audienc
         ),
     )
     add_historical = AsyncMock(return_value=3)
+    service._composition = cast(
+        TeamCompositionService,
+        SimpleNamespace(
+            lock=AsyncMock(),
+            validate_direction_changes=AsyncMock(),
+        ),
+    )
     service._assignments = cast(
         AssignmentRepository,
         SimpleNamespace(
@@ -274,6 +282,13 @@ async def test_patch_student_direction_does_not_backfill_without_a_new_group(
         ),
     )
     add_historical = AsyncMock()
+    service._composition = cast(
+        TeamCompositionService,
+        SimpleNamespace(
+            lock=AsyncMock(),
+            validate_direction_changes=AsyncMock(),
+        ),
+    )
     service._assignments = cast(
         AssignmentRepository,
         SimpleNamespace(add_historical_assignment_audiences_for_student=add_historical),

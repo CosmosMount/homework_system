@@ -224,9 +224,9 @@ erDiagram
 ### `team_profiles`
 ### `team_settings`
 
-固定单例行：`id=true`、`is_team_open`、`created_at`、`updated_at`、`revision`。`id` 检查约束确保单行语义，迁移默认插入关闭状态。
+固定单例行：`id=true`、`is_team_open`、`is_direction_change_open`、`created_at`、`updated_at`、`revision`。`id` 检查约束确保单行语义，两个权限默认关闭且彼此独立，共享 revision。
 
-- 不存储学生个人资料或组队内容；downgrade 只删除该设置表，不影响当前队伍、简介、邀请或历史赛事表。
+- 不存储学生个人资料或组队内容；`0025 → 0024` 仅删除自助方向列，`0022 → 0021` 才删除设置表，均不影响当前队伍、简介、邀请或历史赛事表。
 
 
 字段：`user_id`、`introduction`、`created_at`、`updated_at`、`revision`。
@@ -511,3 +511,6 @@ CHECK (
 迁移 `20260827_0011` 创建上述五表、外键、检查、唯一和查询索引；downgrade 逆序删除关联、文档、媒体、节点和运行表，不删除 MinIO 对象，避免数据库回滚造成不可恢复文件丢失。
 
 参考仓库对齐、首次上线前台初始化和 ADR-041 公式解析仍不改变文档 JSONB；目录独立文件由 `20260831_0018` 定向扩展节点类型和资源关联。旧成功快照不会原地获得目录文件资源，只有上线迁移后由真实管理员手动触发的新同步成功，才会自然替换并提供下载。
+# 2026-09-10 自助方向权限迁移增补
+
+`20260910_0025`（前序 `20260908_0024`）为单行 `team_settings` 添加非空布尔 `is_direction_change_open`，默认 false，保留既有组队状态和 revision。降级仅删除此列，保留方向、队伍及作业受众。人数由当前 `users.direction_id → directions.name` 派生，不另存岗位或人数；规则写入先锁设置行，再锁业务行。

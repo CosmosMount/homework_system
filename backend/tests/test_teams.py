@@ -14,9 +14,11 @@ from app.auth.repository import AuthRepository
 from app.auth.service import AuthenticatedContext
 from app.core.config import Settings
 from app.core.errors import ApplicationError
+from app.teams.composition import TeamCompositionService
 from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile, TeamSettings
 from app.teams.repository import TeamListRecord, TeamProfileRecord, TeamRepository
 from app.teams.schemas import (
+    AdminMemberAddRequest,
     TeamInvitationCreateRequest,
     TeamProfileUpsertRequest,
     TeamResponse,
@@ -80,6 +82,7 @@ def make_team_settings(now: datetime, *, is_team_open: bool) -> TeamSettings:
     return TeamSettings(
         id=True,
         is_team_open=is_team_open,
+        is_direction_change_open=False,
         created_at=now,
         updated_at=now,
         revision=1,
@@ -94,6 +97,14 @@ def make_service(now: datetime) -> tuple[TeamService, AsyncMock]:
         clock=lambda: now,
     )
     service._audit = cast(AuditRepository, SimpleNamespace(add=Mock()))
+    service._composition = cast(
+        TeamCompositionService,
+        SimpleNamespace(
+            lock=AsyncMock(),
+            require_add=AsyncMock(),
+            can_add=AsyncMock(return_value=True),
+        ),
+    )
     service._team_settings = cast(
         TeamRepository,
         SimpleNamespace(
@@ -193,6 +204,85 @@ async def test_admin_can_update_team_opening_with_revision_and_audit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_direction_permission_is_independent_and_admin_only() -> None:
+    now = datetime.now(UTC)
+    service, session = make_service(now)
+    settings = make_team_settings(now, is_team_open=False)
+    cast(AsyncMock, service._team_settings.team_settings).return_value = settings
+    result = await service.update_admin_team_settings(
+        TeamSettingsUpdateRequest(is_direction_change_open=True, revision=1),
+        audit_context=make_audit_context(role="admin"),
+    )
+    assert result.is_direction_change_open is True
+    assert result.is_team_open is False
+    assert result.revision == 2
+    session.commit.assert_awaited_once()
+    for actor in (make_audit_context(), make_audit_context(role="admin")):
+        if actor.actor.user.role == "admin":
+            cast(SimpleNamespace, actor.actor).is_admin = False
+        with pytest.raises(ApplicationError) as caught:
+            await service.update_admin_team_settings(
+                TeamSettingsUpdateRequest(is_direction_change_open=False, revision=2),
+                audit_context=actor,
+            )
+        assert caught.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_auto_assign_skips_team_without_matching_direction_slot() -> None:
+    now = datetime.now(UTC)
+    service, _session = make_service(now)
+    smaller, compatible = make_team("同方向已满"), make_team("可补齐队")
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            team_for_user=AsyncMock(return_value=None),
+            forming_teams_for_update=AsyncMock(return_value=[smaller, compatible]),
+            member_count=AsyncMock(side_effect=lambda identity: 1 if identity == smaller.id else 3),
+            add_member=Mock(),
+            current_members=AsyncMock(return_value=[]),
+        ),
+    )
+    cast(AsyncMock, service._composition.can_add).side_effect = lambda identity, user: (
+        identity == compatible.id
+    )
+    result = await service.auto_assign(audit_context=make_audit_context())
+    assert result.id == compatible.id
+
+
+@pytest.mark.asyncio
+async def test_admin_member_add_cannot_bypass_direction_quota() -> None:
+    service, session = make_service(datetime.now(UTC))
+    team = make_team("算法名额已满")
+    user = SimpleNamespace(id=uuid4(), role="student", status="active")
+    add_member = Mock()
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            get_team=AsyncMock(return_value=team),
+            team_for_user=AsyncMock(return_value=None),
+            member_count=AsyncMock(return_value=2),
+            add_member=add_member,
+        ),
+    )
+    service._users = cast(UserRepository, SimpleNamespace(get_by_id=AsyncMock(return_value=user)))
+    cast(AsyncMock, service._composition.require_add).side_effect = ApplicationError(
+        status_code=409, code="TEAM_COMPOSITION_CONFLICT", message="方向名额已满"
+    )
+    with pytest.raises(ApplicationError) as caught:
+        await service.admin_add_member(
+            team.id,
+            AdminMemberAddRequest(user_id=user.id, reason="管理员补录测试"),
+            audit_context=make_audit_context(role="admin"),
+        )
+    assert caught.value.code == "TEAM_COMPOSITION_CONFLICT"
+    cast(AsyncMock, service._composition.lock).assert_awaited_once()
+    cast(AsyncMock, service._composition.require_add).assert_awaited_once_with(team.id, user.id)
+    add_member.assert_not_called()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_student_creates_team_without_competition_and_receives_invite_once() -> None:
     now = datetime.now(UTC)
     audit_context = make_audit_context()
@@ -210,6 +300,9 @@ async def test_student_creates_team_without_competition_and_receives_invite_once
     )
 
     result = await service.create_team("  原子队  ", audit_context=audit_context)
+    cast(AsyncMock, service._composition.require_add).assert_awaited_once_with(
+        None, audit_context.actor.user.id
+    )
 
     team = cast(Team, add_team.call_args.args[0])
     member = cast(TeamMember, add_member.call_args.args[0])
@@ -289,6 +382,9 @@ async def test_student_joins_team_without_registration_or_competition_window() -
     )
 
     result = await service.join_team("join-code", audit_context=audit_context)
+    cast(AsyncMock, service._composition.require_add).assert_awaited_once_with(
+        team.id, audit_context.actor.user.id
+    )
 
     member = cast(TeamMember, add_member.call_args.args[0])
     assert result.id == team.id
@@ -355,6 +451,7 @@ def test_team_profile_and_invitation_models_enforce_privacy_boundaries() -> None
     assert set(settings_table.columns.keys()) == {
         "id",
         "is_team_open",
+        "is_direction_change_open",
         "created_at",
         "updated_at",
         "revision",
@@ -600,6 +697,9 @@ async def test_invitee_accepts_invitation_and_other_pending_invitations_are_canc
 
     assert cast(TeamResponse, result).id == team.id
     assert invitation.status == "accepted"
+    cast(AsyncMock, service._composition.require_add).assert_awaited_once_with(
+        team.id, audit_context.actor.user.id
+    )
     assert cast(TeamMember, add_member.call_args.args[0]).user_id == audit_context.actor.user.id
     cancel_pending.assert_awaited_once_with(
         audit_context.actor.user.id,

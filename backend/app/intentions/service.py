@@ -61,6 +61,7 @@ from app.intentions.schemas import (
 )
 from app.notifications.models import OutboxJob
 from app.notifications.repository import OutboxRepository
+from app.teams.composition import TeamCompositionService
 from app.users.models import User
 
 DIRECTION_ASSIGNMENT_SURVEY_TITLE = "意向选择"
@@ -88,6 +89,7 @@ class IntentionService:
         self._audit = AuditRepository(session)
         self._outbox = OutboxRepository(session)
         self._assignments = AssignmentRepository(session)
+        self._composition = TeamCompositionService(session)
 
     @staticmethod
     def _not_found() -> ApplicationError:
@@ -904,6 +906,7 @@ class IntentionService:
         audit_context: IntentionAuditContext,
     ) -> IntentionDirectionAssignmentResponse:
         self._require_admin(audit_context.actor)
+        await self._composition.lock()
         survey = await self._repo.get_survey(survey_id, for_update=True)
         if survey is None:
             await self._session.rollback()
@@ -982,6 +985,13 @@ class IntentionService:
         updated_count = 0
         unchanged_count = 0
         assignment_audience_added_count = 0
+        await self._composition.validate_direction_changes(
+            {
+                record.user.id: mapping_by_option[record.option_id]
+                for record in records
+                if record.user.direction_id != mapping_by_option[record.option_id]
+            }
+        )
         for record in records:
             target_direction_id = mapping_by_option[record.option_id]
             if record.user.direction_id == target_direction_id:

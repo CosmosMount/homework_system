@@ -1044,3 +1044,33 @@
 - 本次发布完成后，并行通知图片功能以合并标签 `announcement-inline-images-20260908` 接续上线；运行 Backend/Worker `sha256:aa45afdec0eb…` 已逐项确认仍包含历史受众 Repository、两条方向写路径和 `0024`，Frontend 为 `sha256:969b98d599c9…`。接续后六服务仍 healthy、RestartCount 0，五个健康入口为 200，匿名作业 API 为 401，OpenAPI 为 109 条路径，Alembic/受众/提交/版本仍为 `0024/351/49/58`，严重错误和 Nginx 5xx 为 0。
 - 合并标签同时启用通知 Markdown 专用图片 URI、登录态 `GET /files/{file_id}/content`、管理端一键插入和邮件 CID related part。Backend 定向 61 项、完整 435 项、Ruff/181 文件格式、155 文件严格 Mypy，Frontend 通知 11 项、完整 157 项、ESLint、严格 TypeScript、宿主与镜像内生产构建均通过。
 - 通知图片入口使用随机 UUID匿名请求返回 401，运行 OpenAPI 与 Markdown 标记有效。发布只替换 Backend/Worker/Frontend并重启 Nginx，未执行新迁移、未重建 PostgreSQL/MinIO、未携带真实 Session、未修改通知或触发 SMTP；回滚标签分别固定部署前 Backend/Worker 与 Frontend 镜像。
+## 2026-09-10 学生自助方向权限与校内赛人数分布部署
+
+### 范围与固定镜像
+
+- 用户明确要求部署，沿用 `.agents/plans/plan_team_direction_composition.md`。保持 `pnx-training` 校内 HTTP/5000 Compose，不创建其他托管站点、不替换 TLS 拓扑、不触碰其他项目。
+- 生产只读配置显示技术组为机械、嵌入式-控制、嵌入式-硬件、算法、宣运、软件；部署前为两个嵌入式名称补充精确共享名额映射和两项回归，不修改技术组名称或学生归属。修改文件为 `backend/app/teams/composition.py`、对应规则测试、被忽略的 `.env` 镜像标签以及计划/运维/任务/变更/基线记录。
+- 新标签 `team-direction-composition-20260910`：Backend/Worker 为 `sha256:1ff3054ebe52c4e6e681104cf803515a3bd74e81bf1538e87f9adadc60a5ce25`，Frontend 为 `sha256:b70f6dd85cad1fbfe17f4aa4bccc48b8c28f2e60b6428cee494671235ac3bb27`，均为 `appuser`。
+- 当前部署前镜像的 145 个 Python 源码/迁移文件与已提交 `4fd1d3b` 基线逐文件匹配；候选 149 个源码/迁移文件与工作区逐文件一致，清单 SHA-256 为 `6a3c5432d63716c7d66df405535fe307e26ae81eb021d89d6eaf60fc8579bb0e`。后端完整 480 项通过、1 隔离库测试默认跳过，Ruff 与 161 文件严格 Mypy 通过；前端沿用此前 27 文件/162 项及静态检查结果，镜像重新生产构建通过。
+- 无网络、只读、去 capabilities 候选验证新接口、111 条 OpenAPI 路径、两个权限独立更新、真实技术组名称，以及既有通知正文图片能力。Frontend 四项编译标记与 `/health` 通过；首次健康请求早于进程启动，等待启动后成功，无持续故障。
+- 回滚标签 `team-direction-composition-rollback-20260910` 保留：Backend/Worker `sha256:aa45afdec0eb28503c339d8c595b46945b981786e869871137878e37757459d4`；Frontend `sha256:969b98d599c91c39f7a43cb77b21c28f095266174aae8432cda206e233660274`。新列对旧应用兼容，优先回滚镜像并保留 Schema；不自动降级或恢复旧业务数据库。
+
+### 备份与恢复门
+
+- 新 OpenPGP 每日增量 `pnx-backup-20260910T020310Z-daily` 为 76,542,409 字节、0600，归档 SHA-256 `9627a2ef7b112a132870e73181c96dc3a81ad184e9fa08a903f20e1648021bac`；数据库 dump 35,174,567 字节，完整对象清单 1,432 个/5,471,174,116 字节。本日相对周基线包含 82 个/45,961,241 字节新增变化对象、1,941 个删除标记，依赖周基线 `pnx-backup-20260905T163853Z-weekly`。旧备份链全部保留。
+- 最初两次恢复在对象导入前被开发 Compose 注入的空/占位知识库 URL 校验阻断，仅隔离恢复库受到影响。最终使用只包含 PostgreSQL、MinIO 与一次性 Backend CLI、无主机端口且只有 internal 网络的临时 Compose；不注入飞书配置或真实 SMTP 凭据，先验证 Settings，再重建空目标卷恢复。
+- 独立 `pnx-restore-team-direction-20260910` 完成空卷恢复，RPO 588 秒、RTO 176 秒；1,432 个对象全部恢复，缺失、大小、SHA-256 和未跟踪差异均为 0。
+- 恢复副本用候选完成 `0024 → 0025 → 0024 → 0025` 和两次 `alembic check`，用户方向摘要、业务计数和原组队开关/revision 不变，新增自助权限为 false。验收后独立恢复容器、网络和卷已精确删除；临时配置清理，不保留恢复数据副本。
+
+### 生产切换与验收
+
+- 2026-09-10 10:18:46（北京时间）进入发布窗口，显式 `--env-file .env`，只把固定标签切到新版本。生产一次前滚 `20260908_0024 → 20260910_0025`，`alembic check` 无漂移。随后以禁止拉取、禁止构建和 `--no-deps` 分 Backend/Worker、Frontend 两阶段替换，阶段健康后 Nginx 校验配置并热重载；10:20:27 完成切换。
+- 六服务 healthy、重启计数均为 0。PostgreSQL 容器 `bfa750f66ab02…`、MinIO 容器 `331150f34f37…` 及 `pnx-training_postgres_data/pnx-training_minio_data` 保持，Nginx 容器只热重载，未重建；环境文件仍为 0600 且未进入 Git。
+- 迁移前后业务摘要完全一致：用户 199、通知 4、作业 3、作业受众 351、提交 49、版本 59、文件 183、队伍 1、当前成员 0、简介/邀请 0/0、问卷 15、回答 901、知识库文档/资产 5,703/1,325、Outbox 969。用户方向摘要保持；`is_team_open=false`、`is_direction_change_open=false`、revision 1，未代管理员开放权限。
+- Nginx/后端健康入口及登录页为 200；个人资料、学生和管理员队伍页匿名为 307；方向选项、组队设置、管理员设置 GET 与方向/管理员开关 PATCH 匿名均为 401。运行 Backend 为新镜像且 OpenAPI 111 条路径，线上嵌入式名称与旧通知图片标记有效；未携带真实 Session、Cookie 或 CSRF，不执行真实改组、开关、提交、上传、删除或飞书同步。
+- 切换窗口有 4 个失败 POST：10:19:56 为 504，10:20:03、10:20:14、10:20:16 为 502；不记录请求身份或正文。全部早于最终切换完成。10:20:27～10:24:35 稳定期共 154 个 Nginx 请求，5xx 为 0；Backend/Worker/Frontend 严重错误计数均为 0，重复健康和匿名权限探测一致。
+
+### 遗留事项
+
+- 应用已部署，但本功能新增源码及部署记录尚未 Git 提交。管理员需在校内赛队伍管理页显式开放学生自助方向，组队开放仍是另一个独立开关。
+- 保持既有校内 HTTP/development Compose，未宣称完成 HTTPS production 改造。加密备份与临时 GPG 私钥环仍在同机 `/tmp`，必须迁移到受控异机介质并分离保存；本次不删除任何既有恢复材料，也未修改 Docker socket 权限。
