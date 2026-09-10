@@ -2,6 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request, Response, status
+from fastapi.responses import RedirectResponse
 
 from app.auth.dependencies import (
     AuthenticatedContextDependency,
@@ -133,6 +134,24 @@ async def create_preview_url(
     _csrf: CsrfDependency,
 ) -> PreviewUrlResponse:
     return await service.preview_url(file_id, context=context)
+
+
+@router.get(
+    "/files/{file_id}/content",
+    response_class=RedirectResponse,
+    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+)
+async def get_inline_image_content(
+    file_id: UUID,
+    service: UploadServiceDependency,
+    context: AuthenticatedContextDependency,
+) -> RedirectResponse:
+    preview = await service.inline_image_url(file_id, context=context)
+    return RedirectResponse(
+        url=preview.url,
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @router.post(

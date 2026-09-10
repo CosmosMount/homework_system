@@ -415,6 +415,50 @@ async def test_attachment_preview_rejects_active_content_and_download_only_types
     store.presign_inline.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_announcement_inline_image_content_uses_authorized_inline_signature() -> None:
+    stored_file = make_available_file(owner_user_id=uuid4(), size_bytes=1024)
+    stored_file.purpose = "announcement_attachment"
+    stored_file.original_name = "diagram.png"
+    stored_file.extension = "png"
+    stored_file.declared_media_type = "image/png"
+    stored_file.detected_media_type = "image/png"
+    store = SimpleNamespace(
+        presign_inline=AsyncMock(return_value="https://storage.invalid/inline-image")
+    )
+    service = UploadService(
+        cast(AsyncSession, AsyncMock()),
+        Settings(app_env="test"),
+        object_store=cast(MinioObjectStore, store),
+        clock=lambda: datetime.now(UTC),
+    )
+    service._uploads = cast(
+        UploadRepository,
+        SimpleNamespace(
+            get_file=AsyncMock(return_value=stored_file),
+            bound_announcement_id=AsyncMock(return_value=uuid4()),
+        ),
+    )
+    context = cast(
+        AuthenticatedContext,
+        SimpleNamespace(
+            user=SimpleNamespace(id=uuid4(), role="admin"),
+            is_admin=True,
+        ),
+    )
+
+    result = await service.inline_image_url(stored_file.id, context=context)
+
+    assert result.url == "https://storage.invalid/inline-image"
+    assert result.media_type == "image/png"
+    store.presign_inline.assert_awaited_once_with(
+        object_key=stored_file.object_key,
+        file_name="diagram.png",
+        content_type="image/png",
+        expires_seconds=300,
+    )
+
+
 def completion_audit_context(admin_id: object) -> SubmissionAuditContext:
     return SubmissionAuditContext(
         actor=cast(

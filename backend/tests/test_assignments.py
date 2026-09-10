@@ -580,6 +580,37 @@ async def test_new_student_is_added_to_matching_open_assignment_snapshots() -> N
 
 
 @pytest.mark.asyncio
+async def test_direction_change_adds_matching_published_and_closed_assignment_snapshots() -> None:
+    now = datetime(2026, 9, 8, 8, 0, tzinfo=UTC)
+    assignment_id = uuid4()
+    user = cast(
+        User,
+        SimpleNamespace(
+            id=uuid4(),
+            cohort_id=None,
+            direction_id=uuid4(),
+        ),
+    )
+    session = CapturingAudienceEnrollmentSession(assignment_id)
+    repository = AssignmentRepository(cast(AsyncSession, session))
+
+    added = await repository.add_historical_assignment_audiences_for_student(
+        user=user,
+        created_at=now,
+    )
+
+    assert added == 1
+    assert session.statement is not None
+    sql = str(session.statement)
+    assert "assignments.status IN" in sql
+    assert "assignments.deleted_at IS NULL" in sql
+    assert "assignments.deadline" not in sql
+    assert "assignment_audience_users" in sql
+    assert "NOT (EXISTS" in sql
+    assert session.added[0].direction_id_at_publish == user.direction_id
+
+
+@pytest.mark.asyncio
 async def test_student_view_preview_uses_live_audience_without_changing_snapshot() -> None:
     session = CapturingSession()
     repository = AssignmentRepository(cast(AsyncSession, session))

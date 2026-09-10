@@ -305,6 +305,10 @@ class RecordingObjectStore:
         if self.fail_delete:
             raise ObjectStoreError("OBJECT_DELETE_FAILED")
 
+    async def read_bytes(self, object_key: str, *, max_bytes: int) -> bytes:
+        del object_key, max_bytes
+        raise AssertionError("账号对象清理不应读取对象内容")
+
 
 class ObjectCleanupProcessorHarness(OutboxProcessor):
     def __init__(

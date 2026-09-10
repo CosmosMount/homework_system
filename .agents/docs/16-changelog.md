@@ -3,6 +3,23 @@
 本文件记录面向项目能力、架构和运维的重要变化，不逐条复制 Git 提交。
 
 ## 2026-09-08
+
+### 通知 Markdown 正文图片与邮件 CID 内嵌（已部署）
+
+- 管理员可把当前通知已上传的 PNG/JPEG/GIF/WebP 附件按光标插入 Markdown；服务端只识别 `announcement-image:<file_uuid>`，并校验当前通知绑定、服务端类型、最多 10 张、单张 5 MiB 与合计 20 MiB。任意远程图片、危险协议、SVG/HTML 和跨通知 UUID 不会形成可加载图片。
+- 学生详情和管理员预览把专用引用映射为登录态 `GET /files/{file_id}/content`，复用既有通知附件授权并 307 到 5 分钟 inline 签名；HTML、API 和邮件均不包含对象键或永久 MinIO URL。
+- 通知发布/更新邮件 Outbox 快照正文图片 UUID；Worker 按通知上传上下文重新校验，从 MinIO 有界读取并复核大小/SHA-256，SMTP 发送 `multipart/alternative` + HTML `multipart/related` CID 图片，纯文本保留图片说明。旧 Outbox 无图片字段继续兼容。
+- 无数据库迁移或新依赖。Backend 定向 61 项、完整 435 项、Ruff 181 文件格式、155 文件严格 Mypy；Frontend 通知 11 项、完整 26 文件/157 项、ESLint、严格 TypeScript 与 Next.js 生产构建全部通过。
+- 固定标签 `announcement-inline-images-20260908` 已在 `0024` 基线上两阶段上线，Backend/Worker `sha256:aa45afdec0eb…`、Frontend `sha256:969b98d599c9…`；六服务 healthy、重启 0，OpenAPI 109 条路径，匿名图片入口 401，发布窗口异常与 Nginx 5xx 为 0。未修改真实通知或发送真实邮件。
+
+### 新入技术组学生历史作业可见性（已部署）
+
+- 管理员用户页单独修改方向与“意向选择”问卷批量配置方向现在共用历史作业受众追加能力；只为方向实际变化到非空值的 `active student` 补入当前分类匹配的 `published/closed` 未归档作业，相同方向、清空方向、非学生或非激活账号不触发。
+- 补录只插入缺失的 `assignment_audience_users`，不移除旧组作业、不补发历史提醒或邮件，截止与个人延期继续决定新版本资格。用户更新、问卷批量方向、受众追加和脱敏审计在同一事务提交。
+- 新增纯数据迁移 `20260908_0024`，为当前 active student 幂等回填缺失历史受众，以固定 `created_at` 标记支持降级删除；无表结构、API、Frontend、MinIO 或依赖变化。
+- 作业/用户/问卷/迁移定向 144 项和完整后端 429 项测试通过；Ruff、156 文件格式、155 文件严格 Mypy、Alembic 单 head、`0023 → 0024` 升级与 `0024 → 0023` 降级离线 SQL通过。
+- 固定标签 `direction-assignment-history-20260908` 已上线；Backend/Worker 为 `sha256:84bf1aa1ad6c…`，生产迁移新增 3 条受众并到达 `20260908_0024 (head)`。随后上线的合并标签 `announcement-inline-images-20260908` 已核对继续包含本修复和 `0024`；当前 Backend/Worker 为 `sha256:aa45afdec0eb…`，六服务 healthy、重启 0，PostgreSQL/MinIO 未重建。
+
 ### 作业提交完成确认与三栏总览（已部署）
 
 - 真实管理员可在个人提交审阅页确认当前最新正式版本完成或撤销确认；操作由后端管理员依赖、CSRF、提交行锁和脱敏审计保护，重复确认/撤销幂等，不发送提醒或邮件。
@@ -1169,3 +1186,24 @@
 - 前端问卷定向 27/27、完整 25 文件/138 项 Vitest、ESLint、严格 TypeScript、Next.js 16.3.2 生产构建和 `git diff --check` 全部通过；隔离候选以 `appuser` 在无网络、只读、去 capabilities 环境健康，并继续排除知识库图片说明。
 - 固定标签 `questionnaire-actions-row-20260904` 已只替换 Frontend/Nginx；Frontend 镜像为 `sha256:3ba9fa4315a59833d093f6c992d8248a1ba3aa599108dce62091e2fe214e2650`，Backend/Worker 保持 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`。六服务 healthy、重启 0，健康、匿名守卫、`20260904_0019 (head)` 和稳定期日志均正常。
 - 本热修无 API、数据库、依赖或迁移变化，未使用管理员 Session、未执行问卷或其他业务写入。Frontend 回滚镜像为 `sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8`。
+
+## 2026-09-08：通知邮件直接渲染安全正文
+
+### Changed
+
+- 通知发布与显式更新提醒的逐用户 Outbox 任务新增入队时 `body_markdown` 快照。HTML 邮件使用系统统一 Markdown 允许列表清洗器重新渲染正文，纯文本替代部分包含同一 Markdown，收件人无需先打开站内页面即可阅读通知内容。
+- 邮件继续保留站内原通知入口；附件、预签名 URL、MinIO 对象键与永久资源地址不进入邮件。升级前已入队且没有正文快照的旧任务继续按标题、摘要和链接模板投递。
+- 同步 NEWS-006～NEWS-007、MAIL-001、MAIL-004、邮件安全设计、MAIL-T04 和唯一正式计划；API、数据库、Alembic、Frontend、SMTP 重试与幂等策略均不变。
+
+### Validation
+
+- 通知定向 17 项和完整后端 424 项 Pytest 通过；Ruff、180 文件格式检查、155 个源文件严格 Mypy 与 `git diff --check` 全部通过。
+- 测试覆盖发布/更新两类模板、Markdown 标题与强调渲染、脚本和危险 URL 不形成可执行 HTML、正文纯文本替代、附件地址缺失、Outbox 快照及旧任务兼容。
+- 本轮未连接真实 SMTP、PostgreSQL 或 MinIO，未发送测试邮件、构建镜像或部署；不涉及数据迁移。
+
+### Production deployment
+
+- 固定标签 `notification-email-content-20260908` 已只替换 Backend/Worker，镜像为 `sha256:d6dca2dc1778d19b496dc4c726b693a7f2cc650cd6bdba4d46f7c83a58a6ab34`；运行 Frontend 保持 `assignment-completion-20260908`，其现有 digest 另加同名发布别名供后续 Compose 重建。PostgreSQL/MinIO 容器未替换，Nginx 只重启刷新上游。
+- 六服务 healthy、RestartCount 0；Backend live/ready、Worker、Nginx 健康和登录页通过，匿名通知 API 为 401。运行源码包含正文快照和统一 Markdown 清洗标记，Alembic 保持 `20260908_0023 (head)`，部署前后用户/通知/Outbox 均为 `196/4/960`。
+- 最新已恢复验证备份 `pnx-backup-20260908T045305Z-daily` 的 46,440,942 字节归档再次通过外层 SHA-256。稳定期 Backend/Worker 异常关键词和 Nginx HTTP 5xx 均为 0；未调用真实通知写入或 SMTP 投递。
+- 首次替换遗漏 `--env-file .env`，曾短暂创建 `dev` Backend/Worker 且 Worker 重启；约一分钟内以正式环境和固定标签纠正，Nginx 未记录 5xx、数据库聚合不变，误生成标签已删除。回滚标签 `notification-email-content-rollback-20260908` 指向部署前 `sha256:41e4bf16bb57…`。

@@ -1,3 +1,20 @@
+# 2026-09-08：通知 Markdown 正文图片与邮件 CID 内嵌完成并部署
+
+- 管理员可在通知附件列表把服务端已校验的 PNG/JPEG/GIF/WebP 一键插入 Markdown 光标位置；正文只接受 `announcement-image:<file_uuid>`，保存时复核当前通知上下文、选择/绑定、类型、最多 10 张、单张 5 MiB 与合计 20 MiB。跨通知、未选择、SVG/HTML、类型不匹配和超限引用整体拒绝，远程/危险图片不形成可加载 `img`。
+- 学生详情和管理员预览把专用 URI映射为登录态 `GET /files/{file_id}/content`，复用通知附件业务授权后 307 到 5 分钟 inline 签名；普通附件下载/预览保持不变，响应不含对象键。
+- 发布和显式更新邮件 Outbox 快照 Markdown 与图片 UUID。Worker 按通知上传上下文重新校验，在内存中有界读取 MinIO 并复核大小与 SHA-256；SMTP HTML 使用与 MIME related part 对应的稳定 CID，纯文本保留图片说明。对象读取瞬时失败退避重试，旧 Outbox 无图片字段继续兼容。
+- 正式计划为 `.agents/plans/plan_announcement_inline_images.md`，ADR-067 已接受；无数据库迁移、新表或新依赖。Backend 定向 61 项、完整 435 项、Ruff 181 文件格式、155 文件严格 Mypy，Frontend 通知 11 项、完整 26 文件/157 项、ESLint、严格 TypeScript 和 Next.js 生产构建均通过。
+- 固定标签 `announcement-inline-images-20260908` 已在 `20260908_0024 (head)` 基线上两阶段上线；Backend/Worker 为 `sha256:aa45afdec0eb…`，Frontend 为 `sha256:969b98d599c9…`，OpenAPI 109 条路径。六服务 healthy、重启 0，匿名图片入口 401，发布窗口异常与 Nginx 5xx 为 0；未使用真实 Session、未修改通知、未发送真实邮件，PostgreSQL/MinIO 未重建。
+
+# 2026-09-08：新入技术组学生历史作业可见性完成并部署
+
+- 根因是学生作业读取依赖 `assignment_audience_users`，而管理员用户页和问卷第一志愿批量配置都只更新 `users.direction_id`，导致后入组学生无法读取技术组此前作业。
+- 两条方向写路径现在只为方向实际变化到非空值的 `active student` 追加当前分类匹配的 `published/closed` 未归档、未删除作业；相同方向、清空方向、非激活或非学生账号不补录，旧组受众、提交、附件、提醒和邮件均不移除或重发，截止/延期继续限制提交。
+- 新增纯数据迁移 `20260908_0024`，已为现有 active student 幂等补齐 3 条缺失受众；固定时间标记支持 downgrade 删除本次插入行。无表结构、API、Frontend、MinIO 或新依赖变化。
+- 正式计划沿用 `.agents/plans/plan_late_student_assignment_audience.md`，ADR-066 取代 ADR-053/ADR-061 中相冲突的旧边界，并同步产品、页面、API、数据库、安全、测试、变更和基线文档。
+- 作业/用户/问卷/迁移定向 144 项与完整后端 429 项测试通过；Ruff、156 文件格式、155 文件严格 Mypy、Alembic `20260908_0024 (head)`、`0023 → 0024` 升级与 `0024 → 0023` 降级离线 SQL通过。完整链离线 SQL 仍被既有 `20260825_0007` 数据读取迁移不支持 `--sql` 阻断，不影响本次范围 SQL。
+- 新备份 `pnx-backup-20260908T124034Z-daily` 已从空卷恢复 1,419 个对象并零未跟踪差异，隔离库完成迁移幂等和往返。固定标签 `direction-assignment-history-20260908` 已只替换 Backend/Worker，六服务 healthy、重启 0，生产为 `0024 (head)`；验收未携带真实登录态或调用业务写接口。
+
 # 2026-09-08：作业提交完成确认与三栏总览完成并部署
 
 - 真实管理员可对个人提交当前最新正式版本确认完成并撤销；确认绑定具体不可变版本，重复操作幂等，学生新版本使旧确认不再生效但保留历史事实。两个接口均要求后端管理员鉴权、CSRF、行锁并写脱敏审计，不发送提醒或邮件。
@@ -862,3 +879,17 @@
 - 新增精确回归并确认旧实现失败、修复后通过；前端问卷定向 27/27、完整 25 文件/138 项、ESLint、严格 TypeScript、Next.js 16.3.2 生产构建及 `git diff --check` 全部通过。代码独立提交为 `fd9311f`。
 - 固定标签 `questionnaire-actions-row-20260904` 已只替换 Frontend/Nginx；Frontend 镜像为 `sha256:3ba9fa4315a59833d093f6c992d8248a1ba3aa599108dce62091e2fe214e2650`，Backend/Worker 保持 `sha256:d668cd915766892fbb059ebce9e7118262cbe6db68d6d86c3ad491aef22a3bc6`。六服务 healthy、重启 0，关键健康、匿名守卫、`20260904_0019 (head)` 和稳定期日志均正常。
 - 本热修无 API、数据库、依赖或迁移变化；未使用管理员 Session、未执行问卷或其他业务写入。知识库图片说明继续排除，Frontend 回滚镜像为 `sha256:41ea6351cbf52c0dbae3e8358e85497b6d690682fad8742e1c1358321ac63fe8`。
+
+# 2026-09-08：通知邮件直接渲染通知正文源码完成
+
+- 通知发布和显式更新提醒邮件现在保存入队时 Markdown 正文快照；HTML 邮件经统一允许列表清洗后直接渲染正文，纯文本替代部分展示同一 Markdown。
+- 附件、对象键和永久资源地址仍不进入邮件，用户通过登录态原通知查看附件；部署前已入队且没有正文快照的任务继续按旧模板投递。
+- 唯一正式计划为 `.agents/plans/plan_notification_email_content.md`。定向通知 17 项、完整后端 424 项、Ruff、180 文件格式、155 文件严格 Mypy 与 `git diff --check` 全部通过。
+- 本轮无 API、数据库、Alembic、Frontend 或依赖变化，未连接真实 SMTP/PostgreSQL/MinIO、未发送邮件、构建镜像或部署。
+
+# 2026-09-08：通知邮件正文渲染部署完成
+
+- 固定标签 `notification-email-content-20260908` 已只替换 Backend/Worker，镜像为 `sha256:d6dca2dc1778d19b496dc4c726b693a7f2cc650cd6bdba4d46f7c83a58a6ab34`；Frontend/PostgreSQL/MinIO 未替换，当前 Frontend digest 另加同名发布别名，Nginx 仅重启刷新上游。
+- 六服务 healthy、重启 0；健康入口、登录页、匿名通知 401、运行源码标记、`20260908_0023 (head)` 和部署前后 `196/4/960` 用户/通知/Outbox 聚合均通过，稳定期应用异常与 Nginx 5xx 为 0。
+- 最新已恢复验证备份的外层 SHA-256 再次通过；回滚标签 `notification-email-content-rollback-20260908` 指向部署前 Backend 镜像 `sha256:41e4bf16bb57…`。未运行迁移、未创建或发送真实通知邮件。
+- 首次替换遗漏显式环境文件，短暂创建 `dev` 容器且 Worker 重启；约一分钟内已纠正为正式环境和固定标签，无 Nginx 5xx 或数据库聚合变化，误生成标签已清理。

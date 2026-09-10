@@ -1023,3 +1023,24 @@
 - 发布前后用户、作业、作业受众、提交、版本、文件和 Outbox 聚合均为 `196/3/348/48/56/173/958`；上线后已完成提交与完成审计均为 0，当前受众聚合为已提交待确认 40、已完成 0、未提交 308。对象对账仍为 1,384 个有效对象，缺失、大小、SHA-256 和未引用差异均为 0。
 - 发布窗口与稳定期 Backend、Worker、Frontend、Nginx 的 ERROR/CRITICAL/FATAL、异常和 HTTP 5xx 精确计数均为 0。验收未携带管理员 Session、Cookie 或 CSRF，未调用真实确认/撤销、提交、上传、删除、邮件或飞书同步写接口。
 - 当前仍为 `APP_ENV=development` 的校内 HTTP Compose，仅 Nginx 映射主机 5000，并非 TLS production Compose。新加密归档与恢复私钥材料仍同机位于 `/tmp`，必须迁移到受控异机介质并分离保存；本次部署没有扩大该既有边界。
+
+## 2026-09-08 通知邮件正文渲染部署
+
+- 本次无数据库迁移，只构建并替换 Backend/Worker。固定标签为 `notification-email-content-20260908`，镜像 `sha256:d6dca2dc1778d19b496dc4c726b693a7f2cc650cd6bdba4d46f7c83a58a6ab34`，运行用户为 `appuser`；无网络、只读、去 capabilities 候选验证确认 Markdown 标题/强调可渲染且脚本不可执行。
+- 复用已完成空卷恢复与 1,384 个对象零差异对账的 `pnx-backup-20260908T045305Z-daily`，部署前再次校验 46,440,942 字节加密归档 SHA-256。回滚标签 `notification-email-content-rollback-20260908` 指向旧 Backend/Worker `sha256:41e4bf16bb57…`。
+- 最终 Backend/Worker 容器为 `fa5c6d1e6992…`、`71591f412be7…`；Frontend、PostgreSQL、MinIO 容器保持 `0df2c6872bdc…`、`bfa750f66ab0…`、`331150f34f37…`，当前 Frontend digest `sha256:80dc5b64e94e…` 另加 `notification-email-content-20260908` 别名供单一应用标签后续重建。Nginx 容器 ID 保持 `bda2b5f14706…` 并只重启刷新上游。
+- 六服务 healthy、RestartCount 0；四个健康入口和登录页通过，匿名通知 API 为 401，运行源码标记有效，Alembic 保持 `20260908_0023 (head)`。部署前后用户、通知、Outbox 均为 `196/4/960`，活动 Outbox 仍为两条作业关闭任务。
+- 首次 `docker compose up` 未显式传入 `--env-file .env`，Compose 短暂以默认配置创建 `dev` Backend/Worker，Worker 因数据库配置不匹配重启。约一分钟内用正式环境文件、固定标签、禁止拉取和禁止重建参数纠正；Nginx 窗口日志无 5xx，数据库聚合无变化，误生成 `dev` 标签已删除。
+- 稳定期 Backend/Worker 的 Traceback、CRITICAL、未处理异常与连接拒绝计数为 0，Nginx 5xx 为 0。验收未携带管理员 Session、Cookie 或 CSRF，未创建通知、调用发送更新或触发真实 SMTP。
+
+## 2026-09-08 新入技术组学生历史作业可见性部署
+
+- 为排除共享工作树中尚未完成的通知图片改动，候选以运行中的 `notification-email-content-20260908` Backend 为父镜像，只覆盖作业 Repository、用户 Service、问卷 Service 和迁移 `20260908_0024`。固定标签 `direction-assignment-history-20260908` 的 Backend/Worker 为 `sha256:84bf1aa1ad6cd11a92287bc9fbdf4f6de9f6bf35b20aff4ff2669f9b4c4585a1`，运行用户为 `appuser`；Frontend 复用 `sha256:80dc5b64e94e4fceefc162bcaeb3b45073f6bfab51f7e231248061d914c3d423`。
+- 部署前 OpenPGP 每日增量备份 `pnx-backup-20260908T124034Z-daily` 为 53,749,431 字节、数据库 dump 30,917,237 字节，对象库存 1,419 个/5,449,700,424 字节，归档、校验和与元数据权限均为 0600；SHA-256 为 `eaef9c572b08a4b9b35fed46d28040017de3165b84c66c6a0df28574fe4efbf0`。独立项目 `pnx-restore-direction-history-20260908` 从全新 PostgreSQL/MinIO 卷恢复成功，RPO 92 秒、RTO 163 秒，未跟踪对象为 0；隔离资源已精确清理。
+- 恢复副本用候选完成 `0023 → 0024 → 0024 → 0023 → 0024`，受众数量为 `348 → 351 → 351 → 348 → 351`，迁移固定标记行为 `0 → 3 → 3 → 0 → 3`，提交/版本始终为 `49/58`。生产只前滚一次到 `20260908_0024 (head)`，同样新增 3 条受众；三份作业受众分别为 `115/170/66`。
+- `.env` 已固定 `APP_IMAGE_TAG=direction-assignment-history-20260908`。只以 `--no-deps --force-recreate --wait --no-build --pull never` 替换 Backend/Worker，并重启 Nginx 刷新上游；Frontend 容器保持 `0df2c6872bdc…`，PostgreSQL/MinIO 容器保持 `bfa750f66ab0…`、`331150f34f37…`，没有重建数据容器、网络或卷。
+- 最终 Backend/Worker 容器为 `81649e4f6563…`、`cde53f089725…`。六服务 healthy、RestartCount 0；登录页、Backend live/ready、Worker 与 Nginx 健康入口均为 200，匿名作业 API 为 401，运行 OpenAPI 为 108 条路径，运行源码与 `0024` 标记有效。发布后受众/提交/版本为 `351/49/58`，Outbox 保持 `dead=42/pending=2/sent=919`。
+- 发布窗口 Backend、Worker、Frontend 严重错误关键词与 Nginx 5xx 均为 0。验收未携带管理员 Session、Cookie 或 CSRF，未调用用户改组、问卷批量配置、提交、邮件、上传、删除或飞书同步写接口。若回填受众后已形成提交，回滚应优先前滚应用修复，不直接降级删除受众。
+- 本次发布完成后，并行通知图片功能以合并标签 `announcement-inline-images-20260908` 接续上线；运行 Backend/Worker `sha256:aa45afdec0eb…` 已逐项确认仍包含历史受众 Repository、两条方向写路径和 `0024`，Frontend 为 `sha256:969b98d599c9…`。接续后六服务仍 healthy、RestartCount 0，五个健康入口为 200，匿名作业 API 为 401，OpenAPI 为 109 条路径，Alembic/受众/提交/版本仍为 `0024/351/49/58`，严重错误和 Nginx 5xx 为 0。
+- 合并标签同时启用通知 Markdown 专用图片 URI、登录态 `GET /files/{file_id}/content`、管理端一键插入和邮件 CID related part。Backend 定向 61 项、完整 435 项、Ruff/181 文件格式、155 文件严格 Mypy，Frontend 通知 11 项、完整 157 项、ESLint、严格 TypeScript、宿主与镜像内生产构建均通过。
+- 通知图片入口使用随机 UUID匿名请求返回 401，运行 OpenAPI 与 Markdown 标记有效。发布只替换 Backend/Worker/Frontend并重启 Nginx，未执行新迁移、未重建 PostgreSQL/MinIO、未携带真实 Session、未修改通知或触发 SMTP；回滚标签分别固定部署前 Backend/Worker 与 Frontend 镜像。

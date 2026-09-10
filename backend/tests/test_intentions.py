@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.assignments.repository import AssignmentRepository
 from app.audit.repository import AuditRepository
 from app.auth.service import AuthenticatedContext
 from app.core.config import Settings
@@ -129,6 +130,12 @@ def make_service(now: datetime) -> tuple[IntentionService, AsyncMock]:
         clock=lambda: now,
     )
     service._audit = cast(AuditRepository, SimpleNamespace(add=Mock()))
+    service._assignments = cast(
+        AssignmentRepository,
+        SimpleNamespace(
+            add_historical_assignment_audiences_for_student=AsyncMock(return_value=0),
+        ),
+    )
     return service, session
 
 
@@ -1131,6 +1138,11 @@ async def test_admin_applies_latest_first_choices_to_active_student_directions()
     assert first_user.revision == 4
     assert second_user.direction_id == vision_direction_id
     assert second_user.revision == 5
+    add_historical = cast(
+        AsyncMock,
+        service._assignments.add_historical_assignment_audiences_for_student,
+    )
+    add_historical.assert_awaited_once_with(user=first_user, created_at=now)
     direction_call = active_directions.await_args
     assert direction_call is not None
     assert set(direction_call.args[0]) == {
@@ -1148,6 +1160,7 @@ async def test_admin_applies_latest_first_choices_to_active_student_directions()
     assert audit_items[0].target_type == "user"
     assert audit_items[0].target_id == first_user.id
     assert audit_items[0].change_summary["source_survey_id"] == str(survey.id)
+    assert audit_items[1].change_summary["assignment_audience_added_count"] == 0
     assert "option" not in repr([item.change_summary for item in audit_items])
 
 

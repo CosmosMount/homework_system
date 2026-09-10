@@ -1,4 +1,12 @@
-from app.core.markdown import render_markdown
+from uuid import uuid4
+
+import pytest
+
+from app.core.markdown import (
+    announcement_image_ids,
+    render_announcement_markdown,
+    render_markdown,
+)
 
 
 def test_render_markdown_supports_safe_content_and_demotes_headings() -> None:
@@ -37,3 +45,25 @@ def test_render_markdown_escapes_raw_html_instead_of_executing_it() -> None:
 
     assert "<object" not in rendered
     assert "&lt;object" in rendered
+
+
+def test_announcement_markdown_only_renders_server_scoped_images() -> None:
+    file_id = uuid4()
+    rendered = render_announcement_markdown(
+        f"![训练图](announcement-image:{file_id})\n\n"
+        "![远程跟踪](https://tracker.invalid/pixel.png)\n\n"
+        "![危险](javascript:alert(1))",
+        image_source=lambda image_id: f"/api/v1/files/{image_id}/content",
+    )
+
+    assert announcement_image_ids(f"![训练图](announcement-image:{file_id})") == [file_id]
+    assert f'src="/api/v1/files/{file_id}/content"' in rendered
+    assert 'alt="训练图"' in rendered
+    assert "tracker.invalid" not in rendered
+    assert 'src="javascript:' not in rendered
+    assert rendered.count("<img") == 1
+
+
+def test_announcement_markdown_rejects_malformed_scoped_image_id() -> None:
+    with pytest.raises(ValueError, match="INVALID_ANNOUNCEMENT_IMAGE_REFERENCE"):
+        announcement_image_ids("![错误](announcement-image:not-a-uuid)")

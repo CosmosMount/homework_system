@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { AnnouncementUploader } from "@/components/announcements/announcement-uploader";
@@ -13,6 +13,7 @@ import {
 import { ApiError, csrfFetch } from "@/lib/api/client";
 import type {
   AnnouncementAdmin,
+  AnnouncementAttachment,
   CompletedFile,
   Direction,
 } from "@/lib/api/types";
@@ -47,6 +48,7 @@ export function AnnouncementEditor({
   directions: Direction[];
 }>) {
   const router = useRouter();
+  const bodyInputRef = useRef<HTMLTextAreaElement>(null);
   const [announcement, setAnnouncement] = useState(initialAnnouncement);
   const [title, setTitle] = useState(initialAnnouncement?.title ?? "");
   const [summary, setSummary] = useState(initialAnnouncement?.summary ?? "");
@@ -74,7 +76,16 @@ export function AnnouncementEditor({
   const [attachmentIds, setAttachmentIds] = useState(
     initialAnnouncement?.attachment_file_ids ?? [],
   );
-  const [uploadedNames, setUploadedNames] = useState<Record<string, string>>({});
+  const [attachmentDetails, setAttachmentDetails] = useState<
+    Record<string, AnnouncementAttachment>
+  >(() =>
+    Object.fromEntries(
+      (initialAnnouncement?.attachments ?? []).map((attachment) => [
+        attachment.id,
+        attachment,
+      ]),
+    ),
+  );
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -126,6 +137,11 @@ export function AnnouncementEditor({
     );
     setAnnouncement(saved);
     setAttachmentIds(saved.attachment_file_ids);
+    setAttachmentDetails(
+      Object.fromEntries(
+        saved.attachments.map((attachment) => [attachment.id, attachment]),
+      ),
+    );
     if (current === null) {
       router.replace("/admin/announcements/" + saved.id + "/edit");
     }
@@ -241,11 +257,46 @@ export function AnnouncementEditor({
     setAttachmentIds((current) =>
       current.includes(file.file_id) ? current : [...current, file.file_id],
     );
-    setUploadedNames((current) => ({
+    setAttachmentDetails((current) => ({
       ...current,
-      [file.file_id]: file.file_name,
+      [file.file_id]: {
+        id: file.file_id,
+        file_name: file.file_name,
+        size_bytes: file.size_bytes,
+        media_type: file.media_type,
+        sha256: file.sha256,
+      },
     }));
     setMessage("附件已完成校验；请保存通知以正式绑定。");
+  }
+
+  function insertImage(fileId: string) {
+    const attachment = attachmentDetails[fileId];
+    if (!attachment?.media_type.startsWith("image/")) return;
+    const alt = attachment.file_name
+      .replaceAll("\\", "\\\\")
+      .replaceAll("]", "\\]");
+    const snippet = `![${alt}](announcement-image:${fileId})`;
+    const input = bodyInputRef.current;
+    const start = input?.selectionStart ?? bodyMarkdown.length;
+    const end = input?.selectionEnd ?? start;
+    const separatorBefore =
+      start > 0 && bodyMarkdown[start - 1] !== "\n" ? "\n\n" : "";
+    const separatorAfter =
+      end < bodyMarkdown.length && bodyMarkdown[end] !== "\n" ? "\n\n" : "";
+    const nextBody =
+      bodyMarkdown.slice(0, start) +
+      separatorBefore +
+      snippet +
+      separatorAfter +
+      bodyMarkdown.slice(end);
+    setBodyMarkdown(nextBody);
+    const nextCursor = start + separatorBefore.length + snippet.length;
+    requestAnimationFrame(() => {
+      input?.focus();
+      input?.setSelectionRange(nextCursor, nextCursor);
+    });
+    setMessage("图片引用已插入正文；保存后会在站内和邮件中显示。");
   }
 
   const editable = announcement?.status !== "archived";
@@ -276,6 +327,7 @@ export function AnnouncementEditor({
           <label className="block text-sm font-medium">
             摘要
             <textarea
+              ref={bodyInputRef}
               className={inputClassName + " min-h-24 py-3"}
               disabled={!editable}
               maxLength={500}
@@ -295,7 +347,7 @@ export function AnnouncementEditor({
               value={bodyMarkdown}
             />
             <span className="mt-2 block text-xs text-[var(--color-text-muted)]">
-              原始 HTML、远程图片和危险协议会被后端禁用或清洗。
+              图片请先上传为通知附件，再使用“插入正文”。原始 HTML、远程图片和危险协议会被后端禁用或清洗。
             </span>
           </label>
         </section>
@@ -398,20 +450,31 @@ export function AnnouncementEditor({
                   key={fileId}
                 >
                   <span className="text-sm">
-                    {uploadedNames[fileId] ?? fileId}
+                    {attachmentDetails[fileId]?.file_name ?? fileId}
                   </span>
                   {editable ? (
-                    <button
-                      className="text-sm text-[var(--color-danger)]"
-                      onClick={() =>
-                        setAttachmentIds((current) =>
-                          current.filter((item) => item !== fileId),
-                        )
-                      }
-                      type="button"
-                    >
-                      移除
-                    </button>
+                    <div className="flex items-center gap-3">
+                      {attachmentDetails[fileId]?.media_type.startsWith("image/") ? (
+                        <button
+                          className="text-sm text-[var(--color-accent-hover)]"
+                          onClick={() => insertImage(fileId)}
+                          type="button"
+                        >
+                          插入正文
+                        </button>
+                      ) : null}
+                      <button
+                        className="text-sm text-[var(--color-danger)]"
+                        onClick={() =>
+                          setAttachmentIds((current) =>
+                            current.filter((item) => item !== fileId),
+                          )
+                        }
+                        type="button"
+                      >
+                        移除
+                      </button>
+                    </div>
                   ) : null}
                 </div>
               ))}

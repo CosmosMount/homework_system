@@ -118,6 +118,28 @@ class MinioObjectStore:
         except BotoCoreError as exc:
             raise ObjectStoreError("OBJECT_STORE_UNAVAILABLE") from exc
 
+    def _read_bytes_sync(self, object_key: str, max_bytes: int) -> bytes:
+        response = self._client.get_object(Bucket=self._bucket, Key=object_key)
+        body = response.get("Body")
+        if body is None or not hasattr(body, "read") or not hasattr(body, "close"):
+            raise ObjectStoreError("INVALID_OBJECT_RESPONSE")
+        stream = cast(StreamingBody, body)
+        try:
+            content = stream.read(max_bytes + 1)
+        finally:
+            stream.close()
+        if len(content) > max_bytes:
+            raise ObjectStoreError("OBJECT_TOO_LARGE")
+        return content
+
+    async def read_bytes(self, object_key: str, *, max_bytes: int) -> bytes:
+        try:
+            return await asyncio.to_thread(self._read_bytes_sync, object_key, max_bytes)
+        except ObjectStoreError:
+            raise
+        except (BotoCoreError, ClientError, OSError) as exc:
+            raise ObjectStoreError("OBJECT_READ_FAILED") from exc
+
     async def list_object_keys(self) -> list[str]:
         await self.ensure_bucket()
         continuation_token: str | None = None

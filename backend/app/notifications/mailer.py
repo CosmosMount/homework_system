@@ -1,15 +1,18 @@
 import asyncio
+import re
 import smtplib
 import ssl
 from dataclasses import dataclass
 from datetime import datetime
 from email.message import EmailMessage
 from html import escape
-from typing import Protocol
+from typing import Protocol, cast
 from urllib.parse import quote
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from app.core.config import Settings
+from app.core.markdown import render_announcement_markdown
 from app.notifications.models import OutboxJob
 
 
@@ -22,15 +25,46 @@ class PermanentMailError(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class InlineMailImage:
+    file_id: UUID
+    content_id: str
+    content: bytes
+    media_type: str
+    file_name: str
+
+
+@dataclass(frozen=True, slots=True)
 class RenderedMail:
     recipient: str
     subject: str
     text: str
     html: str
+    inline_images: tuple[InlineMailImage, ...] = ()
 
 
 class MailSender(Protocol):
     async def send(self, job: OutboxJob, secret_payload: dict[str, object]) -> None: ...
+
+
+_INLINE_IMAGE_MARKDOWN = re.compile(r"!\[([^\]\r\n]*)\]\(announcement-image:[0-9a-fA-F-]{36}\)")
+
+
+def _plain_announcement_markdown(markdown: str) -> str:
+    return _INLINE_IMAGE_MARKDOWN.sub(
+        lambda match: f"[图片：{match.group(1) or '通知图片'}]",
+        markdown,
+    )
+
+
+def _inline_images(secret_payload: dict[str, object]) -> tuple[InlineMailImage, ...]:
+    value = secret_payload.get("inline_images")
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)) or not all(
+        isinstance(item, InlineMailImage) for item in value
+    ):
+        raise PermanentMailError("INVALID_INLINE_IMAGES")
+    return tuple(value)
 
 
 def render_mail(
@@ -82,17 +116,48 @@ def render_mail(
             raise PermanentMailError("MISSING_TITLE")
         prefix = "通知更新" if job.job_type == "announcement_update_email" else "新通知"
         subject = f"PNX Training Hub {prefix}：{subject_title}"
-        text = (
-            f"{full_name}，你好：\n\n{prefix}：{title}\n{summary}\n\n"
-            f"请登录平台查看完整内容与附件：\n{link}"
+        body_markdown = job.payload.get("body_markdown")
+        inline_images = _inline_images(secret_payload)
+        images_by_id = {image.file_id: image for image in inline_images}
+        if isinstance(body_markdown, str) and body_markdown.strip():
+            normalized_body = body_markdown.strip()
+            rendered_body = render_announcement_markdown(
+                normalized_body,
+                image_source=lambda file_id: (
+                    f"cid:{images_by_id[file_id].content_id}" if file_id in images_by_id else None
+                ),
+            )
+            text = (
+                f"{full_name}，你好：\n\n{prefix}：{title}\n{summary}\n\n"
+                f"{_plain_announcement_markdown(normalized_body)}"
+                f"\n\n请登录平台查看附件与原通知：\n{link}"
+            )
+            html = (
+                f"<p>{safe_name}，你好：</p>"
+                f"<p><strong>{escape(prefix)}：{escape(title)}</strong></p>"
+                f"<p>{escape(summary)}</p>"
+                f"<div>{rendered_body}</div>"
+                f'<p><a href="{escape(link)}">登录平台查看附件与原通知</a></p>'
+            )
+        else:
+            # 兼容部署前已经入队、尚未携带正文快照的通知邮件。
+            text = (
+                f"{full_name}，你好：\n\n{prefix}：{title}\n{summary}\n\n"
+                f"请登录平台查看完整内容与附件：\n{link}"
+            )
+            html = (
+                f"<p>{safe_name}，你好：</p>"
+                f"<p><strong>{escape(prefix)}：{escape(title)}</strong></p>"
+                f"<p>{escape(summary)}</p>"
+                f'<p><a href="{escape(link)}">登录平台查看完整内容与附件</a></p>'
+            )
+        return RenderedMail(
+            recipient=recipient,
+            subject=subject,
+            text=text,
+            html=html,
+            inline_images=inline_images,
         )
-        html = (
-            f"<p>{safe_name}，你好：</p>"
-            f"<p><strong>{escape(prefix)}：{escape(title)}</strong></p>"
-            f"<p>{escape(summary)}</p>"
-            f'<p><a href="{escape(link)}">登录平台查看完整内容与附件</a></p>'
-        )
-        return RenderedMail(recipient=recipient, subject=subject, text=text, html=html)
 
     if job.job_type == "intention_open_email":
         title = str(job.payload["title"])
@@ -204,6 +269,20 @@ class SMTPMailSender:
         message["Message-ID"] = f"<{id(message)}@pnx-training.local>"
         message.set_content(mail.text)
         message.add_alternative(mail.html, subtype="html")
+        payload = message.get_payload()
+        if not isinstance(payload, list):
+            raise PermanentMailError("INVALID_MIME_STRUCTURE")
+        html_part = cast(EmailMessage, payload[-1])
+        for inline_image in mail.inline_images:
+            maintype, subtype = inline_image.media_type.split("/", 1)
+            html_part.add_related(
+                inline_image.content,
+                maintype=maintype,
+                subtype=subtype,
+                cid=f"<{inline_image.content_id}>",
+                filename=inline_image.file_name,
+                disposition="inline",
+            )
 
         try:
             with smtplib.SMTP(

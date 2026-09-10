@@ -17,6 +17,7 @@ from app.auth.service import AuthenticatedContext, context_effective_role, conte
 from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.core.identifiers import uuid7
+from app.core.markdown import ANNOUNCEMENT_IMAGE_MEDIA_TYPES
 from app.submissions.repository import SubmissionRepository
 from app.uploads.models import StoredFile, UploadPart, UploadSession
 from app.uploads.object_store import (
@@ -999,6 +1000,39 @@ class UploadService:
             file_name=stored_file.original_name,
             size_bytes=stored_file.size_bytes,
             media_type=detected_media_type,
+            sha256=stored_file.sha256,
+        )
+
+    async def inline_image_url(
+        self,
+        file_id: UUID,
+        *,
+        context: AuthenticatedContext,
+    ) -> PreviewUrlResponse:
+        stored_file = await self._authorized_file(file_id, context=context)
+        expected_media_type = ANNOUNCEMENT_IMAGE_MEDIA_TYPES.get(stored_file.extension)
+        if (
+            stored_file.purpose != "announcement_attachment"
+            or expected_media_type is None
+            or stored_file.detected_media_type != expected_media_type
+        ):
+            raise self._preview_not_supported()
+        try:
+            url = await self._object_store.presign_inline(
+                object_key=stored_file.object_key,
+                file_name=stored_file.original_name,
+                content_type=expected_media_type,
+                expires_seconds=300,
+            )
+        except ObjectStoreError as exc:
+            raise self._store_unavailable(exc) from exc
+        now = self._clock()
+        return PreviewUrlResponse(
+            url=url,
+            expires_at=now + timedelta(seconds=300),
+            file_name=stored_file.original_name,
+            size_bytes=stored_file.size_bytes,
+            media_type=expected_media_type,
             sha256=stored_file.sha256,
         )
 

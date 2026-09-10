@@ -161,6 +161,7 @@ export type AnnouncementAdmin = {
   status: AnnouncementStatus;
   audience: AnnouncementAudience;
   attachment_file_ids: string[];
+  attachments: AnnouncementAttachment[];
   publish_at: string | null;
   published_at: string | null;
   pinned_until: string | null;

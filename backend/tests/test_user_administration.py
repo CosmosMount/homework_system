@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.assignments.repository import AssignmentRepository
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
 from app.auth.service import AuthenticatedContext, AuthenticationService
@@ -19,7 +20,7 @@ from app.users.repository import (
     AccountObjectCleanup,
     UserRepository,
 )
-from app.users.schemas import UserRoleRequest
+from app.users.schemas import UserPatchRequest, UserRoleRequest
 from app.users.service import AuditContext, UserAdministrationService
 
 
@@ -206,6 +207,87 @@ async def test_demoting_another_admin_revokes_every_session() -> None:
         "to": "student",
         "reason": "安全回归测试",
     }
+
+
+@pytest.mark.asyncio
+async def test_patch_active_student_direction_adds_historical_assignment_audiences() -> None:
+    now = datetime(2026, 9, 8, 8, 30, tzinfo=UTC)
+    target = make_account(now=now)
+    direction_id = uuid4()
+    session = cast(
+        AsyncSession,
+        SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
+    )
+    service = UserAdministrationService(
+        session,
+        Settings(app_env="test"),
+        clock=lambda: now,
+    )
+    service._users = cast(
+        UserRepository,
+        SimpleNamespace(
+            get_by_id=AsyncMock(return_value=target),
+            get_direction=AsyncMock(return_value=SimpleNamespace(id=direction_id)),
+        ),
+    )
+    add_historical = AsyncMock(return_value=3)
+    service._assignments = cast(
+        AssignmentRepository,
+        SimpleNamespace(
+            add_historical_assignment_audiences_for_student=add_historical,
+        ),
+    )
+    service._audit = cast(AuditRepository, SimpleNamespace(add=Mock()))
+    service._response = AsyncMock(return_value=SimpleNamespace())  # type: ignore[method-assign]
+
+    await service.patch_user(
+        target.id,
+        UserPatchRequest(revision=target.revision, direction_id=direction_id),
+        audit=audit_context(make_active_admin()),
+    )
+
+    add_historical.assert_awaited_once_with(user=target, created_at=now)
+    assert target.direction_id == direction_id
+    audit = cast(Mock, service._audit.add).call_args.args[0]
+    assert audit.change_summary["historical_assignment_audience_added_count"] == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_direction", ["same", "none"])
+async def test_patch_student_direction_does_not_backfill_without_a_new_group(
+    next_direction: str,
+) -> None:
+    now = datetime(2026, 9, 8, 8, 30, tzinfo=UTC)
+    target = make_account(now=now)
+    target.direction_id = uuid4()
+    direction_id = target.direction_id if next_direction == "same" else None
+    session = cast(
+        AsyncSession,
+        SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
+    )
+    service = UserAdministrationService(session, Settings(app_env="test"), clock=lambda: now)
+    service._users = cast(
+        UserRepository,
+        SimpleNamespace(
+            get_by_id=AsyncMock(return_value=target),
+            get_direction=AsyncMock(return_value=SimpleNamespace(id=target.direction_id)),
+        ),
+    )
+    add_historical = AsyncMock()
+    service._assignments = cast(
+        AssignmentRepository,
+        SimpleNamespace(add_historical_assignment_audiences_for_student=add_historical),
+    )
+    service._audit = cast(AuditRepository, SimpleNamespace(add=Mock()))
+    service._response = AsyncMock(return_value=SimpleNamespace())  # type: ignore[method-assign]
+
+    await service.patch_user(
+        target.id,
+        UserPatchRequest(revision=target.revision, direction_id=direction_id),
+        audit=audit_context(make_active_admin()),
+    )
+
+    add_historical.assert_not_awaited()
 
 
 @pytest.mark.asyncio

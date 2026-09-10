@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -14,8 +14,9 @@ from app.announcements.repository import AnnouncementRepository
 from app.announcements.schemas import AnnouncementAudience
 from app.announcements.service import AnnouncementAuditContext, AnnouncementService
 from app.auth.service import AuthenticatedContext
+from app.core.config import Settings
 from app.core.errors import ApplicationError
-from app.notifications.mailer import render_mail
+from app.notifications.mailer import InlineMailImage, SMTPMailSender, render_mail
 from app.notifications.models import OutboxJob
 from app.notifications.repository import (
     NotificationUnreadCounts,
@@ -23,6 +24,7 @@ from app.notifications.repository import (
     StudentNotificationRepository,
 )
 from app.notifications.service import OutboxProcessor
+from app.uploads.models import StoredFile
 from app.uploads.object_store import ObjectInspection
 from app.uploads.service import FileValidationError, detect_media_type, normalize_file_name
 from app.users.models import User
@@ -262,6 +264,11 @@ def make_announcement_mail_job(job_type: str) -> OutboxJob:
             "announcement_id": str(uuid4()),
             "title": "重要 <script>alert(1)</script>",
             "summary": "请查看 & 确认",
+            "body_markdown": (
+                "## 培训安排\n\n请完成 **重点内容**。"
+                "\n\n<script>alert('正文')</script>"
+                "\n\n[危险链接](javascript:alert('xss'))"
+            ),
             "target_url": f"/announcements/{uuid4()}",
         },
         secret_payload_ciphertext=None,
@@ -282,7 +289,7 @@ def make_announcement_mail_job(job_type: str) -> OutboxJob:
     "job_type",
     ["announcement_email", "announcement_update_email"],
 )
-def test_announcement_mail_escapes_user_content_and_contains_no_attachment_url(
+def test_announcement_mail_renders_sanitized_content_and_contains_no_attachment_url(
     job_type: str,
 ) -> None:
     rendered = render_mail(
@@ -293,9 +300,139 @@ def test_announcement_mail_escapes_user_content_and_contains_no_attachment_url(
 
     assert "<script>" not in rendered.html
     assert "&lt;script&gt;" in rendered.html
+    assert "<h3>培训安排</h3>" in rendered.html
+    assert "<strong>重点内容</strong>" in rendered.html
+    assert 'href="javascript:' not in rendered.html
+    assert "## 培训安排" in rendered.text
+    assert "请完成 **重点内容**。" in rendered.text
     assert "https://training.example.invalid/announcements/" in rendered.text
     assert "/storage/" not in rendered.text
     assert "/storage/" not in rendered.html
+
+
+def test_announcement_mail_keeps_legacy_jobs_without_content_deliverable() -> None:
+    job = make_announcement_mail_job("announcement_email")
+    job.payload.pop("body_markdown")
+
+    rendered = render_mail(
+        job,
+        {},
+        app_base_url="https://training.example.invalid",
+    )
+
+    assert "请登录平台查看完整内容与附件" in rendered.text
+    assert "登录平台查看完整内容与附件" in rendered.html
+
+
+def test_announcement_mail_job_snapshots_markdown_content() -> None:
+    now = datetime.now(UTC)
+    announcement = make_announcement(all_students=True)
+    image_id = uuid4()
+    announcement.body_markdown = f"## 入队时正文\n\n![接线图](announcement-image:{image_id})"
+    student = make_student(cohort_id=None, direction_id=None)
+    service = AnnouncementService(cast(AsyncSession, SimpleNamespace()))
+
+    job = service._mail_job_for(
+        announcement=announcement,
+        user=student,
+        job_type="announcement_email",
+        event_key=f"announcement:{announcement.id}:email:{student.id}",
+        now=now,
+    )
+
+    assert job.payload["body_markdown"] == announcement.body_markdown
+    assert job.payload["inline_image_file_ids"] == [str(image_id)]
+
+
+def test_inline_image_validation_requires_safe_selected_attachment() -> None:
+    image_id = uuid4()
+    image = cast(
+        StoredFile,
+        SimpleNamespace(
+            id=image_id,
+            extension="png",
+            detected_media_type="image/png",
+            size_bytes=1024,
+        ),
+    )
+
+    assert AnnouncementService._inline_image_ids(
+        f"![接线图](announcement-image:{image_id})",
+        [image],
+    ) == [image_id]
+
+    with pytest.raises(ApplicationError) as missing:
+        AnnouncementService._inline_image_ids(
+            f"![接线图](announcement-image:{uuid4()})",
+            [image],
+        )
+    assert missing.value.code == "ANNOUNCEMENT_IMAGE_NOT_ATTACHED"
+
+    image.detected_media_type = "image/svg+xml"
+    with pytest.raises(ApplicationError) as unsafe:
+        AnnouncementService._inline_image_ids(
+            f"![接线图](announcement-image:{image_id})",
+            [image],
+        )
+    assert unsafe.value.code == "ANNOUNCEMENT_IMAGE_NOT_SUPPORTED"
+
+
+def test_announcement_mail_renders_cid_image_and_readable_plain_text() -> None:
+    job = make_announcement_mail_job("announcement_email")
+    image_id = uuid4()
+    job.payload["body_markdown"] = f"正文前\n\n![接线图](announcement-image:{image_id})\n\n正文后"
+    inline_image = InlineMailImage(
+        file_id=image_id,
+        content_id=f"announcement-image-{image_id}@pnx-training.local",
+        content=b"safe-image",
+        media_type="image/png",
+        file_name="diagram.png",
+    )
+
+    rendered = render_mail(
+        job,
+        {"inline_images": [inline_image]},
+        app_base_url="https://training.example.invalid",
+    )
+
+    assert f'src="cid:{inline_image.content_id}"' in rendered.html
+    assert "announcement-image:" not in rendered.html
+    assert "[图片：接线图]" in rendered.text
+    assert rendered.inline_images == (inline_image,)
+
+
+def test_smtp_message_attaches_inline_image_as_related_cid_part() -> None:
+    job = make_announcement_mail_job("announcement_email")
+    image_id = uuid4()
+    job.payload["body_markdown"] = f"![接线图](announcement-image:{image_id})"
+    inline_image = InlineMailImage(
+        file_id=image_id,
+        content_id=f"announcement-image-{image_id}@pnx-training.local",
+        content=b"safe-image",
+        media_type="image/png",
+        file_name="diagram.png",
+    )
+    rendered = render_mail(
+        job,
+        {"inline_images": [inline_image]},
+        app_base_url="https://training.example.invalid",
+    )
+    smtp_client = Mock()
+    smtp_client.__enter__ = Mock(return_value=smtp_client)
+    smtp_client.__exit__ = Mock(return_value=False)
+
+    with patch(
+        "app.notifications.mailer.smtplib.SMTP",
+        return_value=smtp_client,
+    ):
+        SMTPMailSender(Settings(app_env="test"))._send_sync(rendered)
+
+    message = smtp_client.send_message.call_args.args[0]
+    related_parts = [part for part in message.walk() if part.get_content_maintype() == "image"]
+    assert message.get_content_type() == "multipart/alternative"
+    assert len(related_parts) == 1
+    assert related_parts[0]["Content-ID"] == f"<{inline_image.content_id}>"
+    assert related_parts[0].get_content_disposition() == "inline"
 
 
 def test_file_name_and_signature_validation_rejects_active_or_mismatched_files() -> None:
@@ -398,7 +535,7 @@ async def test_archive_refreshes_server_updated_fields_after_commit() -> None:
     repository = Mock()
     repository.get_by_id = AsyncMock(return_value=announcement)
     repository.audience_ids = AsyncMock(return_value=(set(), set()))
-    repository.attachment_file_ids = AsyncMock(return_value=[])
+    repository.attachments = AsyncMock(return_value=[])
     repository.audience_users = AsyncMock(return_value=[student])
     repository.published_recipient_count = AsyncMock(return_value=1)
     service._announcements = repository

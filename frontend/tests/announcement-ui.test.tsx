@@ -59,6 +59,7 @@ function announcement(
       match: "intersection",
     },
     attachment_file_ids: [],
+    attachments: [],
     publish_at: null,
     published_at: status === "published" ? "2026-08-24T00:00:00Z" : null,
     pinned_until: null,
@@ -249,6 +250,37 @@ describe("announcement UI", () => {
     expect(confirm).toHaveBeenCalledOnce();
     expect(csrfFetchMock).not.toHaveBeenCalled();
     expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("inserts a validated image attachment into Markdown", () => {
+    const withImage: AnnouncementAdmin = {
+      ...announcement("announcement-1", "图片通知", "draft"),
+      attachment_file_ids: ["11111111-1111-4111-8111-111111111111"],
+      attachments: [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          file_name: "接线图.png",
+          size_bytes: 1024,
+          media_type: "image/png",
+          sha256: "0".repeat(64),
+        },
+      ],
+    };
+    render(
+      <AnnouncementEditor directions={[]} initialAnnouncement={withImage} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "插入正文" }));
+
+    expect(
+      (screen.getByDisplayValue(/announcement-image:/) as HTMLTextAreaElement)
+        .value,
+    ).toContain(
+      "![接线图.png](announcement-image:11111111-1111-4111-8111-111111111111)",
+    );
+    expect(
+      screen.getByText("图片引用已插入正文；保存后会在站内和邮件中显示。"),
+    ).toBeInTheDocument();
   });
 
   it("confirms and deletes a published announcement before returning to the list", async () => {

@@ -97,6 +97,7 @@ class AnnouncementAdminResponse(BaseModel):
     status: AnnouncementStatus
     audience: AnnouncementAudience
     attachment_file_ids: list[UUID]
+    attachments: list[AnnouncementAttachmentResponse]
     publish_at: datetime | None
     published_at: datetime | None
     pinned_until: datetime | None

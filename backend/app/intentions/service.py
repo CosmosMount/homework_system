@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.assignments.repository import AssignmentRepository
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
 from app.auth.service import AuthenticatedContext, context_effective_role, context_is_admin
@@ -86,6 +87,7 @@ class IntentionService:
         self._repo = IntentionRepository(session)
         self._audit = AuditRepository(session)
         self._outbox = OutboxRepository(session)
+        self._assignments = AssignmentRepository(session)
 
     @staticmethod
     def _not_found() -> ApplicationError:
@@ -979,6 +981,7 @@ class IntentionService:
         now = self._clock()
         updated_count = 0
         unchanged_count = 0
+        assignment_audience_added_count = 0
         for record in records:
             target_direction_id = mapping_by_option[record.option_id]
             if record.user.direction_id == target_direction_id:
@@ -988,6 +991,12 @@ class IntentionService:
             record.user.direction_id = target_direction_id
             record.user.revision += 1
             updated_count += 1
+            assignment_audience_added_count += (
+                await self._assignments.add_historical_assignment_audiences_for_student(
+                    user=record.user,
+                    created_at=now,
+                )
+            )
             self._add_audit(
                 audit_context,
                 action="user.direction_assign_from_intention",
@@ -1020,6 +1029,7 @@ class IntentionService:
                 "updated_count": updated_count,
                 "unchanged_count": unchanged_count,
                 "skipped_response_count": skipped_response_count,
+                "assignment_audience_added_count": assignment_audience_added_count,
             },
         )
         try:

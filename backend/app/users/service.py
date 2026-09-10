@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.assignments.repository import AssignmentRepository
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
 from app.auth.service import AuthenticatedContext, AuthenticationService
@@ -53,6 +54,7 @@ class UserAdministrationService:
         self._audit = AuditRepository(session)
         self._outbox = OutboxRepository(session)
         self._auth = AuthenticationService(session, settings, clock=clock)
+        self._assignments = AssignmentRepository(session)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._settings = settings
         self._outbox_cipher = OutboxCipher(settings.outbox_encryption_key.get_secret_value())
@@ -256,6 +258,7 @@ class UserAdministrationService:
         if user.revision != payload.revision:
             await self._session.rollback()
             raise self._revision_conflict()
+        was_active_student = user.role == "student" and user.status == "active"
 
         changes: dict[str, Any] = {}
         fields = payload.model_fields_set
@@ -309,6 +312,7 @@ class UserAdministrationService:
             }
             user.cohort_id = payload.cohort_id
         if "direction_id" in fields:
+            direction_changed = user.direction_id != payload.direction_id
             if payload.direction_id is not None:
                 direction = await self._users.get_direction(payload.direction_id)
                 if direction is None:
@@ -319,6 +323,13 @@ class UserAdministrationService:
                 "to": str(payload.direction_id) if payload.direction_id is not None else None,
             }
             user.direction_id = payload.direction_id
+            if direction_changed and payload.direction_id is not None and was_active_student:
+                changes[
+                    "historical_assignment_audience_added_count"
+                ] = await self._assignments.add_historical_assignment_audiences_for_student(
+                    user=user,
+                    created_at=self._clock(),
+                )
 
         if not changes:
             await self._session.commit()

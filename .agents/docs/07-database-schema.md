@@ -129,7 +129,7 @@ erDiagram
 
 `id`, `title`, `summary`, `body_markdown`, `body_html`, `status`, `all_students`, `audience_match`, `publish_at`, `published_at`, `pinned_until`, `send_email`, `created_by`, `updated_by`, `archived_at`, `deleted_at`, `created_at`, `updated_at`, `revision`。
 
-- `body_html` 是经统一策略清洗后的缓存。
+- `body_html` 是经统一策略清洗后的缓存；通知正文图片只保存 `announcement-image:<file_uuid>` 专用 URI，不保存 MinIO URL、对象键或图片字节。权威绑定仍为 `announcement_files`。
 - `all_students=true` 时不得存在届次/方向关联。新建产品流程只写方向关联；历史届次关联继续保留。
 - `scheduled` 必须有未来 `publish_at`；`published` 必须有 `published_at`。
 - 管理员删除 `draft/scheduled` 时可物理删除本行并依赖纯关联外键级联；删除 `published` 时转为 `archived` 并写 `deleted_at`，手工归档保持空值直至再次删除。约束保证 `deleted_at IS NULL OR status='archived'`；普通详情与管理列表只读取空值行。
@@ -189,7 +189,8 @@ erDiagram
 `assignment_id`, `user_id`, `cohort_id_at_publish`, `direction_id_at_publish`, `created_at`，复合主键 `(assignment_id, user_id)`。
 
 - 发布事务生成初始受众；后续账号首次激活为普通学生时，同一激活事务为仍处于 `published`、未过公共截止且匹配的作业追加该学生。
-- 管理员修改 `published/closed` 作业受众时，在同一作业事务删除旧快照并按当前 `active student` 重建；`cohort_id_at_publish` 和 `direction_id_at_publish` 记录本次快照生成时分类。学生后续自行调整方向不会自动修改此表。
+- 激活学生技术方向实际变化为非空值时，同一用户更新或问卷批量配置事务按当前分类追加 `published/closed`、未归档且未删除的匹配作业；只插入缺失复合主键，不移除旧快照，`created_at` 与方向快照记录本次补录事实。迁移 `20260908_0024` 用固定时间标记为现有 active student 执行同一幂等补录，downgrade 只删除该标记行。
+- 管理员修改 `published/closed` 作业受众时，在同一作业事务删除旧快照并按当前 `active student` 重建；`cohort_id_at_publish` 和 `direction_id_at_publish` 记录本次快照生成时分类。用户方向变化只追加新分类匹配的缺失历史作业，不移除旧分类已存在的行。
 - 快照移除不级联删除 `submissions`、版本、评语、优秀标记、附件、延期、提醒或审计；管理名单以当前快照与历史提交者并集查询。
 
 ### `assignment_extensions`
@@ -299,7 +300,7 @@ Alembic 只精确排除这五张 legacy 表，以及 `submissions` 上已知的�
 - 回答删除时级联删除选择；选项仍被引用时 `RESTRICT`。永久删除问卷前 Repository 先按 `survey_id` 显式删除全部回答选择，再删除问卷根记录，避免级联删除题目/选项时被限制外键阻断；这些操作与审计、Outbox 清理同事务提交。
 - Service 在写入前锁定问卷和本人回答，验证全部问题、问题归属、选项归属及每题选择数量，并在同一事务校验/增加提交次数；数据库唯一约束处理并发首次填写。
 - 管理员统计只聚合回答数和分题选项选择数；实名名单通过受管理员保护的查询连接 `users`，批量装载最新选择，只返回需求允许字段。
-- 第一志愿方向配置连接 `intention_responses`、`intention_response_options` 与第一题选项，按用户 UUID 稳定锁定符合条件账号并更新 `users.direction_id/revision`；`(survey_id,user_id)` 唯一约束保证取到的是每人的唯一最新回答。选择表和回答表保持不变，既有 `assignment_audience_users` 也不补写或重算，因此无需 Alembic 迁移；应用回滚不会自动恢复已经明确写入的用户方向。
+- 第一志愿方向配置连接 `intention_responses`、`intention_response_options` 与第一题选项，按用户 UUID 稳定锁定符合条件账号并更新 `users.direction_id/revision`；`(survey_id,user_id)` 唯一约束保证取到的是每人的唯一最新回答。选择表和回答表保持不变，每个方向实际变化用户在同一事务追加当前分类匹配的缺失历史作业受众；应用回滚不会自动恢复已经明确写入的用户方向或删除已追加受众。
 - 方向配置资格直接复用已规范化保存的 `intention_surveys.title`：去除首尾空白后只接受精确值“意向选择”。该应用层规则不新增列、检查约束、索引或 Alembic 迁移。
 
 ## 提交、版本和评语

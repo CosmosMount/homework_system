@@ -30,7 +30,14 @@ from app.audit.repository import AuditRepository
 from app.auth.service import AuthenticatedContext, context_effective_role
 from app.core.errors import ApplicationError, ErrorDetail
 from app.core.identifiers import uuid7
-from app.core.markdown import render_markdown
+from app.core.markdown import (
+    ANNOUNCEMENT_IMAGE_MEDIA_TYPES,
+    ANNOUNCEMENT_INLINE_IMAGE_MAX_BYTES,
+    ANNOUNCEMENT_INLINE_IMAGE_MAX_COUNT,
+    ANNOUNCEMENT_INLINE_IMAGES_MAX_TOTAL_BYTES,
+    announcement_image_ids,
+    render_announcement_markdown,
+)
 from app.notifications.models import OutboxJob, StudentNotification
 from app.notifications.repository import OutboxRepository, StudentNotificationRepository
 from app.teams.repository import TeamRepository
@@ -174,6 +181,72 @@ class AnnouncementService:
                 )
         return ordered
 
+    @staticmethod
+    def _inline_image_ids(
+        body_markdown: str,
+        stored_files: Sequence[StoredFile],
+    ) -> list[UUID]:
+        try:
+            referenced_ids = announcement_image_ids(body_markdown)
+        except ValueError as exc:
+            raise ApplicationError(
+                status_code=400,
+                code="VALIDATION_ERROR",
+                message="通知正文图片引用格式无效。",
+                details=[
+                    ErrorDetail(
+                        field="body_markdown",
+                        reason="INVALID_ANNOUNCEMENT_IMAGE_REFERENCE",
+                    )
+                ],
+            ) from exc
+        unique_ids = list(dict.fromkeys(referenced_ids))
+        if len(unique_ids) > ANNOUNCEMENT_INLINE_IMAGE_MAX_COUNT:
+            raise ApplicationError(
+                status_code=400,
+                code="VALIDATION_ERROR",
+                message="通知正文最多插入 10 张图片。",
+                details=[ErrorDetail(field="body_markdown", reason="TOO_MANY_INLINE_IMAGES")],
+            )
+        by_id = {stored_file.id: stored_file for stored_file in stored_files}
+        total_bytes = 0
+        for file_id in unique_ids:
+            stored_file = by_id.get(file_id)
+            if stored_file is None:
+                raise ApplicationError(
+                    status_code=409,
+                    code="ANNOUNCEMENT_IMAGE_NOT_ATTACHED",
+                    message="正文图片必须是当前通知已选择的附件。",
+                )
+            expected_type = ANNOUNCEMENT_IMAGE_MEDIA_TYPES.get(stored_file.extension)
+            if expected_type is None or stored_file.detected_media_type != expected_type:
+                raise ApplicationError(
+                    status_code=415,
+                    code="ANNOUNCEMENT_IMAGE_NOT_SUPPORTED",
+                    message="正文图片只支持已校验的 PNG、JPEG、GIF 或 WebP。",
+                )
+            if stored_file.size_bytes > ANNOUNCEMENT_INLINE_IMAGE_MAX_BYTES:
+                raise ApplicationError(
+                    status_code=413,
+                    code="ANNOUNCEMENT_IMAGE_TOO_LARGE",
+                    message="单张正文图片不能超过 5 MiB。",
+                )
+            total_bytes += stored_file.size_bytes
+        if total_bytes > ANNOUNCEMENT_INLINE_IMAGES_MAX_TOTAL_BYTES:
+            raise ApplicationError(
+                status_code=413,
+                code="ANNOUNCEMENT_IMAGES_TOO_LARGE",
+                message="正文图片合计不能超过 20 MiB。",
+            )
+        return unique_ids
+
+    @staticmethod
+    def _body_html(announcement: Announcement) -> str:
+        return render_announcement_markdown(
+            announcement.body_markdown,
+            image_source=lambda file_id: f"/api/v1/files/{file_id}/content",
+        )
+
     def _add_audit(
         self,
         *,
@@ -205,7 +278,8 @@ class AnnouncementService:
         announcement: Announcement,
     ) -> AnnouncementAdminResponse:
         cohort_ids, direction_ids = await self._announcements.audience_ids(announcement.id)
-        file_ids = await self._announcements.attachment_file_ids(announcement.id)
+        attachments = await self._announcements.attachments(announcement.id)
+        file_ids = [stored_file.id for stored_file in attachments]
         recipient_count = len(await self._announcements.audience_users(announcement))
         actual_count = await self._announcements.published_recipient_count(announcement.id)
         return AnnouncementAdminResponse(
@@ -213,7 +287,7 @@ class AnnouncementService:
             title=announcement.title,
             summary=announcement.summary,
             body_markdown=announcement.body_markdown,
-            body_html=announcement.body_html,
+            body_html=self._body_html(announcement),
             status=announcement.status,
             audience=AnnouncementAudience(
                 all_students=announcement.all_students,
@@ -222,6 +296,16 @@ class AnnouncementService:
                 match=announcement.audience_match,
             ),
             attachment_file_ids=file_ids,
+            attachments=[
+                AnnouncementAttachmentResponse(
+                    id=stored_file.id,
+                    file_name=stored_file.original_name,
+                    size_bytes=stored_file.size_bytes,
+                    media_type=(stored_file.detected_media_type or stored_file.declared_media_type),
+                    sha256=stored_file.sha256,
+                )
+                for stored_file in attachments
+            ],
             publish_at=announcement.publish_at,
             published_at=announcement.published_at,
             pinned_until=announcement.pinned_until,
@@ -244,12 +328,19 @@ class AnnouncementService:
         self._validate_datetime(payload.publish_at, "publish_at")
         self._validate_datetime(payload.pinned_until, "pinned_until")
         now = self._clock()
+        announcement_id = uuid7()
+        stored_files = await self._validate_and_order_files(
+            announcement_id=announcement_id,
+            actor_user_id=audit.actor.user.id,
+            file_ids=payload.attachment_file_ids,
+        )
+        self._inline_image_ids(payload.body_markdown, stored_files)
         announcement = Announcement(
-            id=uuid7(),
+            id=announcement_id,
             title=payload.title.strip(),
             summary=payload.summary.strip(),
             body_markdown=payload.body_markdown.strip(),
-            body_html=render_markdown(payload.body_markdown),
+            body_html=render_announcement_markdown(payload.body_markdown),
             status="draft",
             all_students=payload.audience.all_students,
             audience_match=payload.audience.match,
@@ -269,11 +360,6 @@ class AnnouncementService:
             announcement.id,
             cohort_ids=payload.audience.cohort_ids,
             direction_ids=payload.audience.direction_ids,
-        )
-        await self._validate_and_order_files(
-            announcement_id=announcement.id,
-            actor_user_id=audit.actor.user.id,
-            file_ids=payload.attachment_file_ids,
         )
         await self._announcements.replace_files(
             announcement.id,
@@ -365,11 +451,12 @@ class AnnouncementService:
             await self._session.rollback()
             raise self._state_conflict("定时通知必须保留未来的发布时间。")
 
-        await self._validate_and_order_files(
+        stored_files = await self._validate_and_order_files(
             announcement_id=announcement.id,
             actor_user_id=audit.actor.user.id,
             file_ids=payload.attachment_file_ids,
         )
+        self._inline_image_ids(payload.body_markdown, stored_files)
         changed_fields = [
             field
             for field, before, after in (
@@ -387,7 +474,7 @@ class AnnouncementService:
         announcement.title = payload.title.strip()
         announcement.summary = payload.summary.strip()
         announcement.body_markdown = payload.body_markdown.strip()
-        announcement.body_html = render_markdown(payload.body_markdown)
+        announcement.body_html = render_announcement_markdown(payload.body_markdown)
         announcement.all_students = payload.audience.all_students
         announcement.audience_match = payload.audience.match
         announcement.publish_at = payload.publish_at
@@ -478,6 +565,10 @@ class AnnouncementService:
                 "announcement_id": str(announcement.id),
                 "title": announcement.title,
                 "summary": announcement.summary,
+                "body_markdown": announcement.body_markdown,
+                "inline_image_file_ids": [
+                    str(file_id) for file_id in announcement_image_ids(announcement.body_markdown)
+                ],
                 "target_url": f"/announcements/{announcement.id}",
             },
             secret_payload_ciphertext=None,
@@ -929,7 +1020,7 @@ class AnnouncementService:
             id=announcement.id,
             title=announcement.title,
             summary=announcement.summary,
-            body_html=announcement.body_html,
+            body_html=self._body_html(announcement),
             published_at=announcement.published_at or announcement.created_at,
             updated_at=announcement.updated_at,
             pinned_until=announcement.pinned_until,

@@ -1,3 +1,4 @@
+import hashlib
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -10,10 +11,17 @@ from app.assignments.service import ScheduledAssignmentProcessor
 from app.auth.models import OneTimeToken
 from app.auth.repository import AuthRepository
 from app.core.config import Settings
+from app.core.markdown import (
+    ANNOUNCEMENT_IMAGE_MEDIA_TYPES,
+    ANNOUNCEMENT_INLINE_IMAGE_MAX_BYTES,
+    ANNOUNCEMENT_INLINE_IMAGE_MAX_COUNT,
+    ANNOUNCEMENT_INLINE_IMAGES_MAX_TOTAL_BYTES,
+)
 from app.core.security import OutboxCipher
 from app.knowledge.feishu_client import KnowledgeSyncError
 from app.knowledge.service import KnowledgeSynchronizer
 from app.notifications.mailer import (
+    InlineMailImage,
     MailSender,
     PermanentMailError,
     SMTPMailSender,
@@ -22,6 +30,7 @@ from app.notifications.mailer import (
 from app.notifications.models import OutboxJob
 from app.notifications.repository import OutboxRepository
 from app.uploads.object_store import MinioObjectStore, ObjectStoreError
+from app.uploads.repository import UploadRepository
 
 RETRY_DELAYS = (
     timedelta(minutes=1),
@@ -118,6 +127,8 @@ class AccountObjectStore(Protocol):
     async def abort_multipart(self, *, object_key: str, upload_id: str) -> None: ...
 
     async def delete_object(self, object_key: str) -> None: ...
+
+    async def read_bytes(self, object_key: str, *, max_bytes: int) -> bytes: ...
 
 
 class OutboxProcessor:
@@ -252,6 +263,71 @@ class OutboxProcessor:
             )
         await self._object_store.delete_object(object_key)
 
+    async def _announcement_inline_images(
+        self,
+        job: OutboxJob,
+    ) -> list[InlineMailImage]:
+        raw_ids = job.payload.get("inline_image_file_ids")
+        if raw_ids is None:
+            return []
+        if not isinstance(raw_ids, list) or len(raw_ids) > ANNOUNCEMENT_INLINE_IMAGE_MAX_COUNT:
+            raise ValueError("invalid inline image list")
+        file_ids = [UUID(str(raw_id)) for raw_id in raw_ids]
+        if len(file_ids) != len(set(file_ids)):
+            raise ValueError("duplicate inline image id")
+        if not file_ids:
+            return []
+        announcement_id = UUID(str(job.payload["announcement_id"]))
+        async with self._factory() as session:
+            repository = UploadRepository(session)
+            stored_files = await repository.get_files(file_ids)
+            by_id = {stored_file.id: stored_file for stored_file in stored_files}
+            ordered_files = []
+            total_bytes = 0
+            for file_id in file_ids:
+                stored_file = by_id.get(file_id)
+                if stored_file is None:
+                    raise ValueError("missing inline image")
+                upload_session = await repository.get_session_by_file(file_id)
+                expected_type = ANNOUNCEMENT_IMAGE_MEDIA_TYPES.get(stored_file.extension)
+                if (
+                    stored_file.purpose != "announcement_attachment"
+                    or stored_file.status != "available"
+                    or stored_file.deleted_at is not None
+                    or upload_session is None
+                    or upload_session.context_id != announcement_id
+                    or expected_type is None
+                    or stored_file.detected_media_type != expected_type
+                    or stored_file.size_bytes > ANNOUNCEMENT_INLINE_IMAGE_MAX_BYTES
+                ):
+                    raise ValueError("invalid inline image")
+                total_bytes += stored_file.size_bytes
+                ordered_files.append((stored_file, expected_type))
+            if total_bytes > ANNOUNCEMENT_INLINE_IMAGES_MAX_TOTAL_BYTES:
+                raise ValueError("inline images too large")
+
+        images: list[InlineMailImage] = []
+        for stored_file, media_type in ordered_files:
+            content = await self._object_store.read_bytes(
+                stored_file.object_key,
+                max_bytes=ANNOUNCEMENT_INLINE_IMAGE_MAX_BYTES,
+            )
+            if (
+                len(content) != stored_file.size_bytes
+                or hashlib.sha256(content).hexdigest() != stored_file.sha256
+            ):
+                raise ObjectStoreError("OBJECT_INTEGRITY_MISMATCH")
+            images.append(
+                InlineMailImage(
+                    file_id=stored_file.id,
+                    content_id=f"announcement-image-{stored_file.id}@pnx-training.local",
+                    content=content,
+                    media_type=media_type,
+                    file_name=stored_file.original_name,
+                )
+            )
+        return images
+
     async def run_once(self) -> int:
         now = datetime.now(UTC)
         jobs = await self._claim(now)
@@ -287,6 +363,13 @@ class OutboxProcessor:
                         await self._mark_token_superseded(job.id)
                         continue
                     secret_payload = self._secret_payload(job)
+                    if job.job_type in {"announcement_email", "announcement_update_email"}:
+                        inline_images = await self._announcement_inline_images(job)
+                        if inline_images:
+                            secret_payload = {
+                                **secret_payload,
+                                "inline_images": inline_images,
+                            }
                     await self._sender.send(job, secret_payload)
             except KnowledgeSyncError as exc:
                 final_failure = exc.permanent or job.attempt_count + 1 >= job.max_attempts

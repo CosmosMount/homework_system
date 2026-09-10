@@ -138,7 +138,7 @@
 | 方法与路径 | 查询/结果 | 需求 |
 | --- | --- | --- |
 | `GET /announcements` | `query,unread,page,page_size`；只返回当前受众、已发布且未归档项 | NEWS-003～NEWS-005、NEWS-008 |
-| `GET /announcements/{announcement_id}` | 只返回当前受众的已发布通知正文、附件和更新时间；归档通知与不可见资源统一 404 | NEWS-001、NEWS-007～NEWS-009 |
+| `GET /announcements/{announcement_id}` | 只返回当前受众的已发布通知正文、附件和更新时间；正文合规图片 URL 为登录态文件内容入口；归档通知与不可见资源统一 404 | NEWS-001、NEWS-007～NEWS-009 |
 
 ### 管理接口
 
@@ -186,7 +186,7 @@
 
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
-| `GET /assignments` | `status,query,page,page_size`；普通学生只返回正式受众快照（发布时成员及激活时开放作业补录）中未归档的作业与最新提交摘要；管理员当前 Session 开启学生视图时，按该账号技术方向对新规则作业执行只读受众预览，不写入或改变快照，历史届次受众仍按原快照兼容 | HW-002、HW-003、HW-006、HW-008、AUTH-011 |
+| `GET /assignments` | `status,query,page,page_size`；普通学生只返回正式受众快照（发布时成员、激活时开放作业补录及新入技术组时历史作业追加）中未归档的作业与最新提交摘要；管理员当前 Session 开启学生视图时，按该账号技术方向对新规则作业执行只读受众预览，不写入或改变快照，历史届次受众仍按原快照兼容 | HW-002、HW-003、HW-006、HW-008、AUTH-011 |
 | `GET /assignments/{assignment_id}` | 返回未归档作业的要求、外链、有效截止、附件规则、本人提交摘要和优秀作业摘要；归档作业 404，管理员当前 Session 开启学生视图时仍按学生规则读取 | HW-001、HW-004、HW-006、HW-008、SHOW-002、AUTH-011 |
 | `POST /assignments/{assignment_id}/submission-versions` | 创建本人正式版本；管理员当前 Session 开启学生视图时允许以自身账号创建个人版本，普通管理员视图仍禁止代交 | SUB-001～SUB-005、FILE-001、AUTH-011 |
 | `GET /assignments/{assignment_id}/submission` | 返回本人提交聚合、版本和评语 | SUB-003、SUB-005～SUB-007 |
@@ -322,7 +322,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 
 删除接口只允许真实管理员并要求 CSRF，不要求问卷处于特定状态或提交 revision。Service 锁定问卷后，在同一事务删除该问卷仍为 `pending/processing/retry` 的 `intention_open_email`、全部回答选择和问卷根记录；受众、题目、选项及回答通过现有级联清理，已应用到 `users.direction_id` 的第一志愿结果不回滚。成功只返回 204 并写不含问卷/答案正文的 `intention.delete` 审计；不存在或已删除资源返回 `404 RESOURCE_NOT_FOUND`，失败整体回滚。删除提交后，管理/学生列表和所有直接读取、二维码、提交、统计及名单接口均因物理不存在而不再返回该问卷。
 
-第一志愿方向端点只允许真实管理员并要求 CSRF，`confirm_overwrite` 只能为 `true`。服务端以 `display_order,id` 确认第一题且要求单选，请求选项集合必须与第一题全部选项完全一致，全部目标方向必须仍启用；错误分别返回 `422 INVALID_INTENTION_FIRST_CHOICE`、`422 INTENTION_FIRST_CHOICE_MUST_BE_SINGLE`、`400 INVALID_INTENTION_DIRECTION_MAPPING`。事务只更新当前有最新回答的 `active student`，相同方向不增加 revision；没有可更新回答者返回 `422 NO_INTENTION_DIRECTION_RESPONSES`。成功结果中的跳过数量为全部回答者减去符合条件回答者；操作不受问卷状态限制，但开放问卷后续改答不会自动同步。事务失败整体回滚，不修改问卷、回答、提交次数、二维码、Session 或既有作业受众快照。
+第一志愿方向端点只允许真实管理员并要求 CSRF，`confirm_overwrite` 只能为 `true`。服务端以 `display_order,id` 确认第一题且要求单选，请求选项集合必须与第一题全部选项完全一致，全部目标方向必须仍启用；错误分别返回 `422 INVALID_INTENTION_FIRST_CHOICE`、`422 INTENTION_FIRST_CHOICE_MUST_BE_SINGLE`、`400 INVALID_INTENTION_DIRECTION_MAPPING`。事务只更新当前有最新回答的 `active student`，相同方向不增加 revision；每个实际换组学生同时追加当前分类匹配的未归档历史作业受众，既有受众不移除。没有可更新回答者返回 `422 NO_INTENTION_DIRECTION_RESPONSES`。成功结果中的跳过数量为全部回答者减去符合条件回答者；操作不受问卷状态限制，但开放问卷后续改答不会自动同步。事务失败整体回滚，不修改问卷、回答、提交次数、二维码或 Session。
 该端点仅适用于标题去除首尾空白后精确等于“意向选择”的问卷；其他标题、附加前后缀或近似文案返回 `422 INVALID_INTENTION_DIRECTION_SURVEY`。标题校验发生在题目、方向、回答和用户锁查询之前，拒绝时不得改方向或写成功审计。
 
 邮件端点只允许真实管理员并要求 CSRF，三种范围互斥：`manual` 要求 1～100 个不重复成员 UUID 且不得带技术组，`direction` 要求 1～100 个不重复技术组 UUID 且不得带成员，`all` 不得带成员或技术组。旧客户端可暂时只提交一个 `direction_id`，但不得与 `direction_ids` 同时存在。请求不得包含邮箱；手动模式由服务端整体重新校验全部账号仍为问卷受众内的已验证激活学生，任一无效或越界返回 `400 INVALID_INTENTION_EMAIL_RECIPIENTS`；技术组模式要求所选组是问卷目标技术组的子集，再整体复核全部技术组当前激活，任一越界或无效返回 `400 INVALID_INTENTION_EMAIL_DIRECTION`；技术组成员按并集合并，`all` 只解析问卷全部目标激活学生。最终集合为空返回 `400 NO_INTENTION_EMAIL_RECIPIENTS`，以上错误均不写部分任务。问卷不是当前可填写的 `open` 状态时返回 `409 INTENTION_CLOSED`。同一 revision 下同一成员的既有事件返回 `already_queued_count` 而不重复入队；关闭后重新开启 revision 增加，可由管理员再次显式选择发送。
@@ -373,6 +373,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 | `DELETE /uploads/{upload_id}` | 终止会话并异步清理对象 | FILE-002、FILE-006 |
 | `POST /files/{file_id}/download-url` | 授权后返回 5 分钟预签名 URL | FILE-005 |
 | `POST /files/{file_id}/preview-url` | 复用下载的完整业务授权；仅安全可预览类型返回 5 分钟 inline URL | FILE-005、FILE-007 |
+| `GET /files/{file_id}/content` | 复用通知附件业务授权；仅服务端检测匹配的 PNG/JPEG/GIF/WebP 通知附件 307 到 5 分钟 inline URL，供清洗后正文图片使用 | NEWS-001、FILE-005、FILE-007 |
 
 每次预签名最多申请 10 个分片；分片 URL 有效期 15 分钟。完成接口必须带幂等键。
 
@@ -383,7 +384,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 | `GET /admin/users` | `search,status,role,direction_id,activity,page,page_size`；`page` 为 1～10000、`page_size` 为 1～100；在分页前按姓名、学校邮箱、学号及中文/英文角色和状态搜索全部账号，返回准确 `total`；历史 `cohort_id` 查询参数保留兼容 | AUTH-007～AUTH-008 |
 | `POST /admin/users/{id}/disable` | `{reason}` 并撤销 Session | AUTH-007 |
 | `POST /admin/users/{id}/restore` | `{reason}` | AUTH-007 |
-| `PATCH /admin/users/{id}` | 调整姓名、学号、邮箱和可空技术方向；历史 `cohort_id` 字段保留兼容 | AUTH-007、AUTH-010 |
+| `PATCH /admin/users/{id}` | 调整姓名、学号、邮箱和可空技术方向；激活学生的方向实际变化为非空值时，同事务追加当前分类匹配的未归档历史作业受众；历史 `cohort_id` 字段保留兼容 | AUTH-007、AUTH-010、HW-002、HW-006 |
 | `POST /admin/users/{id}/role` | `{role,reason}`，禁止撤销最后一个管理员 | AUTH-008 |
 | `DELETE /admin/users/{id}` | `{reason,current_password,confirmation_email,backup_confirmed}`；删除任意非当前账号及个人数据，返回 204 | AUTH-012、NFR-006～NFR-009 |
 | `GET/POST /admin/cohorts` | 历史兼容的届次列表/创建接口，不再作为产品入口 | AUTH-007 |
@@ -494,3 +495,5 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 本人详情额外包含只属于当前学生、当前工单的未读解决提醒 `notification_ids`；管理员详情则只包含当前管理员、当前工单、`notification_type=help_request_created` 的未读 `notification_ids`，两者都用于调用既有单条已读接口且不返回通知事件键。学生创建工单时同事务为全部当前有效管理员生成固定脱敏标题的创建提醒；首次解决使该工单全部管理员未读创建提醒失效，修订不重复处理。管理员成功响应还包含 `request_type`、`status`、安全正文/答复、提交学生摘要、`resolved_by`、`resolved_at`、时间和 `revision`，不返回日志、通知内部事件键或其他学生工单。删除请求无主体，成功响应无正文；物理删除前把同一 `target_type=help_request,target_id=request_id` 的全部未读提醒标为已读，历史已读提醒继续保留。空答复返回 `400 VALIDATION_ERROR`，过期 revision 返回 `409 REVISION_CONFLICT`，不可见资源返回 `404 RESOURCE_NOT_FOUND`；学生和管理员学生视图调用管理接口返回 `403 FORBIDDEN`。
 
 `POST /files/{file_id}/preview-url` 与下载端点使用相同 Session、CSRF 和业务关联授权，成功响应字段与下载一致。只有服务端 `detected_media_type` 与扩展名匹配的 PDF、PNG/JPEG/GIF/WebP、MP4/WebM，或已检测为 `text/plain` 的安全文本扩展名可预览；文本签名响应强制 `text/plain; charset=utf-8`。HTML、SVG、Office、压缩包、可执行文件、未知或不匹配类型返回 `415 FILE_PREVIEW_NOT_SUPPORTED`，授权失败仍按既有 404，不得借 415 探测不可见文件。
+
+`GET /files/{file_id}/content` 是无状态变化的登录态读取，不要求 CSRF；它先复用相同业务关联授权，再要求文件目的为通知附件且服务端检测图片类型与扩展名匹配，成功返回带 `Cache-Control: private, no-store` 的 307。通知管理响应在 `attachment_file_ids` 外返回同序 `attachments` 安全元数据，供编辑器显示文件名并生成专用 Markdown；不返回对象键。

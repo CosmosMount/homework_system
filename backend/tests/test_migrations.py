@@ -13,7 +13,7 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260908_0023"]
+    assert script.get_heads() == ["20260908_0024"]
 
 
 def test_team_profiles_invitations_migration_is_reversible() -> None:
@@ -84,6 +84,27 @@ def test_assignment_submission_completion_migration_is_reversible() -> None:
     assert source.index("op.drop_constraint") < source.index(
         'op.drop_column("submissions", "completed_version_id")'
     )
+
+
+def test_direction_assignment_audience_backfill_migration_is_reversible() -> None:
+    backend_root = Path(__file__).resolve().parents[1]
+    migration_path = (
+        backend_root
+        / "migrations"
+        / "versions"
+        / "20260908_0024_backfill_direction_assignment_audiences.py"
+    )
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260908_0024"' in source
+    assert 'down_revision: str | None = "20260908_0023"' in source
+    assert "assignment.status IN ('published', 'closed')" in source
+    assert "assignment.deleted_at IS NULL" in source
+    assert "student.status = 'active'" in source
+    assert "student.role = 'student'" in source
+    assert "ON CONFLICT (assignment_id, user_id) DO NOTHING" in source
+    assert "DELETE FROM assignment_audience_users" in source
+    assert "WHERE created_at = :backfill_created_at" in source
 
 
 def test_admin_content_deleted_visibility_migration_has_safe_contract() -> None:
