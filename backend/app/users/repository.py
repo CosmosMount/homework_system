@@ -89,6 +89,16 @@ class UserRepository:
     def add(self, user: User) -> None:
         self._session.add(user)
 
+    async def list_inactive_account_ids(
+        self, *, before: datetime, after_id: UUID | None, limit: int
+    ) -> list[UUID]:
+        statement = select(User.id).where(
+            func.coalesce(User.last_active_at, User.email_verified_at, User.created_at) < before
+        )
+        if after_id is not None:
+            statement = statement.where(User.id > after_id)
+        return list((await self._session.scalars(statement.order_by(User.id).limit(limit))).all())
+
     async def touch_activity(self, user: User, *, at: datetime) -> datetime:
         latest = await self._session.scalar(
             update(User)

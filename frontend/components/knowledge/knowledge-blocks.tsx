@@ -278,7 +278,38 @@ function MediaBlock({ block, inGallery }: Readonly<{ block: KnowledgeBlock; inGa
   </>;
 }
 
+function VideoAttachment({ block }: Readonly<{ block: KnowledgeBlock }>) {
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const href = assetUrl(block.asset_id!);
+  const name = block.file_name || "知识库视频";
+  return <figure className="my-5 min-w-0 overflow-hidden rounded border border-slate-200 bg-slate-50">
+    <figcaption className="flex items-center justify-between gap-3 p-3 sm:p-4">
+      <span className="min-w-0 break-words text-sm font-semibold text-slate-900">{name}</span>
+      <a aria-label={"下载 " + name} className="shrink-0 text-sm font-semibold text-[#1687c9] underline" download={name} href={href}>下载</a>
+    </figcaption>
+    <video
+      aria-label={name}
+      className="max-h-[70vh] w-full bg-black"
+      controls
+      key={attempt}
+      onError={() => setFailed(true)}
+      playsInline
+      preload="none"
+      src={href + "?playback=true&attempt=" + attempt}
+    >您的浏览器不支持此视频，请使用下载入口查看。</video>
+    {failed ? <div className="p-3 text-sm sm:p-4">
+      <p role="alert">视频加载失败或浏览器不支持此编码，请重试或下载后查看。</p>
+      <button className="mt-2 min-h-10 rounded border border-slate-300 px-3 font-semibold text-[#1687c9]" onClick={() => { setFailed(false); setAttempt((value) => value + 1); }} type="button">重新加载视频</button>
+    </div> : null}
+  </figure>;
+}
+
 function AttachmentBlock({ allowFeishuSourceLinks, block }: Readonly<{ allowFeishuSourceLinks: boolean; block: KnowledgeBlock }>) {
+  const extension = block.file_name?.split(".").pop()?.toLowerCase();
+  if (block.asset_id && ((extension === "mp4" && block.mime_type === "video/mp4") || (extension === "webm" && block.mime_type === "video/webm"))) {
+    return <VideoAttachment block={block} key={block.asset_id} />;
+  }
   const href = block.asset_id
     ? assetUrl(block.asset_id)
     : allowFeishuSourceLinks

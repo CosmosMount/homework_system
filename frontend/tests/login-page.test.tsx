@@ -59,6 +59,9 @@ describe("login page", () => {
     expect(screen.getByText(/最多 30 天免重复登录/)).toHaveTextContent(
       "系统不会保存你的密码",
     );
+    expect(screen.getByText(/超过 15 天未登录或使用系统/)).toHaveTextContent(
+      "最后一名激活管理员除外",
+    );
     expect(screen.getByRole("link", { name: "重新发送验证邮件" })).toHaveAttribute(
       "href", "/resend-verification",
     );

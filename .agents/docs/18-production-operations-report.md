@@ -1,5 +1,30 @@
 # 生产运维与故障恢复验收报告
 
+## 2026-09-10 知识库正文视频直接播放部署
+
+### 范围与候选
+
+- 用户要求部署，沿用唯一知识库计划和现有 `pnx-training` HTTP/5000 Compose。基线为已提交 `d9efe05`、线上 `team-direction-composition-20260910`；隔离导出后仅叠加知识库 router/service、正文播放器及对应测试。明确排除未发布的十五天账号自动擦除与页面提示。
+- 149 个线上 Python 源码/迁移文件与基线逐一匹配；上线后同样与候选逐一匹配。Worker SHA-256 仍为 `218622e42e14b982a148603aa34a3751889de72010e802912f458c6f863b5bb1`，候选不存在 `app/users/cleanup.py`。
+- 完整后端 489 项通过、1 项隔离队伍数据库测试跳过；Ruff、123 文件严格 Mypy 通过。前端 27 文件/165 项、全量 ESLint/TypeScript 和生产构建通过。初次后端全量检查因隔离目录缺少两份环境模板失败，补齐已提交非秘密模板后全通过，未修改业务代码。
+- 固定标签 `knowledge-video-20260910`：Backend/Worker 镜像 ID `sha256:b5f56a020e085dad44c60750dd442020d5785006538d978b76057ca00179a7af`，Frontend `sha256:d04a43801e58d300997f99227082c187af65b9a7864d0a1824c5693b00566fb8`。
+- 回滚标签 `knowledge-video-rollback-20260910`：Backend/Worker `sha256:1ff3054ebe52c4e6e681104cf803515a3bd74e81bf1538e87f9adadc60a5ce25`，Frontend `sha256:b70f6dd85cad1fbfe17f4aa4bccc48b8c28f2e60b6428cee494671235ac3bb27`。
+
+### 备份与恢复
+
+- 新每日加密增量 `pnx-backup-20260910T111307Z-daily`，归档 112,975,341 字节，SHA-256 `1a70c9a93da85c807ebbc758e5b2bcb39b5b96aa42ac40ac480d29e318fba63d`；数据库 dump 36,647,399 字节，当前对象 1,455 个/5,515,225,819 字节，增量 105 个/90,012,944 字节，删除标记 1,941，依赖周基线 `pnx-backup-20260905T163853Z-weekly`。
+- 在全新 `pnx-restore-knowledge-video-20260910` 内网无端口项目恢复；不配置真实 SMTP/飞书，不启动 Worker。1,455 对象全量恢复与对账通过，缺失/大小/哈希/未追踪均为 0，RPO 120 秒、RTO 182 秒。验收后独立容器、网络和卷精确删除。
+- 加密归档与临时 GPG 私钥仍位于同机 `/tmp`，不是异机灾备，部署方须移至独立受控介质并分离保存；没有删除任何既有备份或恢复材料。
+
+### 上线与验收
+
+- 北京时间 19:20:22 开始，19:21:25 完成。仅更新被忽略 `.env` 的固定标签，显式 `--env-file .env`、`--no-deps --no-build --pull never` 两阶段替换 Backend/Worker、Frontend；各阶段健康后 Nginx 校验并热重载。不运行 migrate，数据库保持 `20260910_0025`；PostgreSQL/MinIO 容器 ID 和卷不变。
+- 六服务 healthy、重启 0；健康接口 200，匿名知识库 API/播放 401，知识库页面 307，登录页 200。运行内部 OpenAPI 确认可选布尔 playback 默认 false，前端产物包含播放器。公开 `/openapi.json` 为 404，改从内部 Backend 端口核对，不放开外部 API 文档。
+- 在恢复副本和线上读取当前成功快照真实 MP4，仅请求两段 32 字节，不保存视频或输出对象键/签名 URL。两段均返回 206 与正确 Content-Range、video/mp4 和 inline；默认下载仍返回 attachment。线上验证经过既有 Nginx/MinIO 路径；未伪造或创建真实账号 Session。
+- 最初生产聚合命令缺少标准输入转发，未取得有效部署前摘要；已改用部署前备份恢复副本进行核对。备份后正常新增 1 个账号和 1 个 `email_verification`，用户 201→202、Outbox 972→973；原 201 个账号技术方向摘要一致，其余探测业务聚合不变。知识库文档/资源为 5,934/1,348，运行 failed/succeeded 为 4/28，无 pending/running；组队/方向开关仍 false/false、revision 1。
+- 切换窗口 Nginx 3 个 502、7 个 504；健康采样一次超时和一次 502，此后连续 200。切换后稳定期无 5xx，Backend/Worker 严重日志计数为 0。单节点替换有短暂中断，不宣称无损更新。
+- 无新迁移、依赖或飞书同步；已有视频刷新页面即可获得播放入口。尚未进行真实登录浏览器的编码、全屏与签名过期重试验收。应用回滚恢复上述旧镜像并重载 Nginx，不恢复旧业务数据库；本次未提交或推送 Git。
+
 ## 范围与结论
 
 本报告记录阶段 6 在隔离 Docker Compose 项目中的生产配置、组件故障、加密备份、恢复、迁移、发布和安全验收，对应 NFR-001、NFR-007～NFR-012 和 NFR-T01、NFR-T07～NFR-T12。性能与容量数据单独见 `17-capacity-performance-report.md`。

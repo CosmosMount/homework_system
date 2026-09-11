@@ -13,6 +13,7 @@ from app.health.repository import HealthRepository
 from app.notifications.service import OutboxProcessor
 from app.uploads.object_store import ObjectStoreError
 from app.uploads.service import UploadCleanupProcessor
+from app.users.cleanup import InactiveAccountCleanupProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ async def run_worker(settings: Settings | None = None) -> None:
     next_heartbeat_at = started_at
     outbox = OutboxProcessor(session_factory, resolved_settings)
     upload_cleanup = UploadCleanupProcessor(session_factory, resolved_settings)
+    account_cleanup = InactiveAccountCleanupProcessor(session_factory, resolved_settings)
     logger.info(
         "worker_started",
         extra={
@@ -63,6 +65,7 @@ async def run_worker(settings: Settings | None = None) -> None:
                     )
                 await outbox.run_once()
                 await upload_cleanup.run_once()
+                await account_cleanup.run_once()
             except (SQLAlchemyError, ObjectStoreError, OSError):
                 logger.warning(
                     "worker_iteration_failed",

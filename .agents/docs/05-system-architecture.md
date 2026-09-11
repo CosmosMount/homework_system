@@ -1,5 +1,11 @@
 # 系统架构
 
+## 十五天自动账号擦除（AUTH-012，2026-09-10）
+
+`users.cleanup.InactiveAccountCleanupProcessor` 接入现有 Worker；启动立即扫描，结束一轮后每小时扫描，使用 UUID 游标按 100 个账号分批，失败或保留账号不阻断后续候选。每个账号独立 Session/事务；`UserAdministrationService.delete_inactive_account` 按生命周期、令牌、Session、用户的既有锁顺序复核严格十五天条件与最后管理员保护，同时检查锁定 Session 的最新访问时间。多 Worker 通过数据库锁串行复核，已删除账号幂等跳过。
+
+手动、本人和自动删除共享 `_commit_account_erasure`；所有个人擦除、共享去归属、队长转让、系统审计及加密对象 Outbox 原子提交。自动任务不需要人工密码/邮箱确认，无 HTTP 入口；SQL 错误由 Session 关闭回滚，日志仅记录稳定事件名，下轮自动重试。无新增服务、依赖或数据库迁移。
+
 ## 架构目标
 
 在单台或小规模校内服务器上，以最少服务实现清晰的权限边界、可靠邮件、2 GiB 分片上传和可恢复部署。系统采用模块化单体后端，不按业务域拆微服务；前后端和对象存储通过 Nginx 同源访问。

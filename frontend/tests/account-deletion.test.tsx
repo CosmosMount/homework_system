@@ -41,6 +41,13 @@ const student: User = {
 };
 
 describe("self-service account deletion", () => {
+  it("discloses automatic deletion and last administrator protection", () => {
+    render(<AccountDeletion user={student} />);
+    expect(screen.getByText(/超过 15 天未登录或使用系统也会自动执行相同清理/)).toHaveTextContent(
+      "最后一名激活管理员除外",
+    );
+  });
+
   beforeEach(() => {
     clearCsrfTokenMock.mockReset();
     csrfFetchMock.mockReset();

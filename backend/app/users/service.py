@@ -33,6 +33,7 @@ from app.users.schemas import (
 )
 
 ACCOUNT_INACTIVITY_THRESHOLD = timedelta(days=10)
+ACCOUNT_AUTO_DELETION_THRESHOLD = timedelta(days=15)
 
 
 @dataclass(frozen=True, slots=True)
@@ -627,6 +628,48 @@ class UserAdministrationService:
                 message="不能删除系统中最后一个激活管理员。",
             )
 
+        await self._commit_account_erasure(
+            user, audit=audit, action=action, mode=mode, reason=normalized_reason
+        )
+
+    async def delete_inactive_account(self, user_id: UUID) -> bool:
+        await self._auth.acquire_admin_lifecycle_lock()
+        await self._auth.lock_one_time_tokens_for_user(user_id)
+        last_seen_at = await self._auth.lock_sessions_for_user(user_id)
+        user = await self._users.get_by_id(user_id, for_update=True)
+        cutoff = self._clock() - ACCOUNT_AUTO_DELETION_THRESHOLD
+        if (
+            user is None
+            or self._activity_reference(user) >= cutoff
+            or (last_seen_at is not None and last_seen_at >= cutoff)
+        ):
+            await self._session.rollback()
+            return False
+        if (
+            user.role == "admin"
+            and user.status == "active"
+            and await self._users.active_admin_count() <= 1
+        ):
+            await self._session.rollback()
+            return False
+        await self._commit_account_erasure(
+            user,
+            audit=None,
+            action="user.auto_delete",
+            mode="automatic",
+            reason="account_inactive_over_15_days",
+        )
+        return True
+
+    async def _commit_account_erasure(
+        self,
+        user: User,
+        *,
+        audit: AuditContext | None,
+        action: str,
+        mode: str,
+        reason: str,
+    ) -> None:
         now = self._clock()
         previous_role = user.role
         previous_status = user.status
@@ -640,22 +683,29 @@ class UserAdministrationService:
                 now=now,
             )
 
-        self._add_audit(
-            audit,
-            action=action,
-            target_type="user",
-            target_id=user.id,
-            change_summary={
-                "mode": mode,
-                "reason": normalized_reason,
-                "previous_role": previous_role,
-                "previous_status": previous_status,
-                "deletion_counts": preparation.deletion_counts,
-                "object_cleanup_count": len(preparation.object_cleanups),
-                "teams_transferred": preparation.teams_transferred,
-                "teams_dissolved": preparation.teams_dissolved,
-                "teams_invalidated": preparation.teams_invalidated,
-            },
+        self._audit.add(
+            AuditLog(
+                id=uuid7(),
+                actor_user_id=audit.actor.user.id if audit else None,
+                action=action,
+                target_type="user",
+                target_id=user.id,
+                request_id=audit.request_id if audit else str(uuid7()),
+                ip_prefix=audit.ip_prefix if audit else "system",
+                result="success",
+                created_at=now,
+                change_summary={
+                    "mode": mode,
+                    "reason": reason,
+                    "previous_role": previous_role,
+                    "previous_status": previous_status,
+                    "deletion_counts": preparation.deletion_counts,
+                    "object_cleanup_count": len(preparation.object_cleanups),
+                    "teams_transferred": preparation.teams_transferred,
+                    "teams_dissolved": preparation.teams_dissolved,
+                    "teams_invalidated": preparation.teams_invalidated,
+                },
+            )
         )
         await self._session.flush()
         await self._users.erase_account(user, preparation)

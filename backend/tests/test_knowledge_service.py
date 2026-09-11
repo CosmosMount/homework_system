@@ -47,6 +47,7 @@ def configured_settings() -> Settings:
 class RecordingObjectStore:
     def __init__(self) -> None:
         self.inline_keys: list[str] = []
+        self.inline_types: list[tuple[str, int]] = []
         self.download_requests: list[tuple[str, str, str | None]] = []
         self.import_called = False
         self.imported_content = b""
@@ -60,6 +61,7 @@ class RecordingObjectStore:
         expires_seconds: int,
     ) -> str:
         self.inline_keys.append(object_key)
+        self.inline_types.append((content_type, expires_seconds))
         return "https://storage.example.edu/signed-image"
 
     async def presign_download(
@@ -301,7 +303,8 @@ async def test_executable_asset_download_forces_attachment_octet_stream() -> Non
 
 
 @pytest.mark.asyncio
-async def test_asset_from_noncurrent_snapshot_is_not_visible() -> None:
+@pytest.mark.parametrize("playback", [False, True])
+async def test_asset_from_noncurrent_snapshot_is_not_visible(playback: bool) -> None:
     current_run_id = uuid4()
     asset_id = uuid4()
     repository = SimpleNamespace(
@@ -318,10 +321,60 @@ async def test_asset_from_noncurrent_snapshot_is_not_visible() -> None:
     service._repo = cast(KnowledgeRepository, repository)
 
     with pytest.raises(ApplicationError) as exc_info:
-        await service.asset_url(asset_id)
+        await service.asset_url(asset_id, playback=playback)
 
     assert exc_info.value.status_code == 404
     repository.current_asset.assert_awaited_once_with(current_run_id, asset_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("file_name", "media_type", "supported"),
+    [
+        ("连杆.MP4", "video/mp4", True),
+        ("演示.webm", "video/webm", True),
+        ("伪装.mp4", "application/octet-stream", False),
+        ("伪装.html", "video/mp4", False),
+        ("安装.exe", KNOWLEDGE_EXECUTABLE_MEDIA_TYPE, False),
+        ("文档.pdf", "application/pdf", False),
+    ],
+)
+async def test_video_playback_preserves_download_and_checks_detected_type(
+    file_name: str, media_type: str, supported: bool
+) -> None:
+    asset_id = uuid4()
+    run_id = uuid4()
+    object_store = RecordingObjectStore()
+    repository = SimpleNamespace(
+        latest_succeeded_run=AsyncMock(return_value=SimpleNamespace(id=run_id)),
+        current_asset=AsyncMock(
+            return_value=SimpleNamespace(
+                asset_kind="attachment",
+                object_key="knowledge/video",
+                file_name=file_name,
+                media_type=media_type,
+            )
+        ),
+    )
+    service = KnowledgeService(
+        cast(AsyncSession, AsyncMock(spec=AsyncSession)),
+        Settings(app_env="test"),
+        object_store=cast(MinioObjectStore, object_store),
+    )
+    service._repo = cast(KnowledgeRepository, repository)
+    assert await service.asset_url(asset_id) == "https://storage.example.edu/signed-download"
+    assert object_store.inline_keys == []
+    if supported:
+        await service.asset_url(asset_id, playback=True)
+        assert object_store.inline_keys == ["knowledge/video"]
+        assert object_store.inline_types == [(media_type, 300)]
+    else:
+        with pytest.raises(ApplicationError) as exc_info:
+            await service.asset_url(asset_id, playback=True)
+        assert exc_info.value.status_code == 415
+        assert exc_info.value.code == "FILE_PREVIEW_NOT_SUPPORTED"
+        assert object_store.inline_keys == []
+    repository.current_asset.assert_awaited_with(run_id, asset_id)
 
 
 @pytest.mark.asyncio

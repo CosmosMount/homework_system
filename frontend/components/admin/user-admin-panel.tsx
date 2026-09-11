@@ -335,6 +335,9 @@ export function UserAdminPanel({
             超过 10 天未进入
           </Link>
         </nav>
+        <p className="text-sm text-[var(--color-text-secondary)]">
+          超过 10 天未进入为提前提醒；超过 15 天未登录或使用系统，后台自动永久删除账号及个人数据，无需手动处理。最后一名激活管理员保留；从未登录按邮箱验证时间（未验证按注册时间）计时，待验证和禁用账号也适用。
+        </p>
       </div>
       <div className="mt-5 space-y-3">
         {message ? <FormMessage tone="success">{message}</FormMessage> : null}

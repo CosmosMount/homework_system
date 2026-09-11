@@ -319,6 +319,14 @@ def test_stage_three_openapi_contains_dashboard_announcements_notifications_and_
 
     assert expected_paths <= set(paths)
     preview_operation = paths["/api/v1/files/{file_id}/preview-url"]["post"]
+    playback_parameter = next(
+        parameter
+        for parameter in paths["/api/v1/knowledge/assets/{asset_id}/content"]["get"]["parameters"]
+        if parameter["name"] == "playback"
+    )
+    assert playback_parameter["in"] == "query"
+    assert playback_parameter["schema"]["type"] == "boolean"
+    assert playback_parameter["schema"]["default"] is False
     assert preview_operation["responses"]["200"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/PreviewUrlResponse"
     }

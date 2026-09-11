@@ -232,6 +232,34 @@ function nestedOverview(): KnowledgeOverview {
 }
 
 describe("knowledge document renderer", () => {
+  it.each([["连杆.MP4", "video/mp4"], ["演示.webm", "video/webm"]])("plays localized video %s inline and retries failures", (fileName, mimeType) => {
+    render(<KnowledgeBlocks blocks={[{ id: "video", type: "attachment", asset_id: "video-id", file_name: fileName, mime_type: mimeType }]} onOpenDocument={vi.fn()} tokenToDocument={new Map()} />);
+    const video = screen.getByLabelText(fileName);
+    expect(video.tagName).toBe("VIDEO");
+    expect(video).toHaveAttribute("controls");
+    expect(video).toHaveAttribute("playsinline");
+    expect(video).toHaveAttribute("preload", "none");
+    expect(video).not.toHaveAttribute("autoplay");
+    expect(video).toHaveAttribute("src", "/api/v1/knowledge/assets/video-id/content?playback=true&attempt=0");
+    expect(screen.getByRole("link", { name: "下载 " + fileName })).toHaveAttribute("href", "/api/v1/knowledge/assets/video-id/content");
+    fireEvent.error(video);
+    expect(screen.getByRole("alert")).toHaveTextContent("视频加载失败");
+    fireEvent.click(screen.getByRole("button", { name: "重新加载视频" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(fileName)).toHaveAttribute("src", "/api/v1/knowledge/assets/video-id/content?playback=true&attempt=1");
+  });
+
+  it("does not embed unlocalized, mismatched or non-video attachments", () => {
+    const { container } = render(<KnowledgeBlocks blocks={[
+      { id: "missing", type: "attachment", file_name: "缺失.mp4", mime_type: "video/mp4", fallback_url: "https://pnx.feishu.cn/file/missing" },
+      { id: "mismatch", type: "attachment", asset_id: "bad-id", file_name: "伪装.mp4", mime_type: "application/octet-stream" },
+      { id: "pdf", type: "attachment", asset_id: "pdf-id", file_name: "文档.pdf", mime_type: "application/pdf" },
+    ]} onOpenDocument={vi.fn()} tokenToDocument={new Map()} />);
+    expect(container.querySelector("video")).toBeNull();
+    expect(container.querySelector('a[href*="feishu.cn"]')).toBeNull();
+    expect(screen.getAllByRole("link")).toHaveLength(2);
+  });
+
   it("renders code copy, tables, protected images, attachments, and internal links", () => {
     const openDocument = vi.fn();
     const { container } = render(

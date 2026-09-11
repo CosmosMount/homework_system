@@ -319,15 +319,24 @@ class KnowledgeService:
             ) from exc
         return KnowledgeSyncCreatedResponse(run=_run_response(run))
 
-    async def asset_url(self, asset_id: UUID) -> str:
+    async def asset_url(self, asset_id: UUID, *, playback: bool = False) -> str:
         run = await self._repo.latest_succeeded_run()
         if run is None:
             raise self._not_found()
         asset = await self._repo.current_asset(run.id, asset_id)
         if asset is None:
             raise self._not_found()
+        if playback:
+            extension = asset.file_name.rsplit(".", 1)[-1].lower()
+            allowed_type = {"mp4": "video/mp4", "webm": "video/webm"}.get(extension)
+            if allowed_type is None or asset.media_type != allowed_type:
+                raise ApplicationError(
+                    status_code=415,
+                    code="FILE_PREVIEW_NOT_SUPPORTED",
+                    message="此知识库附件不支持在线播放，请下载后查看。",
+                )
         try:
-            if asset.asset_kind in {"image", "whiteboard"}:
+            if playback or asset.asset_kind in {"image", "whiteboard"}:
                 return await self._object_store.presign_inline(
                     object_key=asset.object_key,
                     file_name=asset.file_name,

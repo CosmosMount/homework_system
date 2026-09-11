@@ -1,5 +1,9 @@
 # 数据库结构
 
+## 十五天自动清理兼容说明（2026-09-10）
+
+无新增迁移或字段。复用 `users.last_active_at/email_verified_at/created_at`、既有擦除外键和 `pnx.account_erasure` 事务标记；候选按 `COALESCE(last_active_at,email_verified_at,created_at) < 当前时间 - 15 天` 选择，用户 UUID 游标分批，锁后重新校验。自动审计 `actor_user_id=NULL`、`action=user.auto_delete`、`mode=automatic`，不伪造管理员；文件仍进入 `delete_account_object` Outbox。不可逆数据清理需删除前数据库/MinIO 同点备份才能恢复。
+
 ## 通用规则
 
 - PostgreSQL 是唯一关系数据源；附件二进制只存 MinIO。

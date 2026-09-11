@@ -58,9 +58,10 @@ async def knowledge_asset(
     asset_id: UUID,
     service: KnowledgeServiceDependency,
     _context: AuthenticatedContextDependency,
+    playback: bool = False,
 ) -> RedirectResponse:
     return RedirectResponse(
-        await service.asset_url(asset_id),
+        await service.asset_url(asset_id, playback=playback),
         status_code=status.HTTP_307_TEMPORARY_REDIRECT,
         headers={
             "cache-control": "private, no-store",

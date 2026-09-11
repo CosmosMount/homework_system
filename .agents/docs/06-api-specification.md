@@ -1,5 +1,9 @@
 # API 规范
 
+## 自动清理与现有删除接口（2026-09-10）
+
+AUTH-012 新增 Worker 内部十五天自动清理，无新增 HTTP API、请求/响应变化。`DELETE /auth/account` 与 `DELETE /admin/users/{id}` 保留全部认证、CSRF、重新认证、邮箱确认与既有备份确认要求，不接受 automatic 模式参数。`GET /admin/users?activity=inactive` 仍筛选超过十天的 active 账号，仅为提前提示，与覆盖全部状态的十五天自动清理不同。
+
 ## 通用约定
 
 - 基础路径：`/api/v1`。
@@ -435,7 +439,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 | --- | --- | --- |
 | `GET /knowledge` | 返回最新成功快照元数据、目录节点和文档摘要；目录节点含 `document/folder/file/unsupported` 类型以及可空 `asset_id/file_size/mime_type`，无快照返回 `snapshot:null` 与空数组 | 登录，KB-001～KB-002、KB-005～KB-007 |
 | `GET /knowledge/documents/{document_id}` | 只在最新成功快照中按内部 UUID 返回标题、原文 URL、同步时间和结构化块 | 登录，KB-002～KB-003、KB-005 |
-| `GET /knowledge/assets/{asset_id}/content` | 验证资源被最新成功快照的文档资源关联或独立文件节点引用后，图片/白板跳转短时 inline URL，正文附件和目录文件跳转 attachment URL；知识库 PE 文件额外把签名响应强制为 `Content-Type: application/octet-stream` | 登录，KB-006～KB-008 |
+| `GET /knowledge/assets/{asset_id}/content` | 验证资源被最新成功快照的文档资源关联或独立文件节点引用后，图片/白板跳转短时 inline URL，正文附件和目录文件默认跳转 attachment URL；可选布尔查询参数 `playback=true` 仅允许服务端检测 MIME 与扩展名一致的 MP4/WebM，返回 307 到 300 秒 inline 签名，不支持时返回 `415 FILE_PREVIEW_NOT_SUPPORTED`；PE 默认下载强制 `application/octet-stream` | 登录，KB-003、KB-006～KB-008 |
 | `GET /admin/knowledge` | 返回 `configured`、学生当前快照和最近运行的脱敏状态 | 真实管理员，KB-004～KB-005、KB-008 |
 | `POST /admin/knowledge/sync` | CSRF 校验后创建同步运行、审计和 Outbox，返回 `202 {run}` | 真实管理员，KB-004～KB-005 |
 

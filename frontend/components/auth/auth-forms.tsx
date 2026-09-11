@@ -126,6 +126,9 @@ export function LoginForm({ returnTo = null }: Readonly<{ returnTo?: string | nu
         >
           仅在私人设备和当前网络使用；最多 30 天免重复登录，系统不会保存你的密码。
         </p>
+        <p className="text-xs leading-5 text-[var(--color-text-secondary)]">
+          超过 15 天未登录或使用系统，账号及个人作业、问卷、文件将自动永久删除；最后一名激活管理员除外。保持登录后正常访问系统也计为使用。
+        </p>
       </div>
       {error ? <FormMessage>{errorMessage(error)}</FormMessage> : null}
       <button
