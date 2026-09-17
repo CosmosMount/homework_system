@@ -68,7 +68,7 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy app tests
-      - run: pytest
+      - run: python -m pytest
       - run: pip-audit --requirement requirements.lock --disable-pip
       - name: 验证迁移前滚与回滚
         run: |

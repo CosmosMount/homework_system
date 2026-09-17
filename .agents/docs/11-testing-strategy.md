@@ -1,5 +1,10 @@
 # 测试策略
 
+## CI 后端测试入口（2026-09-17）
+
+- GitHub Actions 必须在 `backend/` 工作目录使用 `python -m pytest`，确保解释器把后端项目根目录加入模块搜索路径并可导入 `app`；不得依赖 `pytest` 控制台脚本在不同 Python 安装布局下隐式设置 `sys.path`。
+- 依赖仍由带哈希的 `requirements-dev.lock` 安装，本修复不通过临时 `PYTHONPATH`、修改测试导入或复制包目录绕过项目布局。
+
 ## 知识库视频直接播放回归（KB-003、KB-006，2026-09-10）
 
 - 后端：MP4/WebM 与大写扩展名允许；伪装 MIME/扩展名、PDF 和 EXE 拒绝播放；默认仍下载；非当前快照返回 404；API 登录依赖拒绝匿名调用且不签名，授权后 307/no-store；OpenAPI 参数默认 false。
