@@ -982,3 +982,8 @@
 - 学生登录设备与管理员登录人员页的当前设备状态统一使用显示器 SVG、绿色语义色和可读文字。
 - 共享侧栏、移动抽屉和认证壳层的 PNX / TRAINING HUB 使用分层字标，未改变业务流程、API、权限或数据结构。
 - 前端定向测试 31 项、ESLint 和严格 TypeScript 通过；容器内 Next.js 生产构建通过。Frontend 镜像 `ui-visual-refinement-20260918` 与 Nginx 已替换，Frontend/Nginx healthy，四个健康入口均返回 200；旧 Frontend 镜像保留为 `ui-visual-refinement-rollback-20260918`。
+# 2026-09-21 站内内容引用知识库文档
+
+- 正式计划为 `.agents/plans/plan_internal_knowledge_references.md`；公告正文、作业 Markdown 说明和作业私密评语均可从最近成功知识库快照按标题选择文档并插入稳定 `source_token` 引用。
+- `/knowledge` 新增 `source` 解析并保留 `doc` 兼容；公告邮件把相对知识库链接转换为 `APP_BASE_URL` 绝对地址；评语邮件仍不含正文或引用内容。未新增评论区、数据库表/字段、迁移、依赖或飞书写回。
+- 前端选择器/纯函数测试、后端 Markdown/邮件测试及前端完整测试、TypeScript、ESLint、后端 Ruff 和定向 Pytest 均通过。代码提交：`2e2757d`；文档归档提交见后续记录。

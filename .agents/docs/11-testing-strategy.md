@@ -609,3 +609,9 @@ Markdown 预览与蓝白主题修复完成时，新增管理员作业编辑回�
 | TEAM-T22 | 隔离 PostgreSQL 并发抢最后方向名额、改组与加入竞争、关闭权限 | 只有一个冲突写入成功，人数不超额，关闭后拒绝；设置幂等更新不触发异步过期读取错误 | TEAM-002、TEAM-004、AUTH-014 |
 
 真实数据库测试仅在显式设置 `TEAM_DIRECTION_TEST_DATABASE_URL` 且库名为 `pnx_test_team_direction`、主机为 loopback 时运行；常规全量测试跳过此项，禁止连接生产库。
+
+## 2026-09-21 站内知识库引用验证
+
+- 前端新增纯函数与组件测试覆盖标题转义、`source_token` URL 编码、段落插入/光标位置、标题搜索和选择器插入；前端完整 Vitest 27 files / 170 tests、ESLint、严格 TypeScript 均通过。
+- 后端 Markdown 测试确认 `/knowledge?source=...` 相对链接保留且危险协议清洗；公告邮件测试确认知识库链接转换为 `APP_BASE_URL` 绝对地址。相关 Pytest 25 项与 Ruff 通过。
+- 本功能不新增 API、数据库、迁移或依赖；未连接生产数据库/对象存储、未触发真实同步或业务写入。

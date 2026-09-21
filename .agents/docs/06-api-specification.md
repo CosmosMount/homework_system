@@ -513,3 +513,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 - `GET /team-settings` 与 `GET/PATCH /admin/team-settings` 增加 `is_direction_change_open`；PATCH 两个开关可分别省略但不可为 null，必须携带 revision 并至少指定一个开关，未指定的开关保持。
 - 队伍详情新增 `composition: {mechanical,embedded_hardware,algorithm,unassigned,is_complete}`，完整为 2 + 1～2 + 1；目录加入与简介邀请能力同步检查当前方向名额。
 - 未设置/未知方向建队或加入返回 409 `TEAM_DIRECTION_REQUIRED`；名额冲突为 409 `TEAM_COMPOSITION_CONFLICT`。管理员补录、自助/管理员/问卷改组和方向改名也复核；允许人数不足的组建中队伍，批量修改按最终状态校验。
+
+## 2026-09-21 知识库引用契约
+
+本功能不新增 API。三个管理编辑器复用受保护的 `GET /knowledge` 响应中的 `documents[].title` 与稳定 `documents[].source_token`，生成 `/knowledge?source=<URL 编码 source_token>` Markdown 链接。知识库页面继续接受 `?doc=<当前成功快照文档 UUID>`，并新增 `?source=<稳定来源标识>`；只在当前成功快照中匹配，未匹配时返回根层状态。所有读取仍需要有效 Session，管理员同步接口和内容授权不改变。
