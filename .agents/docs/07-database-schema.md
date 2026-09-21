@@ -4,6 +4,8 @@
 
 无新增迁移或字段。复用 `users.last_active_at/email_verified_at/created_at`、既有擦除外键和 `pnx.account_erasure` 事务标记；候选按 `COALESCE(last_active_at,email_verified_at,created_at) < 当前时间 - 15 天` 选择，用户 UUID 游标分批，锁后重新校验。自动审计 `actor_user_id=NULL`、`action=user.auto_delete`、`mode=automatic`，不伪造管理员；文件仍进入 `delete_account_object` Outbox。不可逆数据清理需删除前数据库/MinIO 同点备份才能恢复。
 
+2026-09-21 补丁迁移 `20260921_0027` 接在 `0026` 后，仅替换正式版本不可变触发器函数、不增表列。账号擦除先用事务级 `pnx.account_erasure_user_id` 指定目标并删除其个人作业提交，随后删用户；触发器只放行其个人版本级联 DELETE 和删除该用户时共享版本 `submitted_by` 单列置空，其他版本列或普通事务的 UPDATE/DELETE 继续返回 `55000`。成功提交释放 `users.email_normalized/student_number` 唯一占用；审计和清空账号邮箱的安全事件继续保留。降级恢复旧函数，可能重现对有版本账号的删除故障，生产应优先前滚修复；已删除数据仍只能从删除前同点备份恢复。
+
 ## 通用规则
 
 - PostgreSQL 是唯一关系数据源；附件二进制只存 MinIO。
@@ -99,7 +101,7 @@ erDiagram
 - `password_hash` 只存 Argon2id 编码结果。
 - 角色变更和状态变更均写 `audit_logs`。
 
-索引：`(status, created_at)`、`(cohort_id, direction_id, status)`、`(role, status)`。届次索引暂保留，供历史受众查询使用。管理员账号搜索在现有约 300 账号容量边界内，于分页前对 `email_normalized`、`full_name`、`student_number` 做转义后的大小写不敏感包含匹配，并把中文/英文角色与状态名称映射到枚举条件；`%`、`_` 和反斜杠按普通文本处理。用户页按技术组查看继续使用同一查询的 `users.direction_id = :direction_id` 精确条件和现有组合索引。本行为不新增字段、索引或 Alembic 迁移。
+索引：`(status, created_at)`、`(cohort_id, direction_id, status)`、`(role, status)`。届次索引暂保留，供历史受众查询使用。管理员账号搜索在现有约 300 账号容量边界内，于分页前对 `email_normalized`、`full_name`、`student_number` 做转义后的大小写不敏感包含匹配，并把中文/英文角色与状态名称映射到枚举条件；`%`、`_` 和反斜杠按普通文本处理。用户页按技术组查看继续使用同一查询的 `users.direction_id = :direction_id` 精确条件和现有组合索引。人员组别分布以 `directions LEFT JOIN users` 聚合全部 `role=student AND status=active` 的非空方向，并单独统计 `direction_id IS NULL`；零人和停用方向仍由方向表左连接保留。现有约 300 账号容量边界内复用已有索引，不新增字段、索引或 Alembic 迁移。
 
 ### `sessions`
 
@@ -359,6 +361,14 @@ CHECK (
 - `version_id` 唯一，一版最多一条当前评语。
 - 修订差异写入审计，表中保留当前版本；操作者删除后 `created_by` 置空。个人版本随目标用户个人提交树级联删除，其他版本评语保留；不提供评分字段。
 
+### `feedback_files`
+
+`feedback_id`, `file_id`, `display_order`，复合主键 `(feedback_id, file_id)`。
+
+- `feedback_id` 删除时级联移除关联，`file_id` 使用 `RESTRICT`；`file_id` 全局唯一，避免同一图片跨评语或跨正式资源复用。
+- `(feedback_id, display_order)` 唯一且顺序非负；每条评语最多 10 张、单张 10 MiB、合计 50 MiB 由 Service 在锁定文件的事务内校验。
+- 图片文件目的为 `submission_feedback`，内容只存 MinIO；关联移除后文件成为孤立可用对象，由既有 24 小时策略清理。管理员账号擦除时，仍被评语引用的图片属于共享业务事实，保留文件并把所有者置空。
+
 ## 优秀作业
 
 ### `assignment_excellent_submissions`
@@ -375,7 +385,7 @@ CHECK (
 
 ### `files`
 
-`id`, `owner_user_id`, `purpose`, `object_key`, `original_name`, `extension`, `declared_media_type`, `detected_media_type`, `size_bytes`, `sha256`, `status`, `created_at`, `available_at`, `deleted_at`。
+`id`, `owner_user_id`, `purpose`, `object_key`, `original_name`, `extension`, `declared_media_type`, `detected_media_type`, `size_bytes`, `sha256`, `status`, `created_at`, `available_at`, `deleted_at`。当前公共上传目的为 `announcement_attachment`、`assignment_submission`、`submission_feedback`；数据库继续保留 `competition_submission` 仅兼容 legacy 元数据。
 
 - `object_key` 唯一且不可由客户端指定。
 - `sha256` 为 64 位小写十六进制；`size_bytes >= 0`。
@@ -458,7 +468,7 @@ CHECK (
 | HW | `assignments`, 受众配置与快照, `assignment_extensions` |
 | COMP | competitions、competition_registrations、competition_tasks、legacy_competition_teams、legacy_competition_team_members，仅由 legacy 层保留 |
 | TEAM | teams、team_members |
-| SUB | `submissions`, `submission_versions`, `version_files`, `feedback` |
+| SUB | `submissions`, `submission_versions`, `version_files`, `feedback`, `feedback_files` |
 | INT | `intention_surveys`, `intention_survey_directions`, `intention_questions`, `intention_options`, `intention_responses`, `intention_response_options`, `outbox_jobs` |
 | HELP | `help_requests`, `student_notifications`, `audit_logs` |
 | SHOW | `assignment_excellent_submissions`、作业与版本外键、源附件删除保护 |
@@ -493,6 +503,9 @@ CHECK (
 21. 组队简介与邀请迁移 `20260907_0021` 接在 `0020` 后，新建 `team_profiles/team_invitations`、检查约束、级联外键、查询索引和同队同目标 pending 部分唯一索引，不回填用户或队伍数据。downgrade 先删除邀请再删除简介，会丢失已产生的简介与邀请；可在隔离 PostgreSQL 执行 `0020 → 0021 → 0020 → 0021`。生产应用前必须完成 PostgreSQL/MinIO 同点备份，本迁移不读写 MinIO。
 22. 组队开关迁移 `20260908_0022` 接在 `0021` 后，新建单例 `team_settings` 并默认关闭学生组队；downgrade 删除该表。生产应用前必须完成同点备份。
 23. 作业提交完成确认迁移 `20260908_0023` 接在 `0022` 后，为 `submissions` 增加三个可空完成字段、同提交复合外键、管理员 `SET NULL` 外键和状态一致性检查，不回填历史提交。downgrade 先删除检查与外键再删列，会丢失确认事实；离线 SQL 必须可完成 `0022 → 0023 → 0022`，生产应用前先完成 PostgreSQL/MinIO 同点可恢复备份。
+24. 新入技术组历史作业受众迁移 `20260908_0024` 接在 `0023` 后，以固定时间标记幂等回填缺失受众；downgrade 只删除该标记行。
+25. 学生自助方向与队伍人数分布迁移 `20260910_0025` 接在 `0024` 后，扩展组队设置并固化当前方向人数约束。
+26. 私密评语图片迁移 `20260916_0026` 接在 `0025` 后，扩展文件目的检查并新建 `feedback_files`、级联/限制外键、文件与顺序唯一索引。downgrade 删除图片关联，并把遗留 `submission_feedback` 文件和上传会话目的改为旧应用可识别但因上下文不匹配而不能正式绑定的 `assignment_submission`；MinIO 对象不在迁移中删除，随后按孤立对象策略清理。生产升级或降级前必须完成 PostgreSQL/MinIO 同点可恢复备份，并在隔离数据库验证 `0025 → 0026 → 0025 → 0026`。
 
 ## 飞书知识库快照
 
@@ -503,9 +516,9 @@ CHECK (
 ### `knowledge_nodes` 与 `knowledge_documents`
 
 - 节点按 `sync_run_id` 保存父节点、飞书节点/对象标识、`document/folder/file/unsupported` 类型、标题、深度、顺序和安全原文 URL；同一运行的节点 token 唯一。`file` 节点可以通过可空 `asset_id` 关联 `knowledge_assets`，失败或历史快照保持空值，文件内容仍不进入 PostgreSQL。
-- 文档一对一关联节点，按运行保存外部文档标识、标题、原文 URL、规范化块 `JSONB` 和顺序；同一运行的文档标识唯一。图片文字说明继续使用既有 JSONB 中图片块的可选纯文本 `caption`，公式同样使用既有 JSONB：独立公式为 `type=equation`，行内公式由 segment 的 `equation=true` 标记，不新增列或表。
+- 文档一对一关联节点，按运行保存外部文档标识、标题、原文 URL、规范化块 `JSONB` 和顺序；同一运行的文档标识唯一。标题及其他块的递归 `children`、segment 中的 Unicode Emoji 和提示块 `emoji_id/background_color/border_color/text_color` 均继续使用既有 JSONB。图片文字说明使用图片块的可选纯文本 `caption`，公式同样使用既有 JSONB：独立公式为 `type=equation`，行内公式由 segment 的 `equation=true` 标记；本轮不新增列、表、索引或迁移。
 - 失败运行可保留诊断状态，但从不被学生读取；同一运行重试前级联清空部分节点/文档再重建。
-- 对齐参考同步后，只有目录遍历和全部目标 Docx 的 blocks、标题及引用均完成的运行才能标为 `succeeded`；目录子树或单篇正文不得被静默跳过并形成新的部分成功快照。
+- 对齐参考同步后，只有目录遍历和全部目标 Docx 的 blocks、标题及引用均完成，且正文树不存在非法、循环、缺失子块引用或缺失表格单元格，运行才能标为 `succeeded`；目录子树、单篇正文或残缺子树不得被静默跳过并形成新的部分成功快照。
 
 ### `knowledge_assets` 与 `knowledge_document_assets`
 

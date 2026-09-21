@@ -4,6 +4,8 @@
 
 AUTH-012 新增 Worker 内部十五天自动清理，无新增 HTTP API、请求/响应变化。`DELETE /auth/account` 与 `DELETE /admin/users/{id}` 保留全部认证、CSRF、重新认证、邮箱确认与既有备份确认要求，不接受 automatic 模式参数。`GET /admin/users?activity=inactive` 仍筛选超过十天的 active 账号，仅为提前提示，与覆盖全部状态的十五天自动清理不同。
 
+2026-09-21 故障修复不改变接口：成功擦除后使用原规范化邮箱/学号的 `POST /auth/register` 应创建新的 `pending_email` 账号；若擦除因数据库约束失败并回滚，旧账号仍在，注册仍返回字段级 `EMAIL_ALREADY_REGISTERED`，不得把失败误报为已删除。
+
 ## 通用约定
 
 - 基础路径：`/api/v1`。
@@ -237,11 +239,11 @@ AUTH-012 新增 Worker 内部十五天自动清理，无新增 HTTP API、请求
 | --- | --- | --- | --- |
 | `GET /submissions/{submission_id}` | 所有者/管理员 | 返回个人作业聚合和版本摘要 | SUB-003、SUB-005 |
 | `GET /submissions/{submission_id}/versions/{version_id}` | 所有者/管理员 | 返回不可变版本和当前用户可见评语 | SUB-003、SUB-006 |
-| `PUT /admin/submissions/{submission_id}/versions/{version_id}/feedback` | 管理员 | `{body_markdown,revision?}` 创建或修订私密评语，并同事务创建站内提醒与唯一评语邮件 Outbox | SUB-006、MAIL-001～MAIL-005 |
+| `PUT /admin/submissions/{submission_id}/versions/{version_id}/feedback` | 管理员 | `{body_markdown,revision?,file_ids?}` 创建或修订私密评语并原子替换有序图片关联，同时创建站内提醒与唯一评语邮件 Outbox | SUB-006、FILE-003～FILE-007、MAIL-001～MAIL-005 |
 | `POST /admin/submissions/{submission_id}/completion` | 管理员 | 锁定提交并确认当前最新正式版本完成；重复确认同一最新版本幂等 | SUB-009、NFR-006 |
 | `DELETE /admin/submissions/{submission_id}/completion` | 管理员 | 锁定提交并撤销最近完成确认；未确认时幂等 | SUB-009、NFR-006 |
 
-提交聚合响应增加 `completed_version_id`、`completed_at`、`is_completed`；完成确认响应含 `submission_id`、`latest_version_id` 及同组三个完成字段。确认绑定具体不可变版本，学生提交新版本后旧 `completed_version_id/completed_at` 保留但 `is_completed=false`；再次确认才更新到最新版本。两个写接口只允许真实管理员并要求 CSRF，不发送提醒或邮件。评语响应仍含 `id`、`body_html`、`created_by`、`created_at`、`updated_at`、`revision`，不含评分字段；评语邮件仅含学生称呼、作业标题和 `/assignments/{assignment_id}/submissions/{submission_id}` 站内链接，不含评语正文。
+提交聚合响应增加 `completed_version_id`、`completed_at`、`is_completed`；完成确认响应含 `submission_id`、`latest_version_id` 及同组三个完成字段。确认绑定具体不可变版本，学生提交新版本后旧 `completed_version_id/completed_at` 保留但 `is_completed=false`；再次确认才更新到最新版本。两个写接口只允许真实管理员并要求 CSRF，不发送提醒或邮件。评语请求的 `file_ids` 最多 10 个不重复 UUID；显式携带时是本 revision 的完整有序图片集合，空数组移除全部图片，修订时省略则为兼容旧客户端而保留已有集合。只允许当前管理员为当前个人作业版本上传、状态可用且尚未绑定其他正式资源的 PNG/JPEG/GIF/WebP，单张最多 10 MiB、合计最多 50 MiB。评语响应含 `id`、`body_html`、`created_by`、`created_at`、`updated_at`、`revision` 与有序 `images` 安全元数据，不含评分、对象键或永久 URL；评语邮件仅含学生称呼、作业标题和 `/assignments/{assignment_id}/submissions/{submission_id}` 站内链接，不含评语正文或图片。
 
 ## 独立队伍接口
 
@@ -365,7 +367,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 }
 ```
 
-`purpose` 只接受 `announcement_attachment` 或 `assignment_submission`。数据库检查约束继续允许 `competition_submission` 仅为保存 legacy 文件元数据，公共请求 Schema 与 Service 必须拒绝该值。服务端按上下文验证权限、截止、扩展名和总量。
+`purpose` 只接受 `announcement_attachment`、`assignment_submission` 或 `submission_feedback`。数据库检查约束继续允许 `competition_submission` 仅为保存 legacy 文件元数据，公共请求 Schema 与 Service 必须拒绝该值。`submission_feedback` 的 `context_id` 是个人作业版本 UUID，只允许真实管理员，且在初始化阶段限制安全图片扩展名和单张 10 MiB；完成与正式绑定仍复核内容检测和全部边界。服务端按上下文验证权限、扩展名和总量；普通作业附件仍额外验证作业截止时间。
 
 ### 分片与完成
 
@@ -377,7 +379,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 | `DELETE /uploads/{upload_id}` | 终止会话并异步清理对象 | FILE-002、FILE-006 |
 | `POST /files/{file_id}/download-url` | 授权后返回 5 分钟预签名 URL | FILE-005 |
 | `POST /files/{file_id}/preview-url` | 复用下载的完整业务授权；仅安全可预览类型返回 5 分钟 inline URL | FILE-005、FILE-007 |
-| `GET /files/{file_id}/content` | 复用通知附件业务授权；仅服务端检测匹配的 PNG/JPEG/GIF/WebP 通知附件 307 到 5 分钟 inline URL，供清洗后正文图片使用 | NEWS-001、FILE-005、FILE-007 |
+| `GET /files/{file_id}/content` | 复用统一业务授权；仅服务端检测匹配的 PNG/JPEG/GIF/WebP 通知正文图片或已绑定私密评语图片 307 到 5 分钟 inline URL，供清洗后正文或评语区域直接显示 | NEWS-001、SUB-006、FILE-005、FILE-007 |
 
 每次预签名最多申请 10 个分片；分片 URL 有效期 15 分钟。完成接口必须带幂等键。
 
@@ -386,6 +388,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
 | `GET /admin/users` | `search,status,role,direction_id,activity,page,page_size`；`page` 为 1～10000、`page_size` 为 1～100；在分页前按姓名、学校邮箱、学号及中文/英文角色和状态搜索全部账号，返回准确 `total`；历史 `cohort_id` 查询参数保留兼容 | AUTH-007～AUTH-008 |
+| `GET /admin/users/direction-distribution` | 返回全部 `active student` 的 `total_active_students`、`assigned_active_students`、`unassigned_active_students`，以及每个现有技术组的 ID、编码、名称、启用状态和人数；不接受或继承用户列表筛选参数 | AUTH-007 |
 | `POST /admin/users/{id}/disable` | `{reason}` 并撤销 Session | AUTH-007 |
 | `POST /admin/users/{id}/restore` | `{reason}` | AUTH-007 |
 | `PATCH /admin/users/{id}` | 调整姓名、学号、邮箱和可空技术方向；激活学生的方向实际变化为非空值时，同事务追加当前分类匹配的未归档历史作业受众；历史 `cohort_id` 字段保留兼容 | AUTH-007、AUTH-010、HW-002、HW-006 |
@@ -397,6 +400,8 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 | `PATCH /admin/directions/{id}` | 修改名称或启用状态 | AUTH-007 |
 
 `GET /admin/users` 的 `search` 去除首尾空白后最长 200 字符；空字符串等同未搜索。姓名、邮箱和学号使用大小写不敏感包含匹配，`%`、`_` 与反斜杠按普通文本转义；“管理员 / 学生 / 正常 / 待验证 / 已禁用”及对应英文枚举映射到角色或状态条件。`direction_id` 在分页前精确筛选一个技术组。过滤后的 `total` 与 `items` 使用同一条件，前端固定每页 20 条并通过 URL 保留 `direction_id`、`search`、`activity` 和 `page`；请求页超过 `total` 推导的末页时，页面规范化跳转到末页，API 本身继续返回明确分页响应。
+
+`GET /admin/users/direction-distribution` 只统计 `role=student AND status=active`。每个 `directions` 行都进入响应，包括零人或已停用技术组；`direction_id IS NULL` 计入未设置技术组。总人数必须等于已分组与未设置人数之和，且统计基于完整集合，不得从 `GET /admin/users` 当前分页响应推导。
 
 管理员删除请求示例：
 
@@ -443,7 +448,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 | `GET /admin/knowledge` | 返回 `configured`、学生当前快照和最近运行的脱敏状态 | 真实管理员，KB-004～KB-005、KB-008 |
 | `POST /admin/knowledge/sync` | CSRF 校验后创建同步运行、审计和 Outbox，返回 `202 {run}` | 真实管理员，KB-004～KB-005 |
 
-目录和文档响应不返回飞书 app secret、tenant token、MinIO 对象键或飞书错误正文。目录独立文件只返回内部资源 UUID、安全标题、大小和媒体类型，不返回永久地址。文档既有结构化块 JSON 可包含图片块的可选纯文本 `caption`、`type=equation` 的独立公式块，以及富文本 segment 的 `equation=true` 行内公式标记；图片说明来自飞书 `image.caption.content`，移除空字符、限制 20,000 字符，纯空白时省略，不接受 HTML。LaTeX 只作为文本内容返回，不接受 HTML。文件型富文本 segment 使用 `file=true`，并可返回可空 `asset_id`、`file_name`、`file_size`、`mime_type` 和 `unavailable_reason`；块附件也可返回同一失败原因。`unavailable_reason` 只允许 `type_not_allowed`、`too_large`、`unavailable`，不得返回上游错误正文。媒体路径只接受内部 UUID，不接受对象键或任意 URL。
+目录和文档响应不返回飞书 app secret、tenant token、MinIO 对象键或飞书错误正文。目录独立文件只返回内部资源 UUID、安全标题、大小和媒体类型，不返回永久地址。文档既有结构化块 JSON 的 `children` 可出现在标题及其他块上并须递归渲染，富文本 segment 的 `text` 可包含经清理的 Unicode Emoji；提示块沿用可选 `emoji_id/background_color/border_color/text_color`。结构还可包含图片块的可选纯文本 `caption`、`type=equation` 的独立公式块，以及富文本 segment 的 `equation=true` 行内公式标记；这些均为既有 JSON 兼容语义，不改变公开路径或必填字段。图片说明来自飞书 `image.caption.content`，移除空字符、限制 20,000 字符，纯空白时省略，不接受 HTML。LaTeX 和 Emoji 只作为文本内容返回，不接受 HTML。文件型富文本 segment 使用 `file=true`，并可返回可空 `asset_id`、`file_name`、`file_size`、`mime_type` 和 `unavailable_reason`；块附件也可返回同一失败原因。`unavailable_reason` 只允许 `type_not_allowed`、`too_large`、`unavailable`，不得返回上游错误正文。媒体路径只接受内部 UUID，不接受对象键或任意 URL。
 
 `source_url`、块内既有 `fallback_url` 与文件 segment 的安全 HTTPS `href` 继续作为快照来源/兼容元数据返回；真实学生和管理员学生视图不得把它们渲染为飞书原文或文件失败回退链接。成功本地化附件、富文本内嵌文件与 Drive 文件引用都通过 `GET /knowledge/assets/{asset_id}/content` 授权下载，并通过当前成功快照的文档资源关系取得授权。
 
@@ -500,7 +505,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 
 `POST /files/{file_id}/preview-url` 与下载端点使用相同 Session、CSRF 和业务关联授权，成功响应字段与下载一致。只有服务端 `detected_media_type` 与扩展名匹配的 PDF、PNG/JPEG/GIF/WebP、MP4/WebM，或已检测为 `text/plain` 的安全文本扩展名可预览；文本签名响应强制 `text/plain; charset=utf-8`。HTML、SVG、Office、压缩包、可执行文件、未知或不匹配类型返回 `415 FILE_PREVIEW_NOT_SUPPORTED`，授权失败仍按既有 404，不得借 415 探测不可见文件。
 
-`GET /files/{file_id}/content` 是无状态变化的登录态读取，不要求 CSRF；它先复用相同业务关联授权，再要求文件目的为通知附件且服务端检测图片类型与扩展名匹配，成功返回带 `Cache-Control: private, no-store` 的 307。通知管理响应在 `attachment_file_ids` 外返回同序 `attachments` 安全元数据，供编辑器显示文件名并生成专用 Markdown；不返回对象键。
+`GET /files/{file_id}/content` 是无状态变化的登录态读取，不要求 CSRF；它先复用相同业务关联授权，再要求文件目的为通知附件或评语图片且服务端检测图片类型与扩展名匹配。通知图片只按通知受众/管理员授权；评语图片只按该提交所有者/真实管理员授权，优秀作业受众不能借源版本读取。成功返回带 `Cache-Control: private, no-store` 的 307。通知管理响应在 `attachment_file_ids` 外返回同序 `attachments` 安全元数据，评语响应返回同序 `images` 安全元数据；两者都不返回对象键。
 # 2026-09-10 自助方向与人数分布契约增补
 
 - `GET /users/me/direction-options`：真实 active student 读取 `is_direction_change_open` 和启用方向 `directions: [{id,code,name}]`。

@@ -1,5 +1,54 @@
 # 生产运维与故障恢复验收报告
 
+## 2026-09-21 账号自动清理与邮箱复用修复部署
+
+- 只读排查确认 Worker 持续记录 `inactive_account_cleanup_failed`，PostgreSQL 报 `submission versions are immutable` 且重复注册触发 `uq_users_email_normalized`。生产迁移前为 `20260916_0026`，用户 165、激活管理员 16、超期候选 1（`active admin`）；不读取或公开其身份。修复只覆盖 `app/users/repository.py` 与 `20260921_0027`，未将其他未提交工作区文件纳入镜像。
+- 新加密增量备份 `pnx-backup-20260921T101952Z-daily` 为 659,914,811 字节/0600，SHA-256 校验通过；PostgreSQL dump 65,467,757 字节，MinIO 库存 1,946 个对象。独立 `pnx-restore-erasure-20260921` 从空环境恢复并对账 1,946 对象无缺失、大小/哈希差异或未跟踪对象，RPO 98 秒、RTO 189 秒。恢复副本上完成 `0026 → 0027 → 0026 → 0027`，并实际清理一个符合条件的超期账号、在回滚事务中验证同邮箱/学号能再次占用。隔离项目容器、网络、数据卷已精确清理；加密备份和密钥材料保留。
+- 首次备份因 `.env` 统一标签当时仅有 Frontend 镜像，使备份脚本误尝试构建同名 Backend 镜像；立即中止，该备份未完成，误构建的未使用 Backend 镜像已删除。给原运行 Backend 镜像补同名别名后重新成功备份；候选 `pnx-training-backend:account-erasure-fix-20260921` 来源为原运行 `assignment-feedback-images-20260916` 镜像，只 COPY 两份修复文件，摘要与测试源码一致。旧运行镜像另固定为 `account-erasure-rollback-20260921`。发布时把 Compose 所用 Backend 别名指向候选，Frontend 同名标签保持原镜像。
+- 停止旧 Worker 后生产仅前滚一次 `0026→0027`，再只替换 Backend/Worker；两者实际镜像 ID 均为 `sha256:95c78c088989…` 且 healthy。Frontend、Nginx、PostgreSQL、MinIO 容器/数据卷未重建。Worker 启动扫描按原规则擦除 1 个超期 `active admin`：用户 `165→164`、激活管理员 `16→15`、候选 `1→0`，新自动清理审计恰好 1 条，账号对象清理未完成或死信任务 0。不能通过回滚旧应用恢复这名用户或其个人业务数据；必须使用删除前 PostgreSQL/MinIO 同点备份隔离恢复。
+- Alembic `20260921_0027` 且 `alembic check` 无漂移；六服务 healthy、Nginx ready 200、匿名用户管理 API 401。切换窗口出现 1 次 Nginx 500，全部服务健康后的稳定期无 5xx、严重错误或 `inactive_account_cleanup_failed`。未用生产真实邮箱调用注册接口，邮箱释放已在恢复副本端到端验证。备份与临时 GPG 私钥仍同机位于 `/tmp`，并非异机灾备，须由部署方分离保存。
+
+## 2026-09-16 作业私密评语图片与限额放宽部署
+
+- 用户要求部署。候选以当前线上 `knowledge-content-fidelity-20260914` 为运行基线，只叠加已上线但尚未提交的知识库正文完整性、管理员技术组分布代码和本次作业评语图片运行时文件，未直接把文档或其他脏工作区内容打入镜像。固定标签为 `assignment-feedback-images-20260916`：Backend/Worker 镜像 `sha256:ca1d638e2e36e1a8f17411f20315f02a3073c366ede5d40fdc08e11907a1426f`，Frontend 镜像 `sha256:b91c3c65534586970aa535336a30fd88590dd6afc1a003c8948f71ba4c1f1f5b`，均以 `appuser` 运行；部署前镜像已固定为 `assignment-feedback-images-rollback-20260916` 回滚标签。
+- 构建门发现原锁文件 Next.js 16.3.2 与 Sharp 0.35.3 新增 1 个 critical、1 个 high 生产依赖公告，因此发布前升级到 Next.js/ESLint 配置 16.3.5 与 Sharp 0.35.4。升级后 `npm audit --omit=dev --audit-level=high` 为 0 漏洞，前端 27 文件/167 项、ESLint、严格 TypeScript 和无缓存镜像内 Next.js 正式构建全部通过。
+- 部署前生成加密每日增量 `pnx-backup-20260916T093650Z-daily`：归档 236,062,009 字节、权限 0600、SHA-256 `560b04e3516ea792cef31df2014202a47fc20e2332b348ff36381471c8c0fdc2`；数据库 dump 45,825,142 字节，对象库存 1,736 个/5,636,169,591 字节，增量载荷 386 个/210,956,716 字节，依赖周基线 `pnx-backup-20260905T163853Z-weekly`。
+- 全新 `pnx-restore-feedback-images-20260916` 隔离项目完成 PostgreSQL/MinIO 空卷恢复，RPO 52 秒、RTO 220 秒；1,736 个对象的缺失、大小、SHA-256 和未跟踪差异均为 0。候选镜像在恢复副本完成 `0025 → 0026 → 0025 → 0026`，旧目的约束恢复、新表/约束/唯一索引和最终 `alembic check` 均通过；业务计数保持。隔离容器、网络、两个数据卷和临时构建目录已精确清理。
+- 生产先一次前滚 `20260910_0025 → 20260916_0026`，再于北京时间 18:04 前后切换 Backend/Worker、18:06 前后切换 Frontend，两阶段均在健康后校验并热重载 Nginx；PostgreSQL、MinIO 与 Nginx 容器和数据卷未重建。最终六服务 healthy、重启 0，登录、Backend ready、Worker 和 Nginx 健康入口均为 200，受保护图片内容接口匿名为 401；管理员提交页的流式匿名响应携带登录重定向标记。
+- 生产运行代码确认 `submission_feedback`、`file_ids`、10 张/单张 10 MiB/合计 50 MiB 和 Frontend 对应文案生效；Next.js 运行版本为 16.3.5。迁移后 `feedback_files=0`，主键及文件唯一/顺序唯一索引有效。部署窗口有正常外部业务流量令提交版本/文件由 `131/376` 增至 `132/377`，其余核对计数保持；验收未创建 Session、未携带 Cookie/CSRF、未调用评语、上传、飞书同步或其他带认证写接口。
+- 稳定期 Backend/Worker/Frontend 严重错误和 Nginx 5xx 均为 0。加密备份与解密材料仍位于同一宿主机 `/tmp`，只适合作为短期恢复材料，部署方仍须迁往独立受控介质并分离保存。
+
+## 2026-09-14 知识库正文完整性、Emoji 与提示块部署
+
+- 用户要求部署。候选以当前线上 `admin-user-distribution-20260914` 为基线，仅新增知识库规范化器和正文渲染器变化；固定标签 `knowledge-content-fidelity-20260914`。Backend/Worker 镜像为 `sha256:fee97edbba7862f700bd17fa0478f2b6f827851699ebe3fc270c7c8500f6d505`，Frontend 为 `sha256:e90d4ebfe1f32545547a04fea4c8632259512f3b561695f12ebc9600c435c8ca`，均以 `appuser` 运行。旧线上镜像另加同日回滚标签。
+- 部署前生成加密每日增量 `pnx-backup-20260914T111542Z-daily`：归档 203,715,823 字节，数据库 dump 42,752,077 字节，对象库存 1,683 个/5,604,912,276 字节，增量载荷 333 个/179,699,401 字节，依赖周基线 `pnx-backup-20260905T163853Z-weekly`。
+- 全新 `pnx-restore-knowledge-content-20260914` 隔离项目完成 PostgreSQL/MinIO 空卷恢复；RPO 51 秒、RTO 185 秒，1,683 个对象的缺失、大小、SHA-256 和未跟踪差异均为 0。恢复容器、网络和两个数据卷已精确清理。
+- 候选镜像内正式 Next.js 16.3.2 构建完整通过编译、TypeScript、页面数据收集和静态生成；运行前后镜像冒烟确认命名 Emoji、高亮颜色标记以及三级标题子树规范化。本轮无新依赖或迁移。
+- 幂等 migrate 退出 0且 Alembic 保持 `20260910_0025 (head)`。北京时间 19:22:55 完成 Backend/Worker 切换并重载 Nginx，19:24:31 完成 Frontend 切换及再次重载；PostgreSQL、MinIO 与 Nginx 容器和数据卷未重建。
+- 六服务 healthy、重启 0；`/login`、live、ready、worker 为 200，知识库 API 匿名为 401，`/knowledge` 与 `/admin/knowledge` 匿名为 307。部署前后用户、知识库文档、知识库资源、Outbox 和同步运行总数均为 `191/6858/1455/991/36`，稳定期 Nginx 5xx 与 Backend/Worker/Frontend 错误行均为 0。
+- 验收未创建真实 Session、未携带 Cookie/CSRF、未调用业务写接口、未触发飞书同步、邮件或账号删除。已有成功快照立即获得前端展示修复；同步侧增强等待真实管理员下一次手动同步。加密备份与解密材料仍在同一宿主机临时目录，须迁往独立受控介质并分离保存。
+
+## 2026-09-14 管理员人员技术组分布部署
+
+- 候选以当前线上提交 `59cabd7` 为基线，只叠加本功能的 Backend Repository/Service/Router/Schema 与 Frontend 页面/组件/API 类型共 8 个运行时代码文件；没有直接构建包含文档、测试和既有运维记录的脏工作区，也没有新增迁移或依赖。
+- 部署前生成加密每日增量 `pnx-backup-20260914T081810Z-daily`：归档 179,664,706 字节，数据库 dump 39,800,343 字节，对象库存 1,659 个/5,583,341,088 字节，增量载荷 309 个/158,128,213 字节，依赖周基线 `pnx-backup-20260905T163853Z-weekly`。
+- 在全新 `pnx-restore-admin-user-distribution-20260914` 隔离项目完成 PostgreSQL/MinIO 空卷恢复。RPO 54 秒、RTO 187 秒；1,659 个对象全部恢复，缺失、大小、SHA-256 和未跟踪差异均为 0。验收后隔离容器、网络和卷已精确删除。
+- 隔离候选 Frontend 的正式 `next build` 完整通过编译、TypeScript、页面数据收集与生成。固定标签 `admin-user-distribution-20260914`：Backend/Worker 镜像 `sha256:200fcf645a5286a8b9df12d0c625851d269f19bfd1bac1403ac218901e5d941c`，Frontend `sha256:6a319b8f612db7373770343dea0837b27056bd657dbaef7e8b50a7ef2a75f1d0`；运行 OpenAPI 确认新端点响应模型，Frontend 运行产物包含“人员技术组分布”。
+- 幂等 migrate 退出 0，Alembic 始终为 `20260910_0025 (head)`。北京时间 16:26:06 切换 Backend/Worker，16:27:55 切换 Frontend；两次 Nginx 配置校验与热重载成功。PostgreSQL、MinIO、Nginx 容器和数据卷保持，旧 `account-auto-cleanup-20260911` 两张镜像保留用于应用回滚。
+- 六服务均为 healthy、重启 0；`/login`、live、ready、worker 为 200，`/admin/users` 匿名为 307，新 API 匿名为 401。部署前后用户/正常学生/已分组学生/技术组/活动 Outbox 均为 `191/171/154/6/2`；发布窗口及稳定期 Nginx 5xx 为 0，Backend/Worker/Frontend 错误日志为 0。
+- 验收没有携带管理员 Session、Cookie 或 CSRF，没有调用用户列表、新聚合的真实管理员响应或任何业务写接口；未触发邮件、飞书同步、账号删除或对象操作。加密归档与解密材料仍位于同一宿主机 `/tmp`，只适合作为短期恢复材料，部署方仍须迁往独立受控介质并分离保存。
+
+## 2026-09-11 十五天自动账号清理部署与旧 Docker 清理
+
+- 用户明确要求跳过备份，并澄清只删除旧 Docker；本次不生成新备份、不执行恢复验证，作为用户授权例外记录，不宣称符合原备份门禁。保留既有备份、私钥、Git 和业务历史；同机备份风险仍存在。
+- 候选基于 `59cabd7`，包含已上线知识库视频能力及十五天自动清理。后端完整 522 通过/1 隔离数据库测试跳过，Ruff、124 文件严格 Mypy 通过；前端 27 文件/166 项、全量 ESLint、TypeScript、镜像内 Next.js 生产构建通过。
+- 固定标签 `account-auto-cleanup-20260911`；Backend/Worker 镜像 `sha256:1992667ce5dcdc238f25186dfba40eba825dded641684234f241f6710a053b37`，Frontend `sha256:8a04b128d4c2b6b6fade64da3518d2c4b120d4ac93c05edb01773d1a7465940e`。
+- 北京时间 18:08:12 开始、18:08:55 完成切换；仅更新被忽略 `.env` 固定标签，以显式 `--env-file .env`、`--no-deps --no-build --pull never --wait` 两阶段替换 Backend/Worker、Frontend，各阶段 Nginx 校验并热重载。未运行 migrate，数据库保持 `20260910_0025`，PostgreSQL/MinIO 容器 ID 与数据卷不变。
+- 部署前后账号 205、激活管理员 19、超过十五天候选 0；`user.auto_delete` 审计与账号对象清理任务均为 0。Worker 已运行自动清理代码，但当前无满足条件账号，不以真实账号构造破坏性验收。
+- 六服务 healthy、重启 0；login/live/ready/worker 为 200，匿名 admin/users 与 knowledge 为 401，知识库页面 307。登录页显示十五天提示，运行代码检查确认阈值/Worker 调用及视频 playback 保留。Backend/Worker/Frontend 错误日志 0，发布窗口及切换后观察期 Nginx 5xx 为 0；未做真实浏览器 E2E。
+- 验收后删除无挂载、已成功退出的旧 `pnx-training-migrate-1`，逐标签删除 35 个本项目旧镜像标签、18 个唯一旧镜像；删除前核对所有容器引用，未使用 force/system prune/卷清理。当前本项目仅保留两张新版本镜像，基础镜像、其他项目和已有备份保持。
+- 旧本地回滚镜像已按用户要求删除；应用若需回退须从历史源码重建/重新获取镜像，不能恢复已自动擦除的数据。自动清理按原十五天规则持续运行，最后激活管理员保护保持。
+
 ## 2026-09-10 知识库正文视频直接播放部署
 
 ### 范围与候选
@@ -1099,3 +1148,10 @@
 
 - 应用已部署，但本功能新增源码及部署记录尚未 Git 提交。管理员需在校内赛队伍管理页显式开放学生自助方向，组队开放仍是另一个独立开关。
 - 保持既有校内 HTTP/development Compose，未宣称完成 HTTPS production 改造。加密备份与临时 GPG 私钥环仍在同机 `/tmp`，必须迁移到受控异机介质并分离保存；本次不删除任何既有恢复材料，也未修改 Docker socket 权限。
+## 2026-09-18 置顶、当前设备与品牌字标视觉优化部署
+
+- 用户要求部署。本轮仅重建并替换 Frontend，Nginx 随后重建以刷新上游；Backend、Worker、PostgreSQL、MinIO 未重启，未运行数据库迁移，Alembic 保持 `20260916_0026`。
+- Frontend 镜像标签为 `ui-visual-refinement-20260918`，镜像摘要 `sha256:98fc646885df…`；部署前 Frontend 镜像已保留为 `ui-visual-refinement-rollback-20260918` 回滚标签。Nginx 继续使用 `nginx:1.31.3-alpine3.24`。
+- 容器内 Next.js 生产构建编译、TypeScript、页面数据收集和静态页面生成通过；Frontend 与 Nginx 均 healthy。
+- 通过开发入口验收 `/login`、`/health/live`、`/health/ready`、`/health/worker` 均返回 200；部署后日志未发现 5xx、fatal、panic 或启动异常。
+- 本轮只涉及置顶图钉图标、当前设备显示器图标和 PNX / TRAINING HUB 字标样式，无 API、权限、数据库、MinIO 对象或业务数据变化。
