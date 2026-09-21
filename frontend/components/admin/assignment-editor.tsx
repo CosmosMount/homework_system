@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { RenderedMarkdown } from "@/components/announcements/safe-html";
+import { KnowledgeReferencePicker } from "@/components/knowledge/knowledge-reference-picker";
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon";
 
 import {
@@ -19,6 +20,7 @@ import type {
 } from "@/lib/api/types";
 import { formatDateTime, formatFileSize } from "@/lib/format";
 import { createIdempotencyKey } from "@/lib/idempotency";
+import { insertMarkdownAtSelection } from "@/lib/knowledge-references";
 
 function localDateTime(value: string | null): string {
   if (value === null) return "";
@@ -134,6 +136,7 @@ export function AssignmentEditor({
   directions: Direction[];
 }>) {
   const router = useRouter();
+  const descriptionInputRef = useRef<HTMLTextAreaElement>(null);
   const [assignment, setAssignment] = useState(initialAssignment);
   const [submissionFilter, setSubmissionFilter] = useState<SubmissionFilter>("all");
   const [title, setTitle] = useState(initialAssignment?.title ?? "");
@@ -327,6 +330,22 @@ export function AssignmentEditor({
     }
   }
 
+  function insertKnowledgeDocument(snippet: string) {
+    const input = descriptionInputRef.current;
+    const next = insertMarkdownAtSelection(
+      descriptionMarkdown,
+      snippet,
+      input?.selectionStart ?? descriptionMarkdown.length,
+      input?.selectionEnd ?? descriptionMarkdown.length,
+    );
+    setDescriptionMarkdown(next.value);
+    requestAnimationFrame(() => {
+      input?.focus();
+      input?.setSelectionRange(next.cursor, next.cursor);
+    });
+    setMessage("知识库文档引用已插入作业说明。");
+  }
+
   async function remove() {
     if (assignment === null) return;
     const prompt =
@@ -390,12 +409,17 @@ export function AssignmentEditor({
           <label className="block text-sm font-medium">
             Markdown 作业说明
             <textarea
+              ref={descriptionInputRef}
               className={inputClassName + " min-h-72 py-3 font-mono text-sm"}
               disabled={!editable}
               maxLength={200000}
               onChange={(event) => setDescriptionMarkdown(event.target.value)}
               required
               value={descriptionMarkdown}
+            />
+            <KnowledgeReferencePicker
+              disabled={!editable}
+              onInsert={insertKnowledgeDocument}
             />
           </label>
           <label className="block text-sm font-medium">

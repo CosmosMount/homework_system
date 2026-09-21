@@ -9,7 +9,7 @@ import {
 import { isAdminView } from "@/lib/api/types";
 
 type KnowledgePageProps = Readonly<{
-  searchParams: Promise<{ doc?: string }>;
+  searchParams: Promise<{ doc?: string; source?: string }>;
 }>;
 
 export default async function KnowledgePage({
@@ -22,9 +22,10 @@ export default async function KnowledgePage({
     searchParams,
   ]);
   const requested = (filters.doc ?? "").trim();
+  const source = (filters.source ?? "").trim();
   const selectedId = overview.documents.some((item) => item.id === requested)
     ? requested
-    : undefined;
+    : overview.documents.find((item) => item.source_token === source)?.id;
   const document = selectedId
     ? await getKnowledgeDocument(selectedId)
     : null;

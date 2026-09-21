@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { AnnouncementUploader } from "@/components/announcements/announcement-uploader";
 import { RenderedMarkdown } from "@/components/announcements/safe-html";
+import { KnowledgeReferencePicker } from "@/components/knowledge/knowledge-reference-picker";
 import {
   buttonClassName,
   FormMessage,
@@ -18,6 +19,7 @@ import type {
   Direction,
 } from "@/lib/api/types";
 import { createIdempotencyKey } from "@/lib/idempotency";
+import { insertMarkdownAtSelection } from "@/lib/knowledge-references";
 
 function localDateTime(value: string | null): string {
   if (value === null) return "";
@@ -280,23 +282,30 @@ export function AnnouncementEditor({
     const input = bodyInputRef.current;
     const start = input?.selectionStart ?? bodyMarkdown.length;
     const end = input?.selectionEnd ?? start;
-    const separatorBefore =
-      start > 0 && bodyMarkdown[start - 1] !== "\n" ? "\n\n" : "";
-    const separatorAfter =
-      end < bodyMarkdown.length && bodyMarkdown[end] !== "\n" ? "\n\n" : "";
-    const nextBody =
-      bodyMarkdown.slice(0, start) +
-      separatorBefore +
-      snippet +
-      separatorAfter +
-      bodyMarkdown.slice(end);
-    setBodyMarkdown(nextBody);
-    const nextCursor = start + separatorBefore.length + snippet.length;
+    const next = insertMarkdownAtSelection(bodyMarkdown, snippet, start, end);
+    setBodyMarkdown(next.value);
+    const nextCursor = next.cursor;
     requestAnimationFrame(() => {
       input?.focus();
       input?.setSelectionRange(nextCursor, nextCursor);
     });
     setMessage("图片引用已插入正文；保存后会在站内和邮件中显示。");
+  }
+
+  function insertKnowledgeDocument(snippet: string) {
+    const input = bodyInputRef.current;
+    const next = insertMarkdownAtSelection(
+      bodyMarkdown,
+      snippet,
+      input?.selectionStart ?? bodyMarkdown.length,
+      input?.selectionEnd ?? bodyMarkdown.length,
+    );
+    setBodyMarkdown(next.value);
+    requestAnimationFrame(() => {
+      input?.focus();
+      input?.setSelectionRange(next.cursor, next.cursor);
+    });
+    setMessage("知识库文档引用已插入正文。");
   }
 
   const editable = announcement?.status !== "archived";
@@ -327,7 +336,6 @@ export function AnnouncementEditor({
           <label className="block text-sm font-medium">
             摘要
             <textarea
-              ref={bodyInputRef}
               className={inputClassName + " min-h-24 py-3"}
               disabled={!editable}
               maxLength={500}
@@ -339,6 +347,7 @@ export function AnnouncementEditor({
           <label className="block text-sm font-medium">
             Markdown 正文
             <textarea
+              ref={bodyInputRef}
               className={inputClassName + " min-h-80 py-3 font-mono text-sm"}
               disabled={!editable}
               maxLength={200000}
@@ -349,6 +358,10 @@ export function AnnouncementEditor({
             <span className="mt-2 block text-xs text-[var(--color-text-muted)]">
               图片请先上传为通知附件，再使用“插入正文”。原始 HTML、远程图片和危险协议会被后端禁用或清洗。
             </span>
+            <KnowledgeReferencePicker
+              disabled={!editable}
+              onInsert={insertKnowledgeDocument}
+            />
           </label>
         </section>
 

@@ -42,6 +42,19 @@ class RenderedMail:
     inline_images: tuple[InlineMailImage, ...] = ()
 
 
+_KNOWLEDGE_REFERENCE_HREF = re.compile(r'href="(/knowledge(?:\?[^" ]*)?)"')
+
+
+def _absolute_knowledge_links(rendered_html: str, base_url: str) -> str:
+    """把站内知识库引用补成邮件客户端可直接打开的平台链接。"""
+
+    normalized_base = base_url.rstrip("/")
+    return _KNOWLEDGE_REFERENCE_HREF.sub(
+        lambda match: f'href="{normalized_base}{match.group(1)}"',
+        rendered_html,
+    )
+
+
 class MailSender(Protocol):
     async def send(self, job: OutboxJob, secret_payload: dict[str, object]) -> None: ...
 
@@ -127,6 +140,7 @@ def render_mail(
                     f"cid:{images_by_id[file_id].content_id}" if file_id in images_by_id else None
                 ),
             )
+            rendered_body = _absolute_knowledge_links(rendered_body, base_url)
             text = (
                 f"{full_name}，你好：\n\n{prefix}：{title}\n{summary}\n\n"
                 f"{_plain_announcement_markdown(normalized_body)}"

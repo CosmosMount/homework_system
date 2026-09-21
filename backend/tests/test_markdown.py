@@ -23,6 +23,12 @@ def test_render_markdown_supports_safe_content_and_demotes_headings() -> None:
     assert "&lt;safe&gt;" in rendered
 
 
+def test_render_markdown_keeps_internal_knowledge_reference() -> None:
+    rendered = render_markdown("[培训文档](/knowledge?source=doc-token)")
+
+    assert 'href="/knowledge?source=doc-token"' in rendered
+
+
 def test_render_markdown_removes_raw_html_remote_images_and_dangerous_urls() -> None:
     rendered = render_markdown(
         "<script>alert(1)</script>\n\n"

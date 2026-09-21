@@ -310,6 +310,23 @@ def test_announcement_mail_renders_sanitized_content_and_contains_no_attachment_
     assert "/storage/" not in rendered.html
 
 
+def test_announcement_mail_absolutizes_internal_knowledge_references() -> None:
+    job = make_announcement_mail_job("announcement_email")
+    job.payload["body_markdown"] = (
+        "[培训文档](/knowledge?source=doc-token)\n\n"
+        "[危险](javascript:alert('xss'))"
+    )
+
+    rendered = render_mail(
+        job,
+        {},
+        app_base_url="https://training.example.invalid",
+    )
+
+    assert 'href="https://training.example.invalid/knowledge?source=doc-token"' in rendered.html
+    assert 'href="javascript:' not in rendered.html
+
+
 def test_announcement_mail_keeps_legacy_jobs_without_content_deliverable() -> None:
     job = make_announcement_mail_job("announcement_email")
     job.payload.pop("body_markdown")

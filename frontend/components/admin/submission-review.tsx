@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { AttachmentDownloadButton } from "@/components/announcements/announcement-actions";
 import { SafeHtml } from "@/components/announcements/safe-html";
 import { FeedbackImages } from "@/components/assignments/feedback-images";
+import { KnowledgeReferencePicker } from "@/components/knowledge/knowledge-reference-picker";
 import { MultipartUploader } from "@/components/uploads/multipart-uploader";
 import {
   buttonClassName,
@@ -22,6 +23,7 @@ import type {
   SubmissionCompletion,
 } from "@/lib/api/types";
 import { formatDateTime, formatFileSize } from "@/lib/format";
+import { insertMarkdownAtSelection } from "@/lib/knowledge-references";
 
 function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "操作失败，请稍后重试。";
@@ -37,6 +39,7 @@ export function SubmissionReview({
   initialExcellent: ExcellentSubmissionSummary[];
 }>) {
   const router = useRouter();
+  const feedbackInputRef = useRef<HTMLTextAreaElement>(null);
   const [submission, setSubmission] = useState(initialSubmission);
   const [selectedId, setSelectedId] = useState(
     initialSubmission.latest_version_id,
@@ -150,6 +153,22 @@ export function SubmissionReview({
         (image) => image.id !== fileId,
       ),
     }));
+  }
+
+  function insertKnowledgeDocument(snippet: string) {
+    const input = feedbackInputRef.current;
+    const next = insertMarkdownAtSelection(
+      feedbackMarkdown,
+      snippet,
+      input?.selectionStart ?? feedbackMarkdown.length,
+      input?.selectionEnd ?? feedbackMarkdown.length,
+    );
+    setFeedbackMarkdown(next.value);
+    requestAnimationFrame(() => {
+      input?.focus();
+      input?.setSelectionRange(next.cursor, next.cursor);
+    });
+    setMessage("知识库文档引用已插入评语。");
   }
 
   async function toggleExcellent() {
@@ -356,12 +375,14 @@ export function SubmissionReview({
           <label className="mt-5 block text-sm font-medium">
             {selected.feedback ? "替换评语 Markdown" : "评语 Markdown"}
             <textarea
+              ref={feedbackInputRef}
               className={inputClassName + " min-h-48 py-3 font-mono text-sm"}
               disabled={pending}
               maxLength={200000}
               onChange={(event) => setFeedbackMarkdown(event.target.value)}
               value={feedbackMarkdown}
             />
+            <KnowledgeReferencePicker onInsert={insertKnowledgeDocument} />
           </label>
           <div className="mt-5">
             <MultipartUploader
