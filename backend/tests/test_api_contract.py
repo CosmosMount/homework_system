@@ -39,6 +39,30 @@ def test_admin_user_activity_filter_and_page_response_are_explicit() -> None:
     assert admin_user["properties"]["inactive_days"]["minimum"] == 0
 
 
+def test_admin_user_direction_distribution_contract_is_explicit() -> None:
+    schema = create_app(Settings(app_env="test")).openapi()
+    operation = schema["paths"]["/api/v1/admin/users/direction-distribution"]["get"]
+    response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+
+    assert response_schema == {"$ref": "#/components/schemas/UserDirectionDistributionResponse"}
+    distribution = schema["components"]["schemas"]["UserDirectionDistributionResponse"]
+    assert set(distribution["required"]) == {
+        "total_active_students",
+        "assigned_active_students",
+        "unassigned_active_students",
+        "directions",
+    }
+    item = schema["components"]["schemas"]["DirectionDistributionItem"]
+    assert set(item["required"]) == {
+        "id",
+        "code",
+        "name",
+        "is_active",
+        "active_student_count",
+    }
+    assert item["properties"]["active_student_count"]["minimum"] == 0
+
+
 def test_account_delete_contracts_require_reauthentication_and_confirmation() -> None:
     schema = create_app(Settings(app_env="test")).openapi()
     admin_operation = schema["paths"]["/api/v1/admin/users/{user_id}"]["delete"]

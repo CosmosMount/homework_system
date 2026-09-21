@@ -15,10 +15,11 @@ from app.auth.service import AuthenticatedContext, AuthenticationService
 from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.teams.composition import TeamCompositionService
-from app.users.models import User
+from app.users.models import Direction, User
 from app.users.repository import (
     AccountErasurePreparation,
     AccountObjectCleanup,
+    DirectionStudentCount,
     UserRepository,
 )
 from app.users.schemas import UserPatchRequest, UserRoleRequest
@@ -407,6 +408,86 @@ async def test_inactive_filter_preserves_repository_total_and_page_contract() ->
         activity="inactive",
         inactive_before=now - timedelta(days=10),
     )
+
+
+@pytest.mark.asyncio
+async def test_direction_distribution_service_reports_all_active_students() -> None:
+    active_direction = cast(
+        Direction,
+        SimpleNamespace(
+            id=uuid4(),
+            code="mechanical",
+            name="机械组",
+            is_active=True,
+        ),
+    )
+    inactive_direction = cast(
+        Direction,
+        SimpleNamespace(
+            id=uuid4(),
+            code="legacy",
+            name="历史组",
+            is_active=False,
+        ),
+    )
+    session = cast(AsyncSession, SimpleNamespace())
+    service = UserAdministrationService(session, Settings(app_env="test"))
+    direction_distribution = AsyncMock(
+        return_value=(
+            [
+                DirectionStudentCount(active_direction, 4),
+                DirectionStudentCount(inactive_direction, 0),
+            ],
+            2,
+        )
+    )
+    service._users = cast(
+        UserRepository,
+        SimpleNamespace(direction_distribution=direction_distribution),
+    )
+
+    result = await service.direction_distribution()
+
+    assert result.total_active_students == 6
+    assert result.assigned_active_students == 4
+    assert result.unassigned_active_students == 2
+    assert [item.name for item in result.directions] == ["机械组", "历史组"]
+    assert [item.active_student_count for item in result.directions] == [4, 0]
+    assert result.directions[1].is_active is False
+    direction_distribution.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_repository_direction_distribution_counts_only_active_students() -> None:
+    direction = cast(
+        Direction,
+        SimpleNamespace(
+            id=uuid4(),
+            code="algorithm",
+            name="算法组",
+            is_active=True,
+        ),
+    )
+    execute = AsyncMock(return_value=SimpleNamespace(all=Mock(return_value=[(direction, 3)])))
+    scalar = AsyncMock(return_value=2)
+    repository = UserRepository(cast(AsyncSession, SimpleNamespace(execute=execute, scalar=scalar)))
+
+    counts, unassigned = await repository.direction_distribution()
+
+    assert counts == [DirectionStudentCount(direction, 3)]
+    assert unassigned == 2
+    assert execute.await_args is not None
+    aggregate_statement = execute.await_args.args[0]
+    aggregate_sql = str(aggregate_statement.compile())
+    aggregate_params = set(aggregate_statement.compile().params.values())
+    assert "LEFT OUTER JOIN users" in aggregate_sql
+    assert {"student", "active"} <= aggregate_params
+    assert scalar.await_args is not None
+    unassigned_statement = scalar.await_args.args[0]
+    unassigned_sql = str(unassigned_statement.compile())
+    unassigned_params = set(unassigned_statement.compile().params.values())
+    assert "users.direction_id IS NULL" in unassigned_sql
+    assert {"student", "active"} <= unassigned_params
 
 
 @pytest.mark.parametrize(
@@ -998,8 +1079,17 @@ async def test_repository_erasure_enables_transaction_scoped_version_guard() -> 
 
     await repository.erase_account(target, preparation)
 
-    statement = session_namespace.execute.await_args.args[0]
-    assert str(statement) == "SET LOCAL pnx.account_erasure = 'on'"
+    statements = session_namespace.execute.await_args_list
+    assert str(statements[0].args[0]) == "SET LOCAL pnx.account_erasure = 'on'"
+    assert str(statements[1].args[0]) == (
+        "SELECT set_config('pnx.account_erasure_user_id', :user_id, true)"
+    )
+    assert statements[1].args[1] == {"user_id": str(target.id)}
+    personal_delete = statements[2].args[0].compile()
+    assert "DELETE FROM submissions" in str(personal_delete)
+    assert "submissions.owner_user_id =" in str(personal_delete)
+    assert "submissions.assignment_id IS NOT NULL" in str(personal_delete)
+    session_namespace.delete.assert_awaited_once_with(target)
 
 
 @pytest.mark.asyncio

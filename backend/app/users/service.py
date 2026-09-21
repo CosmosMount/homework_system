@@ -25,8 +25,10 @@ from app.users.schemas import (
     CohortPatchRequest,
     CohortResponse,
     DirectionCreateRequest,
+    DirectionDistributionItem,
     DirectionPatchRequest,
     DirectionResponse,
+    UserDirectionDistributionResponse,
     UserPage,
     UserPatchRequest,
     UserRoleRequest,
@@ -161,6 +163,25 @@ class UserAdministrationService:
             page=page,
             page_size=page_size,
             total=total,
+        )
+
+    async def direction_distribution(self) -> UserDirectionDistributionResponse:
+        counts, unassigned_count = await self._users.direction_distribution()
+        assigned_count = sum(item.active_student_count for item in counts)
+        return UserDirectionDistributionResponse(
+            total_active_students=assigned_count + unassigned_count,
+            assigned_active_students=assigned_count,
+            unassigned_active_students=unassigned_count,
+            directions=[
+                DirectionDistributionItem(
+                    id=item.direction.id,
+                    code=item.direction.code,
+                    name=item.direction.name,
+                    is_active=item.direction.is_active,
+                    active_student_count=item.active_student_count,
+                )
+                for item in counts
+            ],
         )
 
     async def disable_user(

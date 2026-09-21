@@ -15,9 +15,17 @@ from app.audit.repository import AuditRepository
 from app.auth.service import AuthenticatedContext, context_effective_role, context_is_admin
 from app.core.errors import ApplicationError
 from app.core.identifiers import uuid7
-from app.core.markdown import render_markdown
+from app.core.markdown import (
+    ANNOUNCEMENT_IMAGE_MEDIA_TYPES,
+    render_markdown,
+)
 from app.notifications.models import OutboxJob, StudentNotification
 from app.notifications.repository import OutboxRepository, StudentNotificationRepository
+from app.submissions.constants import (
+    FEEDBACK_IMAGE_MAX_BYTES,
+    FEEDBACK_IMAGE_MAX_COUNT,
+    FEEDBACK_IMAGES_MAX_TOTAL_BYTES,
+)
 from app.submissions.models import (
     Feedback,
     IdempotencyRecord,
@@ -364,7 +372,17 @@ class SubmissionService:
         return response
 
     @staticmethod
-    def _feedback_response(feedback: Feedback) -> FeedbackResponse:
+    def _attachment_response(stored_file: StoredFile) -> SubmissionAttachmentResponse:
+        return SubmissionAttachmentResponse(
+            id=stored_file.id,
+            file_name=stored_file.original_name,
+            size_bytes=stored_file.size_bytes,
+            media_type=stored_file.detected_media_type or stored_file.declared_media_type,
+            sha256=stored_file.sha256,
+        )
+
+    async def _feedback_response(self, feedback: Feedback) -> FeedbackResponse:
+        images = await self._submissions.files_for_feedback(feedback.id)
         return FeedbackResponse(
             id=feedback.id,
             body_html=feedback.body_html,
@@ -372,6 +390,7 @@ class SubmissionService:
             created_at=feedback.created_at,
             updated_at=feedback.updated_at,
             revision=feedback.revision,
+            images=[self._attachment_response(image) for image in images],
         )
 
     async def _version_response(
@@ -389,18 +408,90 @@ class SubmissionService:
             external_url=version.external_url,
             total_file_bytes=version.total_file_bytes,
             submitted_at=version.submitted_at,
-            attachments=[
-                SubmissionAttachmentResponse(
-                    id=file.id,
-                    file_name=file.original_name,
-                    size_bytes=file.size_bytes,
-                    media_type=file.detected_media_type or file.declared_media_type,
-                    sha256=file.sha256,
-                )
-                for file in files
-            ],
-            feedback=(self._feedback_response(feedback) if feedback is not None else None),
+            attachments=[self._attachment_response(file) for file in files],
+            feedback=(await self._feedback_response(feedback) if feedback is not None else None),
         )
+
+    async def _validate_feedback_images(
+        self,
+        *,
+        feedback_id: UUID,
+        version_id: UUID,
+        actor_user_id: UUID,
+        file_ids: Sequence[UUID],
+    ) -> list[StoredFile]:
+        if len(file_ids) > FEEDBACK_IMAGE_MAX_COUNT:
+            raise ApplicationError(
+                status_code=400,
+                code="VALIDATION_ERROR",
+                message="每条评语最多上传 10 张图片。",
+            )
+        if not file_ids:
+            return []
+        stored_files = await self._uploads.get_files(file_ids, for_update=True)
+        by_id = {stored_file.id: stored_file for stored_file in stored_files}
+        if set(by_id) != set(file_ids):
+            raise self._not_found()
+        ordered = [by_id[file_id] for file_id in file_ids]
+        total_bytes = 0
+        for stored_file in ordered:
+            expected_media_type = ANNOUNCEMENT_IMAGE_MEDIA_TYPES.get(stored_file.extension)
+            if (
+                stored_file.purpose != "submission_feedback"
+                or stored_file.status != "available"
+                or stored_file.deleted_at is not None
+            ):
+                raise ApplicationError(
+                    status_code=409,
+                    code="FILE_NOT_AVAILABLE",
+                    message="评语图片尚未完成校验或不可用。",
+                )
+            if (
+                expected_media_type is None
+                or stored_file.detected_media_type != expected_media_type
+            ):
+                raise ApplicationError(
+                    status_code=415,
+                    code="FILE_TYPE_NOT_ALLOWED",
+                    message="评语图片只支持已校验的 PNG、JPEG、GIF 或 WebP。",
+                )
+            if stored_file.size_bytes > FEEDBACK_IMAGE_MAX_BYTES:
+                raise ApplicationError(
+                    status_code=413,
+                    code="FEEDBACK_IMAGE_TOO_LARGE",
+                    message="单张评语图片不能超过 10 MiB。",
+                )
+            total_bytes += stored_file.size_bytes
+
+            bound_feedback_id = await self._uploads.bound_feedback_id(stored_file.id)
+            if bound_feedback_id == feedback_id:
+                continue
+            if bound_feedback_id is not None or await self._uploads.file_is_bound(stored_file.id):
+                raise ApplicationError(
+                    status_code=409,
+                    code="FILE_ALREADY_BOUND",
+                    message="图片已经绑定其他正式资源。",
+                )
+            if stored_file.owner_user_id != actor_user_id:
+                raise self._not_found()
+            upload_session = await self._uploads.get_session_by_file(stored_file.id)
+            if (
+                upload_session is None
+                or upload_session.context_type != "submission_feedback"
+                or upload_session.context_id != version_id
+            ):
+                raise ApplicationError(
+                    status_code=409,
+                    code="FILE_CONTEXT_MISMATCH",
+                    message="图片不属于当前作业版本的评语。",
+                )
+        if total_bytes > FEEDBACK_IMAGES_MAX_TOTAL_BYTES:
+            raise ApplicationError(
+                status_code=413,
+                code="FEEDBACK_IMAGES_TOO_LARGE",
+                message="评语图片合计不能超过 50 MiB。",
+            )
+        return ordered
 
     async def _can_read_submission(
         self,
@@ -597,6 +688,7 @@ class SubmissionService:
             version_id,
             for_update=True,
         )
+        existing_feedback = feedback is not None
         now = self._clock()
         if feedback is None:
             if payload.revision is not None:
@@ -628,6 +720,25 @@ class SubmissionService:
             feedback.body_markdown = payload.body_markdown.strip()
             feedback.body_html = render_markdown(payload.body_markdown)
             feedback.revision += 1
+
+        requested_file_ids = payload.file_ids
+        if requested_file_ids is None:
+            requested_file_ids = (
+                [image.id for image in await self._submissions.files_for_feedback(feedback.id)]
+                if existing_feedback
+                else []
+            )
+        feedback_images = await self._validate_feedback_images(
+            feedback_id=feedback.id,
+            version_id=version_id,
+            actor_user_id=audit.actor.user.id,
+            file_ids=requested_file_ids,
+        )
+        await self._session.flush()
+        await self._submissions.replace_feedback_files(
+            feedback_id=feedback.id,
+            file_ids=[image.id for image in feedback_images],
+        )
 
         event_key = f"feedback:{feedback.id}:revision:{feedback.revision}"
         assignment = await self._assignments.get_by_id(submission.assignment_id)
@@ -691,6 +802,7 @@ class SubmissionService:
                 "submission_id": str(submission.id),
                 "feedback_revision": feedback.revision,
                 "body_present": True,
+                "image_count": len(feedback_images),
             },
             now=now,
         )
@@ -704,4 +816,4 @@ class SubmissionService:
                 message="评语状态发生并发冲突，请刷新后重试。",
             ) from exc
         await self._session.refresh(feedback)
-        return self._feedback_response(feedback)
+        return await self._feedback_response(feedback)

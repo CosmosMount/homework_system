@@ -544,6 +544,118 @@ def test_normalizer_rejects_unsafe_links_and_localizes_known_assets() -> None:
     assert safe_href("javascript:alert(1)") is None
 
 
+def test_normalizer_preserves_heading_children_inline_emoji_and_unknown_rich_text() -> None:
+    blocks = [
+        {
+            "block_id": "page",
+            "block_type": 1,
+            "children": ["heading-3"],
+        },
+        {
+            "block_id": "heading-3",
+            "block_type": 5,
+            "heading3": {
+                "elements": [
+                    {"emoji": {"emoji_type": "books"}},
+                    {"text_run": {"content": " 三级标题"}},
+                ]
+            },
+            "children": ["paragraph", "future-rich-text"],
+        },
+        {
+            "block_id": "paragraph",
+            "block_type": 2,
+            "text": {"elements": [{"text_run": {"content": "标题下正文"}}]},
+        },
+        {
+            "block_id": "future-rich-text",
+            "block_type": 999,
+            "future_block": {
+                "elements": [
+                    {"emoji": {"unicode": "🚀"}},
+                    {"text_run": {"content": " 未知块正文"}},
+                ]
+            },
+        },
+    ]
+
+    normalized = normalize_document(
+        blocks,
+        assets={},
+        asset_names={},
+        fallback_url="https://pnx.feishu.cn/wiki/source",
+    )
+
+    assert len(normalized) == 1
+    assert normalized[0]["type"] == "heading"
+    assert normalized[0]["level"] == 3
+    assert [segment["text"] for segment in normalized[0]["segments"]] == ["📚", " 三级标题"]
+    assert [child["type"] for child in normalized[0]["children"]] == [
+        "paragraph",
+        "paragraph",
+    ]
+    assert normalized[0]["children"][0]["segments"][0]["text"] == "标题下正文"
+    assert [segment["text"] for segment in normalized[0]["children"][1]["segments"]] == [
+        "🚀",
+        " 未知块正文",
+    ]
+
+
+def test_normalizer_rejects_incomplete_block_trees() -> None:
+    blocks = [
+        {
+            "block_id": "page",
+            "block_type": 1,
+            "children": ["missing-child"],
+        }
+    ]
+
+    with pytest.raises(ValueError, match="missing child"):
+        normalize_document(
+            blocks,
+            assets={},
+            asset_names={},
+            fallback_url="https://pnx.feishu.cn/wiki/source",
+        )
+
+    with pytest.raises(ValueError, match="child cycle"):
+        normalize_document(
+            [
+                {"block_id": "page", "block_type": 1, "children": ["parent"]},
+                {"block_id": "parent", "block_type": 2, "children": ["parent"]},
+            ],
+            assets={},
+            asset_names={},
+            fallback_url="https://pnx.feishu.cn/wiki/source",
+        )
+
+    with pytest.raises(ValueError, match="invalid children collection"):
+        normalize_document(
+            [{"block_id": "page", "block_type": 1, "children": "paragraph"}],
+            assets={},
+            asset_names={},
+            fallback_url="https://pnx.feishu.cn/wiki/source",
+        )
+
+    with pytest.raises(ValueError, match="missing cell"):
+        normalize_document(
+            [
+                {"block_id": "page", "block_type": 1, "children": ["table"]},
+                {
+                    "block_id": "table",
+                    "block_type": 31,
+                    "table": {
+                        "cells": ["missing-cell"],
+                        "property": {"row_size": 1, "column_size": 1},
+                    },
+                },
+            ],
+            assets={},
+            asset_names={},
+            fallback_url="https://pnx.feishu.cn/wiki/source",
+        )
+
+
 def test_normalizer_preserves_non_empty_image_captions_as_text() -> None:
     captioned_image_id = uuid4()
     plain_image_id = uuid4()

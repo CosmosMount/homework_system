@@ -18,6 +18,7 @@ from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.core.identifiers import uuid7
 from app.core.markdown import ANNOUNCEMENT_IMAGE_MEDIA_TYPES
+from app.submissions.constants import FEEDBACK_IMAGE_MAX_BYTES
 from app.submissions.repository import SubmissionRepository
 from app.uploads.models import StoredFile, UploadPart, UploadSession
 from app.uploads.object_store import (
@@ -408,6 +409,24 @@ class UploadService:
                 raise self._not_found()
             return "announcement"
 
+        if payload.purpose == "submission_feedback":
+            version_record = await self._submissions.version_with_submission(payload.context_id)
+            if not context_is_admin(context) or version_record is None:
+                raise self._not_found()
+            if extension not in ANNOUNCEMENT_IMAGE_MEDIA_TYPES:
+                raise ApplicationError(
+                    status_code=415,
+                    code="FILE_TYPE_NOT_ALLOWED",
+                    message="评语图片只支持 PNG、JPEG、GIF 或 WebP。",
+                )
+            if payload.size_bytes > FEEDBACK_IMAGE_MAX_BYTES:
+                raise ApplicationError(
+                    status_code=413,
+                    code="FEEDBACK_IMAGE_TOO_LARGE",
+                    message="单张评语图片不能超过 10 MiB。",
+                )
+            return "submission_feedback"
+
         assignment = await self._assignments.get_by_id(payload.context_id)
         if (
             context_effective_role(context) != "student"
@@ -582,6 +601,8 @@ class UploadService:
             for_update=for_update,
         )
         if upload_session is None:
+            raise self._not_found()
+        if upload_session.purpose == "submission_feedback" and not context_is_admin(context):
             raise self._not_found()
         return upload_session
 
@@ -917,6 +938,26 @@ class UploadService:
                     context=context,
                 )
         else:
+            feedback_version_id = (
+                await self._uploads.bound_feedback_version_id(file_id)
+                if stored_file.purpose == "submission_feedback"
+                else None
+            )
+            if feedback_version_id is not None:
+                record = await self._submissions.version_with_submission(feedback_version_id)
+                if record is None:
+                    raise self._not_found()
+                submission = record.submission
+                if (
+                    submission.assignment_id is None
+                    or submission.owner_user_id is None
+                    or (
+                        not context_is_admin(context)
+                        and submission.owner_user_id != context.user.id
+                    )
+                ):
+                    raise self._not_found()
+                return stored_file
             version_id = await self._uploads.bound_version_id(file_id)
             if version_id is None:
                 raise self._not_found()
@@ -1012,7 +1053,7 @@ class UploadService:
         stored_file = await self._authorized_file(file_id, context=context)
         expected_media_type = ANNOUNCEMENT_IMAGE_MEDIA_TYPES.get(stored_file.extension)
         if (
-            stored_file.purpose != "announcement_attachment"
+            stored_file.purpose not in {"announcement_attachment", "submission_feedback"}
             or expected_media_type is None
             or stored_file.detected_media_type != expected_media_type
         ):

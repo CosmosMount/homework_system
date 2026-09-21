@@ -60,6 +60,42 @@ _CODE_LANGUAGES = {
 }
 _FEISHU_DOCUMENT_PATH_MARKERS = {"wiki", "docx", "document", "docs"}
 _FEISHU_FILE_TOKEN = re.compile(r"^[A-Za-z0-9_-]{1,500}$")
+_FEISHU_EMOJI_TEXT = {
+    "+1": "👍",
+    "star-struck": "🤩",
+    "beach_with_umbrella": "🏖️",
+    "black_nib": "✒️",
+    "books": "📚",
+    "bulb": "💡",
+    "bullettrain_front": "🚅",
+    "camping": "🏕️",
+    "check": "✅",
+    "exclamation": "❗",
+    "eyes": "👀",
+    "ghost": "👻",
+    "grinning": "😀",
+    "info": "ℹ️",
+    "link": "🔗",
+    "mag_right": "🔎",
+    "memo": "📝",
+    "monkey_face": "🐵",
+    "musical_score": "🎼",
+    "paperclip": "📎",
+    "pick": "⛏️",
+    "pin": "📌",
+    "pushpin": "📌",
+    "question": "❓",
+    "round_pushpin": "📍",
+    "space_invader": "👾",
+    "sparkles": "✨",
+    "sunrise": "🌅",
+    "sweat_smile": "😅",
+    "tada": "🎉",
+    "thinking_face": "🤔",
+    "trophy": "🏆",
+    "warning": "⚠️",
+    "white_check_mark": "✅",
+}
 
 AssetUnavailableReason = Literal["type_not_allowed", "too_large", "unavailable"]
 AssetDownloadEndpoint = Literal["media", "file"]
@@ -138,6 +174,25 @@ def _clean_text(value: object, *, limit: int = 200_000) -> str:
     return value.replace("\x00", "")[:limit]
 
 
+def _emoji_text(value: object) -> str:
+    if isinstance(value, str):
+        candidate = _clean_text(value, limit=64).strip()
+    elif isinstance(value, dict):
+        candidate = ""
+        for field in ("unicode", "content", "emoji", "emoji_type", "emoji_id", "name"):
+            candidate = _clean_text(value.get(field), limit=64).strip()
+            if candidate:
+                break
+    else:
+        return ""
+    if not candidate:
+        return ""
+    if any(ord(character) > 127 for character in candidate):
+        return candidate
+    normalized = candidate.lower().replace(" ", "_")
+    return _FEISHU_EMOJI_TEXT.get(normalized, "")
+
+
 def _rich_text(
     container: object,
     *,
@@ -167,6 +222,7 @@ def _rich_text(
         mention_doc = raw.get("mention_doc")
         mention_user = raw.get("mention_user")
         equation = raw.get("equation")
+        inline_emoji = raw.get("emoji")
         inline_file = raw.get("file")
         if isinstance(text_run, dict):
             text = _clean_text(text_run.get("content"))
@@ -195,6 +251,8 @@ def _rich_text(
         elif isinstance(equation, dict):
             text = _clean_text(equation.get("content"), limit=20_000)
             is_equation = True
+        elif inline_emoji is not None:
+            text = _emoji_text(inline_emoji)
         elif isinstance(inline_file, dict):
             token = inline_file.get("file_token")
             if isinstance(token, str) and token:
@@ -388,16 +446,21 @@ def normalize_document(
     def children_of(block: dict[str, Any], trail: set[str]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         raw_children = block.get("children")
-        if not isinstance(raw_children, list):
+        if raw_children is None:
             return result
+        if not isinstance(raw_children, list):
+            raise ValueError("knowledge block tree contains an invalid children collection")
         for child_id in raw_children:
-            if not isinstance(child_id, str) or child_id in trail:
-                continue
+            if not isinstance(child_id, str):
+                raise ValueError("knowledge block tree contains an invalid child reference")
+            if child_id in trail:
+                raise ValueError("knowledge block tree contains a child cycle")
             child = by_id.get(child_id)
-            if child is not None:
-                normalized = normalize_block(child, trail | {child_id})
-                if normalized is not None:
-                    result.append(normalized)
+            if child is None:
+                raise ValueError("knowledge block tree references a missing child")
+            normalized = normalize_block(child, trail | {child_id})
+            if normalized is not None:
+                result.append(normalized)
         return result
 
     def normalize_block(block: dict[str, Any], trail: set[str]) -> dict[str, Any] | None:
@@ -406,6 +469,18 @@ def normalize_document(
         numeric_type = block_type if isinstance(block_type, int) else 0
         normalized_type, field = _BLOCK_FIELDS.get(numeric_type, ("container", ""))
         detail = block.get(field) if field else None
+        if not field:
+            rich_detail = next(
+                (
+                    candidate
+                    for candidate in block.values()
+                    if isinstance(candidate, dict) and isinstance(candidate.get("elements"), list)
+                ),
+                None,
+            )
+            if rich_detail is not None:
+                normalized_type = "paragraph"
+                detail = rich_detail
         result: dict[str, Any] = {"id": block_id, "type": normalized_type}
 
         if normalized_type in {
@@ -495,11 +570,9 @@ def normalize_document(
             row_size = properties.get("row_size") if isinstance(properties, dict) else None
             column_size = properties.get("column_size") if isinstance(properties, dict) else None
             raw_merge_info = properties.get("merge_info") if isinstance(properties, dict) else None
-            cells = (
-                [item for item in raw_cells if isinstance(item, str)]
-                if isinstance(raw_cells, list)
-                else []
-            )
+            if isinstance(raw_cells, list) and any(not isinstance(item, str) for item in raw_cells):
+                raise ValueError("knowledge table contains an invalid cell reference")
+            cells = raw_cells if isinstance(raw_cells, list) else []
             if not isinstance(column_size, int) or column_size <= 0:
                 column_size = len(cells) or 1
             expected_rows = (
@@ -537,11 +610,11 @@ def normalize_document(
                         ):
                             occupied[span_row][span_column] = True
                     cell = by_id.get(cell_id)
+                    if cell is None:
+                        raise ValueError("knowledge table references a missing cell")
                     normalized_cell: dict[str, Any] = {
                         "id": cell_id,
-                        "blocks": (
-                            children_of(cell, trail | {cell_id}) if cell is not None else []
-                        ),
+                        "blocks": children_of(cell, trail | {cell_id}),
                     }
                     if row_span > 1:
                         normalized_cell["row_span"] = row_span

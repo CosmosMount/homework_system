@@ -59,6 +59,7 @@ def test_openapi_exposes_independent_teams_without_competition_domain() -> None:
     assert set(purpose_schema["enum"]) == {
         "announcement_attachment",
         "assignment_submission",
+        "submission_feedback",
     }
 
     serialized = str(schema).lower()

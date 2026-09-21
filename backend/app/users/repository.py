@@ -15,7 +15,7 @@ from app.help_requests.models import HelpRequest
 from app.intentions.models import IntentionResponse
 from app.notifications.models import OutboxJob, StudentNotification
 from app.notifications.repository import MAIL_JOB_TYPES
-from app.submissions.models import Submission
+from app.submissions.models import FeedbackFile, Submission
 from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile
 from app.uploads.models import StoredFile, UploadSession
 from app.users.models import Cohort, Direction, User
@@ -58,6 +58,12 @@ class AccountErasurePreparation:
     teams_transferred: int
     teams_dissolved: int
     teams_invalidated: int
+
+
+@dataclass(frozen=True, slots=True)
+class DirectionStudentCount:
+    direction: Direction
+    active_student_count: int
 
 
 class UserRepository:
@@ -242,6 +248,48 @@ class UserRepository:
         users = list((await self._session.scalars(statement)).all())
         return users, total
 
+    async def direction_distribution(
+        self,
+    ) -> tuple[list[DirectionStudentCount], int]:
+        active_student_join = and_(
+            User.direction_id == Direction.id,
+            User.role == "student",
+            User.status == "active",
+        )
+        rows = (
+            await self._session.execute(
+                select(
+                    Direction,
+                    func.count(User.id).label("active_student_count"),
+                )
+                .outerjoin(User, active_student_join)
+                .group_by(Direction.id)
+                .order_by(Direction.name, Direction.code)
+            )
+        ).all()
+        unassigned_count = int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(User)
+                .where(
+                    User.role == "student",
+                    User.status == "active",
+                    User.direction_id.is_(None),
+                )
+            )
+            or 0
+        )
+        return (
+            [
+                DirectionStudentCount(
+                    direction=row[0],
+                    active_student_count=int(row[1]),
+                )
+                for row in rows
+            ],
+            unassigned_count,
+        )
+
     async def _account_deletion_counts(
         self,
         user_id: UUID,
@@ -415,6 +463,13 @@ class UserRepository:
                     )
                 ).all()
             )
+            shared_file_ids.update(
+                (
+                    await self._session.scalars(
+                        select(FeedbackFile.file_id).where(FeedbackFile.file_id.in_(owned_file_ids))
+                    )
+                ).all()
+            )
         personal_files = [item for item in owned_files if item.id not in shared_file_ids]
 
         upload_sessions = list(
@@ -516,6 +571,18 @@ class UserRepository:
         preparation: AccountErasurePreparation,
     ) -> None:
         await self._session.execute(text("SET LOCAL pnx.account_erasure = 'on'"))
+        await self._session.execute(
+            text("SELECT set_config('pnx.account_erasure_user_id', :user_id, true)"),
+            {"user_id": str(user.id)},
+        )
+        # Removing the personal parent first keeps version cascades separate from
+        # the user's SET NULL foreign-key actions on shared historical versions.
+        await self._session.execute(
+            delete(Submission).where(
+                Submission.owner_user_id == user.id,
+                Submission.assignment_id.is_not(None),
+            )
+        )
         await self._session.delete(user)
         await self._session.flush()
         personal_file_ids = tuple(item.file_id for item in preparation.object_cleanups)

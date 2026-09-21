@@ -16,6 +16,7 @@ from app.users.schemas import (
     DirectionPatchRequest,
     DirectionResponse,
     UserDeleteRequest,
+    UserDirectionDistributionResponse,
     UserDisableRequest,
     UserPage,
     UserPatchRequest,
@@ -75,6 +76,17 @@ async def list_users(
         search=search,
         activity=activity,
     )
+
+
+@router.get(
+    "/users/direction-distribution",
+    response_model=UserDirectionDistributionResponse,
+)
+async def get_user_direction_distribution(
+    service: UserAdministrationServiceDependency,
+    _admin: AdminContextDependency,
+) -> UserDirectionDistributionResponse:
+    return await service.direction_distribution()
 
 
 @router.post("/users/{user_id}/disable", response_model=AdminUserResponse)

@@ -14,6 +14,10 @@ from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.notifications.mailer import render_mail
 from app.notifications.repository import OutboxRepository, StudentNotificationRepository
+from app.submissions.constants import (
+    FEEDBACK_IMAGE_MAX_BYTES,
+    FEEDBACK_IMAGES_MAX_TOTAL_BYTES,
+)
 from app.submissions.models import Submission
 from app.submissions.repository import SubmissionRepository
 from app.submissions.schemas import FeedbackPutRequest, SubmissionVersionCreateRequest
@@ -21,6 +25,7 @@ from app.submissions.service import SubmissionAuditContext, SubmissionService
 from app.uploads.models import StoredFile
 from app.uploads.object_store import MinioObjectStore
 from app.uploads.repository import UploadRepository
+from app.uploads.schemas import UploadInitRequest
 from app.uploads.service import UploadService
 from app.users.repository import UserRepository
 
@@ -60,6 +65,92 @@ def test_submission_schema_requires_content_and_rejects_duplicates_or_unsafe_url
     )
     assert request.text_markdown == "正文"
     assert request.external_url == "https://example.invalid/result"
+
+    feedback_image_id = uuid4()
+    assert FeedbackPutRequest(body_markdown="评语").file_ids is None
+    with pytest.raises(ValidationError):
+        FeedbackPutRequest(
+            body_markdown="评语",
+            file_ids=[feedback_image_id, feedback_image_id],
+        )
+
+
+@pytest.mark.asyncio
+async def test_feedback_image_upload_context_requires_real_admin_and_safe_image() -> None:
+    assert FEEDBACK_IMAGES_MAX_TOTAL_BYTES == 50 * 1024 * 1024
+    version_id = uuid4()
+    service = UploadService(cast(AsyncSession, AsyncMock()), Settings(app_env="test"))
+    service._submissions = cast(
+        SubmissionRepository,
+        SimpleNamespace(
+            version_with_submission=AsyncMock(
+                return_value=SimpleNamespace(submission=SimpleNamespace(assignment_id=uuid4()))
+            )
+        ),
+    )
+    payload = UploadInitRequest(
+        purpose="submission_feedback",
+        context_id=version_id,
+        file_name="review.png",
+        size_bytes=1024,
+        media_type="image/png",
+        sha256="a" * 64,
+    )
+    admin_context = cast(
+        AuthenticatedContext,
+        SimpleNamespace(
+            user=SimpleNamespace(id=uuid4(), role="admin"),
+            is_admin=True,
+        ),
+    )
+    assert (
+        await service._require_context(
+            payload=payload,
+            context=admin_context,
+            extension="png",
+        )
+        == "submission_feedback"
+    )
+
+    student_context = cast(
+        AuthenticatedContext,
+        SimpleNamespace(
+            user=SimpleNamespace(id=uuid4(), role="student"),
+            is_admin=False,
+        ),
+    )
+    with pytest.raises(ApplicationError) as forbidden:
+        await service._require_context(
+            payload=payload,
+            context=student_context,
+            extension="png",
+        )
+    assert forbidden.value.status_code == 404
+
+    with pytest.raises(ApplicationError) as unsafe_type:
+        await service._require_context(
+            payload=payload,
+            context=admin_context,
+            extension="pdf",
+        )
+    assert unsafe_type.value.code == "FILE_TYPE_NOT_ALLOWED"
+
+    max_size_payload = payload.model_copy(update={"size_bytes": FEEDBACK_IMAGE_MAX_BYTES})
+    assert (
+        await service._require_context(
+            payload=max_size_payload,
+            context=admin_context,
+            extension="png",
+        )
+        == "submission_feedback"
+    )
+    with pytest.raises(ApplicationError) as oversized:
+        await service._require_context(
+            payload=payload.model_copy(update={"size_bytes": FEEDBACK_IMAGE_MAX_BYTES + 1}),
+            context=admin_context,
+            extension="png",
+        )
+    assert oversized.value.code == "FEEDBACK_IMAGE_TOO_LARGE"
 
 
 @pytest.mark.asyncio
@@ -150,6 +241,8 @@ async def test_feedback_queues_private_notification_and_email_in_same_transactio
             return_value=SimpleNamespace(id=version_id, submission_id=submission_id)
         ),
         feedback_for_version=AsyncMock(return_value=None),
+        files_for_feedback=AsyncMock(return_value=[]),
+        replace_feedback_files=AsyncMock(),
         add_feedback=Mock(),
     )
     notifications = SimpleNamespace(add_all=Mock())
@@ -232,6 +325,195 @@ async def test_feedback_queues_private_notification_and_email_in_same_transactio
     assert "修订后的站内评语" not in str(revised_email_job.payload)
     assert outbox.add.call_count == 2
     assert session.commit.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_feedback_images_are_validated_bound_in_order_and_kept_out_of_email() -> None:
+    now = datetime.now(UTC)
+    assignment_id = uuid4()
+    submission_id = uuid4()
+    version_id = uuid4()
+    owner_id = uuid4()
+    admin_id = uuid4()
+    first = make_available_file(owner_user_id=admin_id, size_bytes=1024)
+    first.purpose = "submission_feedback"
+    first.original_name = "first.png"
+    first.extension = "png"
+    first.declared_media_type = "image/png"
+    first.detected_media_type = "image/png"
+    second = make_available_file(owner_user_id=admin_id, size_bytes=2048)
+    second.purpose = "submission_feedback"
+    second.original_name = "second.webp"
+    second.extension = "webp"
+    second.declared_media_type = "image/webp"
+    second.detected_media_type = "image/webp"
+
+    session = AsyncMock(spec=AsyncSession)
+    service = SubmissionService(cast(AsyncSession, session), clock=lambda: now)
+    submissions = SimpleNamespace(
+        get_by_id=AsyncMock(
+            return_value=SimpleNamespace(
+                id=submission_id,
+                assignment_id=assignment_id,
+                owner_user_id=owner_id,
+            )
+        ),
+        get_version=AsyncMock(
+            return_value=SimpleNamespace(id=version_id, submission_id=submission_id)
+        ),
+        feedback_for_version=AsyncMock(return_value=None),
+        add_feedback=Mock(),
+        replace_feedback_files=AsyncMock(),
+        files_for_feedback=AsyncMock(return_value=[first, second]),
+    )
+    uploads = SimpleNamespace(
+        get_files=AsyncMock(return_value=[second, first]),
+        bound_feedback_id=AsyncMock(return_value=None),
+        file_is_bound=AsyncMock(return_value=False),
+        get_session_by_file=AsyncMock(
+            return_value=SimpleNamespace(
+                context_type="submission_feedback",
+                context_id=version_id,
+            )
+        ),
+    )
+    outbox = SimpleNamespace(add=Mock())
+    service._submissions = cast(SubmissionRepository, submissions)
+    service._uploads = cast(UploadRepository, uploads)
+    service._assignments = cast(
+        AssignmentRepository,
+        SimpleNamespace(get_by_id=AsyncMock(return_value=SimpleNamespace(title="视觉作业"))),
+    )
+    service._users = cast(
+        UserRepository,
+        SimpleNamespace(
+            get_by_id=AsyncMock(
+                return_value=SimpleNamespace(
+                    id=owner_id,
+                    email="student@connect.hkust-gz.edu.cn",
+                    full_name="测试同学",
+                )
+            )
+        ),
+    )
+    service._notifications = cast(
+        StudentNotificationRepository,
+        SimpleNamespace(add_all=Mock()),
+    )
+    service._outbox = cast(OutboxRepository, outbox)
+    service._audit = Mock()
+
+    response = await service.put_feedback(
+        submission_id,
+        version_id,
+        FeedbackPutRequest(
+            body_markdown="请参考图片修改。",
+            file_ids=[first.id, second.id],
+        ),
+        audit=SubmissionAuditContext(
+            actor=cast(
+                AuthenticatedContext,
+                SimpleNamespace(user=SimpleNamespace(id=admin_id)),
+            ),
+            request_id="feedback-image-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    submissions.replace_feedback_files.assert_awaited_once_with(
+        feedback_id=response.id,
+        file_ids=[first.id, second.id],
+    )
+    assert [image.id for image in response.images] == [first.id, second.id]
+    email_job = outbox.add.call_args.args[0]
+    assert str(first.id) not in str(email_job.payload)
+    assert str(second.id) not in str(email_job.payload)
+    assert "请参考图片修改" not in str(email_job.payload)
+
+    created_feedback = submissions.add_feedback.call_args.args[0]
+    submissions.feedback_for_version.return_value = created_feedback
+    submissions.replace_feedback_files.reset_mock()
+    response = await service.put_feedback(
+        submission_id,
+        version_id,
+        FeedbackPutRequest(body_markdown="只修改正文。", revision=1),
+        audit=SubmissionAuditContext(
+            actor=cast(
+                AuthenticatedContext,
+                SimpleNamespace(user=SimpleNamespace(id=admin_id)),
+            ),
+            request_id="feedback-image-preserve-request",
+            ip_prefix="127.0.0.0/24",
+        ),
+    )
+
+    submissions.replace_feedback_files.assert_awaited_once_with(
+        feedback_id=response.id,
+        file_ids=[first.id, second.id],
+    )
+
+
+@pytest.mark.asyncio
+async def test_feedback_image_content_is_private_to_submission_owner_and_admin() -> None:
+    owner_id = uuid4()
+    version_id = uuid4()
+    stored_file = make_available_file(owner_user_id=uuid4(), size_bytes=1024)
+    stored_file.purpose = "submission_feedback"
+    stored_file.original_name = "review.png"
+    stored_file.extension = "png"
+    stored_file.declared_media_type = "image/png"
+    stored_file.detected_media_type = "image/png"
+    store = SimpleNamespace(
+        presign_inline=AsyncMock(return_value="https://storage.invalid/feedback-image")
+    )
+    service = UploadService(
+        cast(AsyncSession, AsyncMock()),
+        Settings(app_env="test"),
+        object_store=cast(MinioObjectStore, store),
+        clock=lambda: datetime.now(UTC),
+    )
+    service._uploads = cast(
+        UploadRepository,
+        SimpleNamespace(
+            get_file=AsyncMock(return_value=stored_file),
+            bound_announcement_id=AsyncMock(return_value=None),
+            bound_feedback_version_id=AsyncMock(return_value=version_id),
+        ),
+    )
+    service._submissions = cast(
+        SubmissionRepository,
+        SimpleNamespace(
+            version_with_submission=AsyncMock(
+                return_value=SimpleNamespace(
+                    submission=SimpleNamespace(
+                        assignment_id=uuid4(),
+                        owner_user_id=owner_id,
+                    )
+                )
+            )
+        ),
+    )
+    owner_context = cast(
+        AuthenticatedContext,
+        SimpleNamespace(
+            user=SimpleNamespace(id=owner_id, role="student"),
+            is_admin=False,
+        ),
+    )
+
+    result = await service.inline_image_url(stored_file.id, context=owner_context)
+    assert result.url == "https://storage.invalid/feedback-image"
+
+    unrelated_context = cast(
+        AuthenticatedContext,
+        SimpleNamespace(
+            user=SimpleNamespace(id=uuid4(), role="student"),
+            is_admin=False,
+        ),
+    )
+    with pytest.raises(ApplicationError) as forbidden:
+        await service.inline_image_url(stored_file.id, context=unrelated_context)
+    assert forbidden.value.status_code == 404
 
 
 @pytest.mark.asyncio

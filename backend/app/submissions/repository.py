@@ -3,11 +3,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, exists, select
+from sqlalchemy import and_, delete, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.submissions.models import (
     Feedback,
+    FeedbackFile,
     IdempotencyRecord,
     Submission,
     SubmissionVersion,
@@ -211,6 +212,38 @@ class SubmissionRepository:
             statement = statement.with_for_update()
         result: Feedback | None = await self._session.scalar(statement)
         return result
+
+    async def files_for_feedback(self, feedback_id: UUID) -> list[StoredFile]:
+        return list(
+            (
+                await self._session.scalars(
+                    select(StoredFile)
+                    .join(FeedbackFile, FeedbackFile.file_id == StoredFile.id)
+                    .where(FeedbackFile.feedback_id == feedback_id)
+                    .order_by(FeedbackFile.display_order)
+                )
+            ).all()
+        )
+
+    async def replace_feedback_files(
+        self,
+        *,
+        feedback_id: UUID,
+        file_ids: Sequence[UUID],
+    ) -> None:
+        await self._session.execute(
+            delete(FeedbackFile).where(FeedbackFile.feedback_id == feedback_id)
+        )
+        self._session.add_all(
+            [
+                FeedbackFile(
+                    feedback_id=feedback_id,
+                    file_id=file_id,
+                    display_order=index,
+                )
+                for index, file_id in enumerate(file_ids)
+            ]
+        )
 
     async def submission_has_feedback(self, submission_id: UUID) -> bool:
         value = await self._session.scalar(

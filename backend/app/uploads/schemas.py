@@ -9,6 +9,7 @@ class UploadInitRequest(BaseModel):
     purpose: Literal[
         "announcement_attachment",
         "assignment_submission",
+        "submission_feedback",
     ]
     context_id: UUID
     file_name: str = Field(min_length=1, max_length=255)

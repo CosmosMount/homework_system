@@ -205,6 +205,32 @@ class Feedback(TimestampRevisionMixin, Base):
     )
 
 
+class FeedbackFile(Base):
+    __tablename__ = "feedback_files"
+    __table_args__ = (
+        CheckConstraint("display_order >= 0", name="display_order_nonnegative"),
+        Index("uq_feedback_files_file_id", "file_id", unique=True),
+        Index(
+            "uq_feedback_files_display_order",
+            "feedback_id",
+            "display_order",
+            unique=True,
+        ),
+    )
+
+    feedback_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("feedback.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    file_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("files.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class IdempotencyRecord(Base):
     __tablename__ = "idempotency_records"
     __table_args__ = (

@@ -54,6 +54,18 @@ class UserPage(BaseModel):
     total: int
 
 
+class DirectionDistributionItem(CategorySummary):
+    is_active: bool
+    active_student_count: int = Field(ge=0)
+
+
+class UserDirectionDistributionResponse(BaseModel):
+    total_active_students: int = Field(ge=0)
+    assigned_active_students: int = Field(ge=0)
+    unassigned_active_students: int = Field(ge=0)
+    directions: list[DirectionDistributionItem]
+
+
 class UserDisableRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 

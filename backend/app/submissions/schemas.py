@@ -56,6 +56,7 @@ class FeedbackResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     revision: int
+    images: list[SubmissionAttachmentResponse]
 
 
 class SubmissionVersionResponse(BaseModel):
@@ -93,3 +94,13 @@ class SubmissionCompletionResponse(BaseModel):
 class FeedbackPutRequest(BaseModel):
     body_markdown: str = Field(min_length=1, max_length=200_000)
     revision: int | None = Field(default=None, ge=1)
+    file_ids: list[UUID] | None = Field(default=None, max_length=10)
+
+    @field_validator("file_ids")
+    @classmethod
+    def unique_file_ids(cls, value: list[UUID] | None) -> list[UUID] | None:
+        if value is None:
+            return value
+        if len(value) != len(set(value)):
+            raise ValueError("file_ids 不得重复")
+        return value

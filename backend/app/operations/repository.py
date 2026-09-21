@@ -7,7 +7,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.announcements.models import AnnouncementFile
 from app.notifications.models import OutboxJob
 from app.operations.domain import DatabaseOperationsMetrics
-from app.submissions.models import VersionFile
+from app.submissions.models import FeedbackFile, VersionFile
 from app.uploads.models import StoredFile, UploadSession
 
 _ACTIVE_OUTBOX_STATUSES = ("pending", "retry", "processing")
@@ -44,11 +44,13 @@ class OperationsRepository:
         )
         bound_to_announcement = exists().where(AnnouncementFile.file_id == StoredFile.id)
         bound_to_version = exists().where(VersionFile.file_id == StoredFile.id)
+        bound_to_feedback = exists().where(FeedbackFile.file_id == StoredFile.id)
         orphan_conditions = (
             StoredFile.status == "available",
             StoredFile.deleted_at.is_(None),
             ~bound_to_announcement,
             ~bound_to_version,
+            ~bound_to_feedback,
         )
         orphaned_available_files = await self._count_stored_files(*orphan_conditions)
         cleanup_due_available_files = await self._count_stored_files(

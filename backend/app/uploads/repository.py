@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.announcements.models import AnnouncementFile
 from app.knowledge.models import KnowledgeAsset
-from app.submissions.models import VersionFile
+from app.submissions.models import Feedback, FeedbackFile, VersionFile
 from app.uploads.models import StoredFile, UploadPart, UploadSession
 
 
@@ -117,6 +117,20 @@ class UploadRepository:
         )
         return result
 
+    async def bound_feedback_id(self, file_id: UUID) -> UUID | None:
+        result: UUID | None = await self._session.scalar(
+            select(FeedbackFile.feedback_id).where(FeedbackFile.file_id == file_id)
+        )
+        return result
+
+    async def bound_feedback_version_id(self, file_id: UUID) -> UUID | None:
+        result: UUID | None = await self._session.scalar(
+            select(Feedback.version_id)
+            .join(FeedbackFile, FeedbackFile.feedback_id == Feedback.id)
+            .where(FeedbackFile.file_id == file_id)
+        )
+        return result
+
     async def get_by_idempotency(
         self,
         *,
@@ -156,6 +170,7 @@ class UploadRepository:
         return (
             await self.bound_announcement_id(file_id) is not None
             or await self.bound_version_id(file_id) is not None
+            or await self.bound_feedback_id(file_id) is not None
         )
 
     async def orphaned_available_files(
@@ -166,6 +181,7 @@ class UploadRepository:
     ) -> list[StoredFile]:
         bound_announcement = exists().where(AnnouncementFile.file_id == StoredFile.id)
         bound_version = exists().where(VersionFile.file_id == StoredFile.id)
+        bound_feedback = exists().where(FeedbackFile.file_id == StoredFile.id)
         return list(
             (
                 await self._session.scalars(
@@ -175,6 +191,7 @@ class UploadRepository:
                         StoredFile.available_at <= created_before,
                         ~bound_announcement,
                         ~bound_version,
+                        ~bound_feedback,
                     )
                     .order_by(StoredFile.available_at)
                     .limit(limit)

@@ -43,4 +43,13 @@ def test_stage_four_openapi_contains_assignments_submissions_and_upload_purpose(
     assert {
         "announcement_attachment",
         "assignment_submission",
+        "submission_feedback",
     } <= set(purpose_schema["enum"])
+
+    feedback_request = schema["components"]["schemas"]["FeedbackPutRequest"]["properties"]
+    feedback_file_ids_schema = next(
+        item for item in feedback_request["file_ids"]["anyOf"] if item.get("type") == "array"
+    )
+    assert feedback_file_ids_schema["maxItems"] == 10
+    feedback_response = schema["components"]["schemas"]["FeedbackResponse"]["properties"]
+    assert "images" in feedback_response

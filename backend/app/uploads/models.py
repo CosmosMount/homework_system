@@ -27,7 +27,7 @@ class StoredFile(Base):
     __table_args__ = (
         CheckConstraint(
             "purpose IN ('announcement_attachment', 'assignment_submission', "
-            "'competition_submission')",
+            "'competition_submission', 'submission_feedback')",
             name="purpose_allowed",
         ),
         CheckConstraint(f"status IN {_UPLOAD_STATUS_SQL}", name="status_allowed"),

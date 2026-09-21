@@ -13,7 +13,42 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260910_0025"]
+    assert script.get_heads() == ["20260921_0027"]
+
+
+def test_account_erasure_version_guard_migration_restricts_fk_updates() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "versions"
+        / "20260921_0027_account_erasure_version_guard.py"
+    ).read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "20260916_0026"' in source
+    assert "OLD.submitted_by::text = erasure_user_id" in source
+    assert "NEW.submitted_by IS NULL" in source
+    assert "(to_jsonb(NEW) - 'submitted_by')" in source
+    assert "owner_user_id::text = erasure_user_id" in source
+    assert "submission versions are immutable" in source
+    assert "def downgrade()" in source
+
+
+def test_assignment_feedback_images_migration_is_reversible() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "versions"
+        / "20260916_0026_assignment_feedback_images.py"
+    ).read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "20260910_0025"' in source
+    assert '"feedback_files"' in source
+    assert "submission_feedback" in source
+    assert "uq_feedback_files_file_id" in source
+    assert "uq_feedback_files_display_order" in source
+    assert 'op.f("ck_files_purpose_allowed")' in source
+    assert "UPDATE files SET purpose = 'assignment_submission'" in source
+    assert source.index('op.drop_table("feedback_files")') < source.index(
+        'op.create_check_constraint("purpose_allowed", "files", _OLD_FILE_PURPOSES)'
+    )
 
 
 def test_student_direction_permission_migration_is_reversible() -> None:
