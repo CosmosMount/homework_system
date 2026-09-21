@@ -18,10 +18,9 @@ vi.mock("@/lib/api/client", async (importOriginal) => ({
 
 const overview: KnowledgeOverview = {
   snapshot: {
-    id: "snapshot-1",
-    source_updated_at: "2026-08-27T08:00:00Z",
+    run_id: "snapshot-1",
     synced_at: "2026-08-27T08:00:00Z",
-    status: "succeeded",
+    source_url: "https://pnx.feishu.cn/wiki/space",
     document_count: 2,
     asset_count: 0,
   },
