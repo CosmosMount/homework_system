@@ -67,7 +67,10 @@ export function MultipartUploader({
   onCompleted,
 }: Readonly<{
   contextId: string;
-  purpose: "announcement_attachment" | "assignment_submission";
+  purpose:
+    | "announcement_attachment"
+    | "assignment_submission"
+    | "submission_feedback";
   accept: string;
   maxBytes: number;
   maxSelectedBytes?: number;

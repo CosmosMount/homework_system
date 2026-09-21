@@ -67,6 +67,15 @@ function submission(): Submission {
           created_at: "2026-08-24T01:00:00Z",
           updated_at: "2026-08-24T01:00:00Z",
           revision: 3,
+          images: [
+            {
+              id: "feedback-image-1",
+              file_name: "批注图.png",
+              size_bytes: 1024,
+              media_type: "image/png",
+              sha256: "a".repeat(64),
+            },
+          ],
         },
       },
     ],
@@ -167,6 +176,15 @@ describe("assignment UI", () => {
       created_at: "2026-08-24T01:00:00Z",
       updated_at: "2026-08-24T02:00:00Z",
       revision: 4,
+      images: [
+        {
+          id: "feedback-image-1",
+          file_name: "批注图.png",
+          size_bytes: 1024,
+          media_type: "image/png",
+          sha256: "a".repeat(64),
+        },
+      ],
     };
     csrfFetchMock.mockResolvedValue(updated);
 
@@ -177,6 +195,10 @@ describe("assignment UI", () => {
         initialSubmission={submission()}
       />,
     );
+    expect(screen.getByText(/单张不超过 10 MiB/)).toHaveTextContent(
+      "合计不超过 50 MiB",
+    );
+    expect(screen.getByText(/1 \/ 10/)).toHaveTextContent("/ 50 MiB");
     fireEvent.change(screen.getByLabelText("替换评语 Markdown"), {
       target: { value: "修订后的私密评语" },
     });
@@ -190,7 +212,12 @@ describe("assignment UI", () => {
     expect(JSON.parse(String(request?.[1]?.body))).toEqual({
       body_markdown: "修订后的私密评语",
       revision: 3,
+      file_ids: ["feedback-image-1"],
     });
+    expect(screen.getByAltText("批注图.png")).toHaveAttribute(
+      "src",
+      "/api/v1/files/feedback-image-1/content?attempt=0",
+    );
   });
   it("confirms and revokes the latest submission completion", async () => {
 

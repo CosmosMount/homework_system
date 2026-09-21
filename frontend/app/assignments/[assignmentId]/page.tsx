@@ -60,22 +60,13 @@ export default async function AssignmentDetailPage({
               >
                 {assignment.can_submit ? "当前可提交" : "当前只读"}
               </span>
-              {assignment.has_personal_extension ? (
-                <span className="border border-[var(--color-info)] px-2 py-1 text-[var(--color-info)]">
-                  已获个人延期
-                </span>
-              ) : null}
             </div>
           </div>
           <dl className="space-y-4 border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm">
             <div>
               <dt className="text-[var(--color-text-muted)]">公共截止</dt>
-              <dd className="mt-1">{formatDateTime(assignment.public_deadline)}</dd>
-            </div>
-            <div>
-              <dt className="text-[var(--color-text-muted)]">你的有效截止</dt>
               <dd className="mt-1 text-[var(--color-accent-hover)]">
-                {formatDateTime(assignment.effective_deadline)}
+                {formatDateTime(assignment.public_deadline)}
               </dd>
             </div>
             <div>

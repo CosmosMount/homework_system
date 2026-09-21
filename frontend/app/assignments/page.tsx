@@ -66,7 +66,7 @@ export default async function AssignmentsPage({
       </p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">培训作业</h1>
       <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-        列表按你的有效截止时间排序；个人延期会覆盖公共截止，历史受众以发布快照为准。
+        列表按作业公共截止时间排序，历史受众以发布快照为准。
       </p>
 
       <form className="mt-8 grid gap-4 border border-[var(--color-border)] bg-[var(--color-surface)] p-5 md:grid-cols-[minmax(0,1fr)_14rem_auto] md:items-end">
@@ -121,11 +121,6 @@ export default async function AssignmentsPage({
                     >
                       {assignment.can_submit ? "可提交" : "只读"}
                     </span>
-                    {assignment.has_personal_extension ? (
-                      <span className="border border-[var(--color-info)] px-2 py-0.5 text-[var(--color-info)]">
-                        个人延期
-                      </span>
-                    ) : null}
                     {assignment.latest_submission ? (
                       <span className="border border-[var(--color-accent)] px-2 py-0.5 text-[var(--color-accent-hover)]">
                         已提交 v
@@ -137,9 +132,9 @@ export default async function AssignmentsPage({
                 </div>
                 <time
                   className="font-mono text-xs text-[var(--color-text-muted)]"
-                  dateTime={assignment.effective_deadline}
+                  dateTime={assignment.public_deadline}
                 >
-                  有效截止 {formatDateTime(assignment.effective_deadline)}
+                  截止 {formatDateTime(assignment.public_deadline)}
                 </time>
               </div>
             </Link>

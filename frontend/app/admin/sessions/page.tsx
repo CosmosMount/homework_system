@@ -1,5 +1,6 @@
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AppShell } from "@/components/layout/app-shell";
+import { AppIcon } from "@/components/ui/app-icon";
 import { getAdminSessions, requireAdmin } from "@/lib/api/server";
 import type { AdminSession } from "@/lib/api/types";
 
@@ -24,7 +25,10 @@ function SessionRow({ session }: Readonly<{ session: AdminSession }>) {
             </span>
           ) : null}
           {session.is_current ? (
-            <span className="bg-[var(--color-success)] px-2 py-1 text-xs text-black">当前设备</span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-success)]/25 bg-[var(--color-success)]/10 px-2.5 py-1 text-xs font-semibold text-[var(--color-success)]">
+              <AppIcon name="monitor" size={13} />
+              当前设备
+            </span>
           ) : null}
         </div>
       </div>

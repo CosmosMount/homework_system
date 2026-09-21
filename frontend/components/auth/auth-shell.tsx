@@ -23,8 +23,10 @@ export function AuthShell({
             <span className="flex size-9 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-white shadow-[var(--shadow-button)]">
               <AppIcon name="atom" size={21} />
             </span>
-            <span className="font-mono text-sm tracking-[0.2em] text-[var(--color-text-secondary)]">
-              PNX / TRAINING HUB
+            <span className="flex items-baseline gap-2 font-sans">
+              <span className="text-sm font-black tracking-[0.16em] text-[var(--color-text-primary)]">PNX</span>
+              <span aria-hidden="true" className="text-xs text-[var(--color-text-muted)]">/</span>
+              <span className="text-[11px] font-semibold tracking-[0.16em] text-[var(--color-text-secondary)]">TRAINING HUB</span>
             </span>
           </div>
           <p className="mt-16 max-w-2xl text-5xl leading-[1.12] font-semibold tracking-tight">
@@ -58,8 +60,10 @@ export function AuthShell({
             <span className="flex size-9 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-white shadow-[var(--shadow-button)]">
               <AppIcon name="atom" size={21} />
             </span>
-            <span className="font-mono text-sm tracking-[0.2em] text-[var(--color-text-secondary)]">
-              PNX / TRAINING HUB
+            <span className="flex items-baseline gap-2 font-sans">
+              <span className="text-sm font-black tracking-[0.16em] text-[var(--color-text-primary)]">PNX</span>
+              <span aria-hidden="true" className="text-xs text-[var(--color-text-muted)]">/</span>
+              <span className="text-[11px] font-semibold tracking-[0.16em] text-[var(--color-text-secondary)]">TRAINING HUB</span>
             </span>
           </div>
           <p className="font-mono text-xs tracking-[0.18em] text-[var(--color-accent)]">

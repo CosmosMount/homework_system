@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { AttachmentDownloadButton } from "@/components/announcements/announcement-actions";
 import { SafeHtml } from "@/components/announcements/safe-html";
+import { FeedbackImages } from "@/components/assignments/feedback-images";
 import { AppShell } from "@/components/layout/app-shell";
 import {
   getDashboard,
@@ -143,6 +144,7 @@ export default async function SubmissionPage({
                 <div className="mt-4">
                   <SafeHtml sanitizedHtml={version.feedback.body_html} />
                 </div>
+                <FeedbackImages images={version.feedback.images} />
                 <p className="mt-4 text-xs text-[var(--color-text-muted)]">
                   更新于 {formatDateTime(version.feedback.updated_at)}
                 </p>

@@ -11,6 +11,7 @@ import type {
   AdminHelpRequestPage,
   AdminSession,
   AdminUserPage,
+  UserDirectionDistribution,
   AdminIntentionSurveyPage,
   IntentionRoster,
   IntentionStats,
@@ -154,6 +155,19 @@ export async function getAdminUsers({
   );
   if (result instanceof Response) {
 
+    if (result.status === 401) {
+      redirect("/login");
+    }
+    redirect("/dashboard");
+  }
+  return result;
+}
+
+export async function getAdminUserDirectionDistribution(): Promise<UserDirectionDistribution> {
+  const result = await serverApi<UserDirectionDistribution>(
+    "/admin/users/direction-distribution",
+  );
+  if (result instanceof Response) {
     if (result.status === 401) {
       redirect("/login");
     }

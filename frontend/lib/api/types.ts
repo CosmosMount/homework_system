@@ -45,6 +45,19 @@ export type AdminUserPage = {
   total: number;
 };
 
+export type UserDirectionDistribution = {
+  total_active_students: number;
+  assigned_active_students: number;
+  unassigned_active_students: number;
+  directions: Array<{
+    id: string;
+    code: string;
+    name: string;
+    is_active: boolean;
+    active_student_count: number;
+  }>;
+};
+
 export type Session = {
   id: string;
   created_at: string;
@@ -388,6 +401,7 @@ export type Feedback = {
   created_at: string;
   updated_at: string;
   revision: number;
+  images: SubmissionAttachment[];
 };
 
 export type SubmissionVersion = {

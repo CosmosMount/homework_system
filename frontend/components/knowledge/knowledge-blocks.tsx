@@ -201,13 +201,13 @@ function CodeBlock({ block }: Readonly<{ block: KnowledgeBlock }>) {
 }
 
 const calloutBackground: Record<number, string> = { 1: "bg-rose-400/[0.08]", 2: "bg-orange-400/[0.08]", 3: "bg-yellow-400/[0.08]", 4: "bg-emerald-400/[0.08]", 5: "bg-blue-400/[0.08]", 6: "bg-violet-400/[0.08]", 7: "bg-slate-50", 8: "bg-rose-400/[0.16]", 9: "bg-orange-400/[0.16]", 10: "bg-yellow-400/[0.16]", 11: "bg-emerald-400/[0.16]", 12: "bg-blue-400/[0.16]", 13: "bg-violet-400/[0.16]", 14: "bg-slate-100" };
-const calloutBorder: Record<number, string> = { 1: "border-rose-300/45", 2: "border-orange-300/45", 3: "border-yellow-300/45", 4: "border-emerald-300/45", 5: "border-blue-300/45", 6: "border-violet-300/45", 7: "border-slate-300" };
-const calloutText: Record<number, string> = { 1: "text-rose-800", 2: "text-orange-800", 3: "text-yellow-800", 4: "text-emerald-800", 5: "text-blue-800", 6: "text-violet-800", 7: "text-slate-700" };
-const calloutEmoji: Record<string, string> = { bulb: "💡", check: "✅", exclamation: "❗", eyes: "👀", info: "ℹ️", link: "🔗", memo: "📝", paperclip: "📎", pin: "📌", pushpin: "📌", question: "❓", sparkles: "✨", tada: "🎉", thinking_face: "🤔", trophy: "🏆", warning: "⚠️", white_check_mark: "✅" };
+const calloutBorder: Record<number, string> = { 1: "border-rose-300/45", 2: "border-orange-300/45", 3: "border-yellow-300/45", 4: "border-emerald-300/45", 5: "border-blue-300/45", 6: "border-violet-300/45", 7: "border-slate-300", 8: "border-rose-400/55", 9: "border-orange-400/55", 10: "border-yellow-400/55", 11: "border-emerald-400/55", 12: "border-blue-400/55", 13: "border-violet-400/55", 14: "border-slate-400/55" };
+const calloutText: Record<number, string> = { 1: "text-rose-800", 2: "text-orange-800", 3: "text-yellow-800", 4: "text-emerald-800", 5: "text-blue-800", 6: "text-violet-800", 7: "text-slate-700", 8: "text-rose-950", 9: "text-orange-950", 10: "text-yellow-950", 11: "text-emerald-950", 12: "text-blue-950", 13: "text-violet-950", 14: "text-slate-950" };
+const calloutEmoji: Record<string, string> = { "+1": "👍", "star-struck": "🤩", beach_with_umbrella: "🏖️", black_nib: "✒️", books: "📚", bulb: "💡", bullettrain_front: "🚅", camping: "🏕️", check: "✅", exclamation: "❗", eyes: "👀", ghost: "👻", grinning: "😀", info: "ℹ️", link: "🔗", mag_right: "🔎", memo: "📝", monkey_face: "🐵", musical_score: "🎼", paperclip: "📎", pick: "⛏️", pin: "📌", pushpin: "📌", question: "❓", round_pushpin: "📍", space_invader: "👾", sparkles: "✨", sunrise: "🌅", sweat_smile: "😅", tada: "🎉", thinking_face: "🤔", trophy: "🏆", warning: "⚠️", white_check_mark: "✅" };
 
 function tone(value: number | string | undefined, fallback = 7): number {
   const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 14 ? parsed : fallback;
 }
 
 function emoji(value?: string): string {
@@ -222,8 +222,8 @@ function formatFileSize(size?: number): string {
   return (size / 1024 / 1024).toFixed(1) + " MB";
 }
 
-function Nested({ allowFeishuSourceLinks, block, tokenToDocument, onOpenDocument }: Readonly<{ allowFeishuSourceLinks: boolean; block: KnowledgeBlock; tokenToDocument: ReadonlyMap<string, string>; onOpenDocument: (documentId: string) => void }>) {
-  return block.children?.length ? <div className="mt-2 border-l border-slate-200 pl-4" style={{ borderRadius: 0 }}><KnowledgeBlocks allowFeishuSourceLinks={allowFeishuSourceLinks} blocks={block.children} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div> : null;
+function Children({ allowFeishuSourceLinks, block, tokenToDocument, onOpenDocument }: Readonly<{ allowFeishuSourceLinks: boolean; block: KnowledgeBlock; tokenToDocument: ReadonlyMap<string, string>; onOpenDocument: (documentId: string) => void }>) {
+  return block.children?.length ? <KnowledgeBlocks allowFeishuSourceLinks={allowFeishuSourceLinks} blocks={block.children} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /> : null;
 }
 
 function MediaBlock({ block, inGallery }: Readonly<{ block: KnowledgeBlock; inGallery: boolean }>) {
@@ -359,16 +359,16 @@ function galleryMedia(block: KnowledgeBlock): KnowledgeBlock[] | null {
 function Block({ allowFeishuSourceLinks, block, tokenToDocument, onOpenDocument }: Readonly<{ allowFeishuSourceLinks: boolean; block: KnowledgeBlock; tokenToDocument: ReadonlyMap<string, string>; onOpenDocument: (documentId: string) => void }>) {
   const rich = <RichText allowFeishuSourceLinks={allowFeishuSourceLinks} onOpenDocument={onOpenDocument} segments={block.segments} tokenToDocument={tokenToDocument} />;
   switch (block.type) {
-    case "paragraph": return <div className="my-3 break-words leading-8 text-slate-700"><p>{rich}</p><Nested allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div>;
-    case "heading": return (block.level ?? 1) <= 1 ? <h2 className="scroll-mt-8 break-words pt-8 text-2xl font-bold text-slate-900 sm:text-3xl" id={"kb-" + block.id}>{rich}</h2> : <h3 className="scroll-mt-8 break-words pt-7 text-xl font-bold text-slate-900 sm:text-2xl" id={"kb-" + block.id}>{rich}</h3>;
-    case "todo": return <div className="my-3 flex gap-3 bg-slate-50 px-4 py-3 text-slate-700" style={{ borderRadius: 4 }}><span aria-label={block.done ? "已完成" : "未完成"}>{block.done ? "☑" : "☐"}</span><div className={block.done ? "text-slate-500 line-through" : ""}>{rich}<Nested allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div></div>;
-    case "quote": return <blockquote className="my-5 break-words border-l-2 border-[#1687c9]/80 bg-[#1687c9]/[0.05] px-4 py-3 leading-7 text-slate-700 sm:px-5">{rich}<Nested allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></blockquote>;
+    case "paragraph": return <div className="my-3 break-words leading-8 text-slate-700"><p>{rich}</p><Children allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div>;
+    case "heading": return <>{(block.level ?? 1) <= 1 ? <h2 className="scroll-mt-8 break-words pt-8 text-2xl font-bold text-slate-900 sm:text-3xl" id={"kb-" + block.id}>{rich}</h2> : <h3 className="scroll-mt-8 break-words pt-7 text-xl font-bold text-slate-900 sm:text-2xl" id={"kb-" + block.id}>{rich}</h3>}<Children allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></>;
+    case "todo": return <div className="my-3 flex gap-3 bg-slate-50 px-4 py-3 text-slate-700" style={{ borderRadius: 4 }}><span aria-label={block.done ? "已完成" : "未完成"}>{block.done ? "☑" : "☐"}</span><div className={block.done ? "text-slate-500 line-through" : ""}>{rich}<Children allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div></div>;
+    case "quote": return <blockquote className="my-5 break-words border-l-2 border-[#1687c9]/80 bg-[#1687c9]/[0.05] px-4 py-3 leading-7 text-slate-700 sm:px-5">{rich}<Children allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></blockquote>;
     case "equation": return <MathFormula displayMode latex={(block.segments ?? []).map((segment) => segment.text).join("")} />;
     case "callout": {
       const background = tone(block.background_color ?? block.tone);
       const border = tone(block.border_color);
       const text = tone(block.text_color);
-      return <aside className={`my-6 flex min-w-0 items-start gap-3 border px-4 py-4 sm:gap-4 sm:px-5 ${calloutBackground[background] ?? calloutBackground[7]} ${calloutBorder[border] ?? calloutBorder[7]} ${calloutText[text] ?? calloutText[7]}`} style={{ borderRadius: 4 }}><span aria-hidden="true" className="mt-0.5 shrink-0 text-xl leading-7" title={block.emoji_id}>{emoji(block.emoji_id)}</span><div className="min-w-0 flex-1 space-y-4">{rich}<Nested allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div></aside>;
+      return <aside className={`my-6 flex min-w-0 items-start gap-3 border px-4 py-4 sm:gap-4 sm:px-5 ${calloutBackground[background]} ${calloutBorder[border]} ${calloutText[text]}`} style={{ borderRadius: 4 }}><span aria-hidden="true" className="mt-0.5 shrink-0 text-xl leading-7" title={block.emoji_id}>{emoji(block.emoji_id)}</span><div className="min-w-0 flex-1 space-y-4 [&_blockquote]:!text-inherit [&_h2]:!text-inherit [&_h3]:!text-inherit [&_li]:!text-inherit [&_p]:!text-inherit">{rich}<Children allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></div></aside>;
     }
     case "code": return <CodeBlock block={block} />;
     case "divider": return <hr className="my-8 border-0 border-t border-slate-200" />;
@@ -379,7 +379,7 @@ function Block({ allowFeishuSourceLinks, block, tokenToDocument, onOpenDocument 
       const data = tableCellData(cell);
       return <td className="whitespace-pre-wrap break-words border border-slate-200 px-3 py-2 align-top leading-6 text-slate-700" colSpan={data.colSpan} key={Array.isArray(cell) ? cellIndex : cell.id} rowSpan={data.rowSpan}><KnowledgeBlocks allowFeishuSourceLinks={allowFeishuSourceLinks} blocks={data.blocks} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></td>;
     })}</tr>)}</tbody></table></div>;
-    case "container": return <Nested allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} />;
+    case "container": return <Children allowFeishuSourceLinks={allowFeishuSourceLinks} block={block} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} />;
     case "bullet":
     case "ordered": return null;
   }
@@ -395,7 +395,7 @@ export function KnowledgeBlocks({ allowFeishuSourceLinks = false, blocks, tokenT
       while (index < blocks.length && blocks[index].type === type) { items.push(blocks[index]); index += 1; }
       index -= 1;
       const List = type === "bullet" ? "ul" : "ol";
-      rendered.push(<List className={type === "bullet" ? "list-disc space-y-2 pl-6" : "list-decimal space-y-2 pl-6"} key={"list-" + block.id}>{items.map((item) => <li className="break-words leading-7 text-slate-700" key={item.id}><RichText allowFeishuSourceLinks={allowFeishuSourceLinks} onOpenDocument={onOpenDocument} segments={item.segments} tokenToDocument={tokenToDocument} /><Nested allowFeishuSourceLinks={allowFeishuSourceLinks} block={item} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></li>)}</List>);
+      rendered.push(<List className={type === "bullet" ? "list-disc space-y-2 pl-6" : "list-decimal space-y-2 pl-6"} key={"list-" + block.id}>{items.map((item) => <li className="break-words leading-7 text-slate-700" key={item.id}><RichText allowFeishuSourceLinks={allowFeishuSourceLinks} onOpenDocument={onOpenDocument} segments={item.segments} tokenToDocument={tokenToDocument} /><Children allowFeishuSourceLinks={allowFeishuSourceLinks} block={item} onOpenDocument={onOpenDocument} tokenToDocument={tokenToDocument} /></li>)}</List>);
       continue;
     }
     const initialMedia = galleryMedia(block);

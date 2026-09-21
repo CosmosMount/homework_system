@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { RenderedMarkdown } from "@/components/announcements/safe-html";
+import { AppIcon, type AppIconName } from "@/components/ui/app-icon";
 
 import {
   buttonClassName,
@@ -13,7 +14,6 @@ import {
 import { ApiError, csrfFetch } from "@/lib/api/client";
 import type {
   AssignmentAdmin,
-  AssignmentExtension,
   AssignmentSubmissionAdminItem,
   Direction,
 } from "@/lib/api/types";
@@ -61,167 +61,30 @@ async function assignmentAdminFetch<T>(
   }
 }
 
-function ExtensionControls({
-  assignmentId,
-  userId,
-}: Readonly<{ assignmentId: string; userId: string }>) {
-  const [deadline, setDeadline] = useState("");
-  const [reason, setReason] = useState("");
-  const [saved, setSaved] = useState<AssignmentExtension | null>(null);
-  const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
-  async function grant() {
-    if (!deadline || !reason.trim()) {
-      setMessage("延期时间和理由不能为空。");
-      return;
-    }
-    setPending(true);
-    setMessage(null);
-    try {
-      const result = await assignmentAdminFetch<AssignmentExtension>(
-        "/admin/assignments/" +
-          assignmentId +
-          "/extensions/" +
-          userId,
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            extended_deadline: apiDateTime(deadline),
-            reason: reason.trim(),
-          }),
-        },
-      );
-      setSaved(result);
-      setMessage("个人延期已保存并进入提醒队列。");
-    } catch (error) {
-      setMessage(errorMessage(error));
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function remove() {
-    if (!window.confirm("确认移除个人延期？截止后使用过的延期不能移除。")) {
-      return;
-    }
-    setPending(true);
-    setMessage(null);
-    try {
-      await assignmentAdminFetch(
-        "/admin/assignments/" +
-          assignmentId +
-          "/extensions/" +
-          userId,
-        { method: "DELETE" },
-      );
-      setSaved(null);
-      setDeadline("");
-      setReason("");
-      setMessage("个人延期已移除。");
-    } catch (error) {
-      setMessage(errorMessage(error));
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <details className="mt-3">
-      <summary className="cursor-pointer text-sm text-[var(--color-info)]">
-        管理个人延期
-      </summary>
-      <div className="mt-3 grid gap-3 border border-[var(--color-border)] p-3 md:grid-cols-2">
-        <label className="text-xs">
-          延期至
-          <input
-            className={inputClassName}
-            disabled={pending}
-            onChange={(event) => setDeadline(event.target.value)}
-            type="datetime-local"
-            value={deadline}
-          />
-        </label>
-        <label className="text-xs">
-          内部理由
-          <input
-            className={inputClassName}
-            disabled={pending}
-            maxLength={2000}
-            onChange={(event) => setReason(event.target.value)}
-            value={reason}
-          />
-        </label>
-        <div className="flex flex-wrap gap-2 md:col-span-2">
-          <button
-            className={buttonClassName + " px-4 text-sm disabled:opacity-55"}
-            disabled={pending}
-            onClick={grant}
-            type="button"
-          >
-            保存延期
-          </button>
-          {saved ? (
-            <button
-              className="min-h-10 border border-[var(--color-danger)] px-4 text-sm text-[var(--color-danger)]"
-              disabled={pending}
-              onClick={remove}
-              type="button"
-            >
-              移除延期
-            </button>
-          ) : null}
-        </div>
-        {message ? (
-          <p
-            aria-live="polite"
-            className="text-xs text-[var(--color-text-muted)] md:col-span-2"
-          >
-            {message}
-          </p>
-        ) : null}
-      </div>
-    </details>
-  );
-}
-
-function SubmissionGroup({
-  assignmentId,
-  emptyMessage,
+function SubmissionStatusList({
   items,
-  title,
 }: Readonly<{
-  assignmentId: string;
-  emptyMessage: string;
   items: AssignmentSubmissionAdminItem[];
-  title: string;
 }>) {
   return (
-    <section className="min-w-0 border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-      <h3 className="text-base font-semibold">
-        {title} <span className="font-mono text-xs">({items.length})</span>
-      </h3>
+    <div className="mt-5 overflow-hidden border border-[var(--color-border)]">
+      <div className="hidden grid-cols-[minmax(0,1fr)_9rem_8rem] gap-3 bg-[var(--color-surface-raised)] px-4 py-2 text-xs text-[var(--color-text-muted)] sm:grid"><span>学生</span><span>状态</span><span>提交</span></div>
       {items.length === 0 ? (
-        <p className="mt-3 text-sm text-[var(--color-text-muted)]">
-          {emptyMessage}
-        </p>
+        <p className="p-4 text-sm text-[var(--color-text-muted)]">暂无目标学生。</p>
       ) : (
-        <div className="mt-3 space-y-3">
+        <div className="divide-y divide-[var(--color-border)]">
           {items.map((item) => (
-            <article
-              className="border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
-              key={item.user_id}
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
+            <article className="grid gap-3 bg-[var(--color-surface)] p-4 sm:grid-cols-[minmax(0,1fr)_9rem_8rem] sm:items-center" key={item.user_id}>
                 <div>
                   <p className="font-medium">{item.full_name}</p>
                   <p className="mt-1 font-mono text-xs text-[var(--color-text-muted)]">
                     {item.student_number}
                   </p>
                 </div>
+                <StatusBadge item={item} />
                 {item.submission_id ? (
                   <Link
-                    className="text-sm text-[var(--color-info)]"
+                    className="text-sm text-[var(--color-info)] sm:text-right"
                     href={"/admin/submissions/" + item.submission_id}
                   >
                     查看 v{item.latest_version_number} →
@@ -231,25 +94,34 @@ function SubmissionGroup({
                     未提交
                   </span>
                 )}
-              </div>
-              {item.completed_at ? (
-                <p className="mt-3 text-xs text-[var(--color-text-secondary)]">
-                  {item.is_completed ? "当前版本确认于 " : "历史版本确认于 "}
-                  {formatDateTime(item.completed_at)}
-                </p>
-              ) : null}
-              {item.in_current_audience ? (
-                <ExtensionControls
-                  assignmentId={assignmentId}
-                  userId={item.user_id}
-                />
-              ) : null}
+              {item.completed_at ? <p className="text-xs text-[var(--color-text-secondary)] sm:col-span-3">{item.is_completed ? "当前版本确认于 " : "历史版本确认于 "}{formatDateTime(item.completed_at)}</p> : null}
             </article>
           ))}
         </div>
       )}
-    </section>
+    </div>
   );
+}
+
+function StatusBadge({ item }: Readonly<{ item: AssignmentSubmissionAdminItem }>) {
+  const status: { label: string; icon: AppIconName; className: string } = item.is_completed
+    ? { label: "已完成", icon: "audit", className: "text-[var(--color-success)]" }
+    : item.has_feedback
+      ? { label: "待修改", icon: "mail", className: "text-[var(--color-warning)]" }
+      : item.submission_id
+        ? { label: "已提交", icon: "layers", className: "text-[var(--color-info)]" }
+        : { label: "未提交", icon: "monitor", className: "text-[var(--color-text-muted)]" };
+  return <span className={`inline-flex items-center gap-2 text-sm font-medium ${status.className}`}><AppIcon name={status.icon} size={16} aria-hidden="true" />{status.label}</span>;
+}
+
+type SubmissionFilter = "all" | "unsubmitted" | "submitted" | "feedback" | "completed";
+
+function matchesFilter(item: AssignmentSubmissionAdminItem, filter: SubmissionFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "completed") return item.is_completed;
+  if (filter === "feedback") return item.has_feedback && !item.is_completed;
+  if (filter === "submitted") return Boolean(item.submission_id) && !item.has_feedback && !item.is_completed;
+  return item.submission_id === null;
 }
 
 export function AssignmentEditor({
@@ -263,6 +135,7 @@ export function AssignmentEditor({
 }>) {
   const router = useRouter();
   const [assignment, setAssignment] = useState(initialAssignment);
+  const [submissionFilter, setSubmissionFilter] = useState<SubmissionFilter>("all");
   const [title, setTitle] = useState(initialAssignment?.title ?? "");
   const [descriptionMarkdown, setDescriptionMarkdown] = useState(
     initialAssignment?.description_markdown ?? "",
@@ -435,7 +308,7 @@ export function AssignmentEditor({
 
   async function close() {
     if (assignment === null) return;
-    if (!window.confirm("确认提前关闭？这会覆盖所有个人延期。")) return;
+    if (!window.confirm("确认提前关闭？关闭后目标学生将不能继续提交。")) return;
     setPending(true);
     setMessage(null);
     setError(null);
@@ -480,24 +353,15 @@ export function AssignmentEditor({
   const editable = assignment?.status !== "archived";
   const rulesEditable =
     assignment === null || assignment.status === "draft";
-  const submitted = initialSubmissions.filter(
-    (item) =>
-      item.in_current_audience &&
-      item.submission_id !== null &&
-      !item.is_completed,
-  );
-  const completed = initialSubmissions.filter(
-    (item) => item.in_current_audience && item.is_completed,
-  );
-  const unsubmitted = initialSubmissions.filter(
-    (item) => item.in_current_audience && item.submission_id === null,
-  );
+  const currentAudience = initialSubmissions.filter((item) => item.in_current_audience);
   const historical = initialSubmissions.filter(
     (item) => !item.in_current_audience,
   );
 
+  const visibleAudience = currentAudience.filter((item) => matchesFilter(item, submissionFilter));
+
   return (
-    <div className="mt-8 grid gap-8 xl:grid-cols-[minmax(0,1fr)_22rem]">
+    <div className="mt-8">
       <form className="space-y-6" onSubmit={save}>
         {message ? <FormMessage tone="success">{message}</FormMessage> : null}
         {error ? <FormMessage>{error}</FormMessage> : null}
@@ -696,97 +560,38 @@ export function AssignmentEditor({
           <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
             <h2 className="text-xl font-semibold">目标学生与提交</h2>
             <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-              已提交表示已有正式版本但尚未确认；管理员确认当前最新版本后进入已完成。
+              每名学生只显示一条记录；管理员发布评语后状态变为待修改，确认当前最新版本后进入已完成。
             </p>
-            <div className="mt-5 grid items-start gap-5 xl:grid-cols-3">
-              <SubmissionGroup
-                assignmentId={assignment.id}
-                emptyMessage="暂无待管理员确认的提交。"
-                items={submitted}
-                title="已提交"
-              />
-              <SubmissionGroup
-                assignmentId={assignment.id}
-                emptyMessage="暂无已确认完成的提交。"
-                items={completed}
-                title="已完成"
-              />
-              <SubmissionGroup
-                assignmentId={assignment.id}
-                emptyMessage="当前受众均已提交。"
-                items={unsubmitted}
-                title="未提交"
-              />
+            <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {([
+                ["未提交", currentAudience.filter((item) => !item.submission_id), "monitor", "text-[var(--color-text-muted)]", "unsubmitted"],
+                ["已提交", currentAudience.filter((item) => item.submission_id && !item.is_completed && !item.has_feedback), "layers", "text-[var(--color-info)]", "submitted"],
+                ["待修改", currentAudience.filter((item) => item.has_feedback && !item.is_completed), "mail", "text-[var(--color-warning)]", "feedback"],
+                ["已完成", currentAudience.filter((item) => item.is_completed), "audit", "text-[var(--color-success)]", "completed"],
+              ] as const).map(([label, matching, icon, color, filter]) => (
+                <button className={`border bg-[var(--color-bg)] p-3 text-left transition ${submissionFilter === filter ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]/20" : "border-[var(--color-border)] hover:border-[var(--color-accent)]"}`} key={label} onClick={() => setSubmissionFilter(submissionFilter === filter ? "all" : filter)} type="button" aria-pressed={submissionFilter === filter}>
+                  <div className={`flex items-center gap-2 text-xs ${color}`}><AppIcon name={icon} size={16} aria-hidden="true" />{label}</div>
+                  <p className="mt-1 text-2xl font-semibold">{matching.length}</p>
+                </button>
+              ))}
             </div>
+            <div className="mt-5 grid gap-2 border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4 text-sm text-[var(--color-text-secondary)] sm:grid-cols-3">
+              <p className="sm:col-span-3">发布后仍可修改标题、说明、资料链接、提交说明、受众和公共截止；扩展名、附件上限和发布时间冻结。</p>
+              <p>当前截止：{formatDateTime(assignment.deadline)}</p>
+              <p>最后正式提交：{assignment.stats.last_submitted_at ? formatDateTime(assignment.stats.last_submitted_at) : "暂无"}</p>
+              <p>附件上限：{formatFileSize(assignment.max_total_bytes)}</p>
+            </div>
+            <SubmissionStatusList items={visibleAudience} />
             {historical.length > 0 ? (
               <div className="mt-7">
-                <SubmissionGroup
-                  assignmentId={assignment.id}
-                  emptyMessage=""
-                  items={historical}
-                  title="历史提交（已不在当前受众）"
-                />
+                <h3 className="text-base font-semibold">历史提交（已不在当前受众）</h3>
+                <SubmissionStatusList items={historical} />
               </div>
             ) : null}
           </section>
         ) : null}
       </form>
 
-      <aside className="space-y-4">
-        <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <h2 className="text-lg font-semibold">统计</h2>
-          <dl className="mt-4 space-y-3 text-sm">
-            <div className="flex justify-between gap-3">
-              <dt className="text-[var(--color-text-muted)]">预计 / 实际受众</dt>
-              <dd>
-                {assignment?.estimated_recipient_count ?? 0} /{" "}
-                {assignment?.actual_recipient_count ?? 0}
-              </dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-[var(--color-text-muted)]">已提交待确认</dt>
-              <dd>
-                {assignment
-                  ? Math.max(
-                      0,
-                      assignment.stats.submitted_count -
-                        assignment.stats.completed_count,
-                    )
-                  : 0}
-              </dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-[var(--color-text-muted)]">已完成</dt>
-              <dd>{assignment?.stats.completed_count ?? 0}</dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-[var(--color-text-muted)]">未提交</dt>
-              <dd>{assignment?.stats.unsubmitted_count ?? 0}</dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-[var(--color-text-muted)]">已有评语</dt>
-              <dd>{assignment?.stats.feedback_submission_count ?? 0}</dd>
-            </div>
-          </dl>
-        </section>
-        <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-secondary)]">
-          <p>
-            发布后仍可修改标题、说明、资料链接、提交说明、受众和公共截止；扩展名、附件上限和发布时间冻结。
-          </p>
-          <p className="mt-3">
-            当前截止：{assignment ? formatDateTime(assignment.deadline) : "—"}
-          </p>
-          <p className="mt-2">
-            最后正式提交：
-            {assignment?.stats.last_submitted_at
-              ? formatDateTime(assignment.stats.last_submitted_at)
-              : "暂无"}
-          </p>
-          <p className="mt-2">
-            附件上限：{assignment ? formatFileSize(assignment.max_total_bytes) : "—"}
-          </p>
-        </section>
-      </aside>
     </div>
   );
 }

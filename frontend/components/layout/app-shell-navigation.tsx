@@ -362,8 +362,10 @@ export function AppShellNavigation({
             <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-white shadow-[var(--shadow-button)]">
               <AppIcon name="atom" size={21} />
             </span>
-            <span className={collapsed ? "sr-only" : "truncate font-mono text-sm tracking-[0.14em]"}>
-              PNX / TRAINING HUB
+            <span className={collapsed ? "sr-only" : "flex min-w-0 items-baseline gap-2 truncate font-sans"}>
+              <span className="shrink-0 text-sm font-black tracking-[0.16em] text-[var(--color-text-primary)]">PNX</span>
+              <span aria-hidden="true" className="text-xs font-medium text-[var(--color-text-muted)]">/</span>
+              <span className="truncate text-[11px] font-semibold tracking-[0.14em] text-[var(--color-text-secondary)]">TRAINING HUB</span>
             </span>
           </Link>
         </div>
@@ -376,7 +378,11 @@ export function AppShellNavigation({
           <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-white shadow-[var(--shadow-button)]">
             <AppIcon name="atom" size={21} />
           </span>
-          <span className="truncate font-mono text-xs tracking-[0.12em]">PNX / TRAINING HUB</span>
+          <span className="flex min-w-0 items-baseline gap-1.5 truncate font-sans">
+            <span className="shrink-0 text-xs font-black tracking-[0.14em] text-[var(--color-text-primary)]">PNX</span>
+            <span aria-hidden="true" className="text-[10px] text-[var(--color-text-muted)]">/</span>
+            <span className="truncate text-[10px] font-semibold tracking-[0.1em] text-[var(--color-text-secondary)]">TRAINING HUB</span>
+          </span>
         </Link>
         <button
           aria-label="打开主要导航"
@@ -405,7 +411,11 @@ export function AppShellNavigation({
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--color-accent-fill)] text-white shadow-[var(--shadow-button)]">
                   <AppIcon name="atom" size={21} />
                 </span>
-                <span className="truncate font-mono text-sm tracking-[0.14em]">PNX / TRAINING HUB</span>
+                <span className="flex min-w-0 items-baseline gap-2 truncate font-sans">
+                  <span className="shrink-0 text-sm font-black tracking-[0.16em] text-[var(--color-text-primary)]">PNX</span>
+                  <span aria-hidden="true" className="text-xs text-[var(--color-text-muted)]">/</span>
+                  <span className="truncate text-[11px] font-semibold tracking-[0.14em] text-[var(--color-text-secondary)]">TRAINING HUB</span>
+                </span>
               </Link>
               <button
                 aria-label="关闭主要导航"

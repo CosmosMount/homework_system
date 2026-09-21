@@ -526,17 +526,18 @@ describe("admin permissions UI", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /已提交.*\(1\)/ })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /已完成.*\(1\)/ })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /未提交.*\(1\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /已提交 0/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /已完成 1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /未提交 1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /待修改 1/ })).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: /历史提交（已不在当前受众）.*\(1\)/ }),
+      screen.getByRole("heading", { name: "历史提交（已不在当前受众）" }),
     ).toBeInTheDocument();
     expect(screen.getByText("已提交同学")).toBeInTheDocument();
     expect(screen.getByText("已完成同学")).toBeInTheDocument();
     expect(screen.getByText("未提交同学")).toBeInTheDocument();
     expect(screen.getByText("历史提交同学")).toBeInTheDocument();
-    expect(screen.getAllByText("管理个人延期")).toHaveLength(3);
+    expect(screen.queryByText("管理个人延期")).not.toBeInTheDocument();
   });
 
   it("publishes an assignment over HTTP when randomUUID is unavailable", async () => {
@@ -776,6 +777,7 @@ describe("admin permissions UI", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("当前设备")).toBeInTheDocument();
+    expect(screen.getByText("当前设备").querySelector("svg")).toBeTruthy();
     expect(screen.getByText("已记住登录")).toBeInTheDocument();
   });
 });

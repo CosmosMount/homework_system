@@ -79,7 +79,7 @@ describe("assignment pages", () => {
     getExcellentSubmissionMock.mockReset();
   });
 
-  it("shows submit, extension, and latest-version states in the assignment list", async () => {
+  it("shows submit and latest-version states without personal extensions", async () => {
     const page: AssignmentPage = {
       items: [
         {
@@ -112,7 +112,7 @@ describe("assignment pages", () => {
     );
 
     expect(screen.getByText("可提交")).toBeInTheDocument();
-    expect(screen.getByText("个人延期")).toBeInTheDocument();
+    expect(screen.queryByText("个人延期")).not.toBeInTheDocument();
     expect(screen.getByText("已提交 v2")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /数据结构作业/ })).toHaveAttribute(
       "href",

@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 
 import { AttachmentDownloadButton } from "@/components/announcements/announcement-actions";
 import { SafeHtml } from "@/components/announcements/safe-html";
+import { FeedbackImages } from "@/components/assignments/feedback-images";
+import { MultipartUploader } from "@/components/uploads/multipart-uploader";
 import {
   buttonClassName,
   FormMessage,
@@ -14,7 +16,9 @@ import { ApiError, csrfFetch } from "@/lib/api/client";
 import type {
   ExcellentSubmissionSummary,
   Feedback,
+  CompletedFile,
   Submission,
+  SubmissionAttachment,
   SubmissionCompletion,
 } from "@/lib/api/types";
 import { formatDateTime, formatFileSize } from "@/lib/format";
@@ -41,6 +45,16 @@ export function SubmissionReview({
     () => new Set(initialExcellent.map((item) => item.version_id)),
   );
   const [feedbackMarkdown, setFeedbackMarkdown] = useState("");
+  const [feedbackImageDrafts, setFeedbackImageDrafts] = useState<
+    Record<string, SubmissionAttachment[]>
+  >(() =>
+    Object.fromEntries(
+      initialSubmission.versions.map((version) => [
+        version.id,
+        version.feedback?.images ?? [],
+      ]),
+    ),
+  );
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +69,11 @@ export function SubmissionReview({
         (version) => version.id === submission.completed_version_id,
       )
     : undefined;
+  const feedbackImages = selected ? (feedbackImageDrafts[selected.id] ?? []) : [];
+  const feedbackImageBytes = feedbackImages.reduce(
+    (total, image) => total + image.size_bytes,
+    0,
+  );
 
   if (selected === undefined) {
     return <FormMessage>提交聚合中没有正式版本。</FormMessage>;
@@ -80,6 +99,7 @@ export function SubmissionReview({
           body: JSON.stringify({
             body_markdown: feedbackMarkdown.trim(),
             revision: selected.feedback?.revision ?? null,
+            file_ids: feedbackImages.map((image) => image.id),
           }),
         },
       );
@@ -89,6 +109,10 @@ export function SubmissionReview({
           version.id === selected.id ? { ...version, feedback } : version,
         ),
       }));
+      setFeedbackImageDrafts((current) => ({
+        ...current,
+        [selected.id]: feedback.images,
+      }));
       setFeedbackMarkdown("");
       setMessage("私密评语已保存；站内提醒不包含正文。");
       router.refresh();
@@ -97,6 +121,35 @@ export function SubmissionReview({
     } finally {
       setPending(false);
     }
+  }
+
+  function addFeedbackImage(file: CompletedFile) {
+    setFeedbackImageDrafts((current) => {
+      const existing = current[selected.id] ?? [];
+      if (existing.some((image) => image.id === file.file_id)) return current;
+      return {
+        ...current,
+        [selected.id]: [
+          ...existing,
+          {
+            id: file.file_id,
+            file_name: file.file_name,
+            size_bytes: file.size_bytes,
+            media_type: file.media_type,
+            sha256: file.sha256,
+          },
+        ],
+      };
+    });
+  }
+
+  function removeFeedbackImage(fileId: string) {
+    setFeedbackImageDrafts((current) => ({
+      ...current,
+      [selected.id]: (current[selected.id] ?? []).filter(
+        (image) => image.id !== fileId,
+      ),
+    }));
   }
 
   async function toggleExcellent() {
@@ -293,6 +346,7 @@ export function SubmissionReview({
           {selected.feedback ? (
             <div className="mt-5 border-l-2 border-[var(--color-info)] bg-[var(--color-bg)] p-4">
               <SafeHtml sanitizedHtml={selected.feedback.body_html} />
+              <FeedbackImages images={selected.feedback.images} />
               <p className="mt-3 font-mono text-xs text-[var(--color-text-muted)]">
                 revision {selected.feedback.revision} ·{" "}
                 {formatDateTime(selected.feedback.updated_at)}
@@ -309,6 +363,54 @@ export function SubmissionReview({
               value={feedbackMarkdown}
             />
           </label>
+          <div className="mt-5">
+            <MultipartUploader
+              accept=".png,.jpg,.jpeg,.gif,.webp"
+              contextId={selected.id}
+              description="仅支持 PNG、JPEG、GIF、WebP；单张不超过 10 MiB，最多 10 张、合计不超过 50 MiB。上传完成后仍需保存评语。"
+              heading="上传评语图片"
+              key={selected.id}
+              maxBytes={10 * 1024 * 1024}
+              maxSelectedBytes={Math.max(
+                50 * 1024 * 1024 - feedbackImageBytes,
+                0,
+              )}
+              maxSelectedFiles={Math.max(10 - feedbackImages.length, 0)}
+              multiple
+              onCompleted={addFeedbackImage}
+              purpose="submission_feedback"
+            />
+          </div>
+          {feedbackImages.length ? (
+            <section className="mt-4 border border-[var(--color-border)] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="font-medium">随本次评语保存的图片</h3>
+                <span className="font-mono text-xs text-[var(--color-text-muted)]">
+                  {feedbackImages.length} / 10 · {formatFileSize(feedbackImageBytes)} / 50 MiB
+                </span>
+              </div>
+              <div className="mt-3 space-y-2">
+                {feedbackImages.map((image) => (
+                  <div
+                    className="flex flex-wrap items-center justify-between gap-3 border border-[var(--color-border)] p-3"
+                    key={image.id}
+                  >
+                    <span className="break-all text-sm">
+                      {image.file_name} · {formatFileSize(image.size_bytes)}
+                    </span>
+                    <button
+                      className="min-h-10 text-sm text-[var(--color-danger)]"
+                      disabled={pending}
+                      onClick={() => removeFeedbackImage(image.id)}
+                      type="button"
+                    >
+                      移除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
           <button
             className={buttonClassName + " mt-4"}
             disabled={pending}

@@ -19,6 +19,7 @@ const {
   replaceMock,
   getAdminAnnouncementsMock,
   getAdminAssignmentsMock,
+  getAdminUserDirectionDistributionMock,
   getAdminUsersMock,
   getAuditLogsMock,
   getDirectionsMock,
@@ -31,6 +32,7 @@ const {
   replaceMock: vi.fn(),
   getAdminAnnouncementsMock: vi.fn(),
   getAdminAssignmentsMock: vi.fn(),
+  getAdminUserDirectionDistributionMock: vi.fn(),
   getAdminUsersMock: vi.fn(),
   getAuditLogsMock: vi.fn(),
   getDirectionsMock: vi.fn(),
@@ -52,6 +54,7 @@ vi.mock("@/lib/api/client", async (importOriginal) => ({
 vi.mock("@/lib/api/server", () => ({
   getAdminAnnouncements: getAdminAnnouncementsMock,
   getAdminAssignments: getAdminAssignmentsMock,
+  getAdminUserDirectionDistribution: getAdminUserDirectionDistributionMock,
   getAdminUsers: getAdminUsersMock,
   getAuditLogs: getAuditLogsMock,
   getDirections: getDirectionsMock,
@@ -151,6 +154,28 @@ const directions: Direction[] = [
   },
 ];
 
+const directionDistribution = {
+  total_active_students: 6,
+  assigned_active_students: 4,
+  unassigned_active_students: 2,
+  directions: [
+    {
+      id: "direction-1",
+      code: "robotics",
+      name: "机器人组",
+      is_active: true,
+      active_student_count: 4,
+    },
+    {
+      id: "direction-inactive",
+      code: "legacy",
+      name: "历史技术组",
+      is_active: false,
+      active_student_count: 0,
+    },
+  ],
+};
+
 function userPage(
   items: AdminUser[],
   total = items.length,
@@ -173,6 +198,7 @@ describe("admin account activity UI", () => {
     replaceMock.mockReset();
     getAdminAnnouncementsMock.mockReset();
     getAdminAssignmentsMock.mockReset();
+    getAdminUserDirectionDistributionMock.mockReset();
     getAdminUsersMock.mockReset();
     getAuditLogsMock.mockReset();
     getDirectionsMock.mockReset();
@@ -182,6 +208,7 @@ describe("admin account activity UI", () => {
     requireAdminMock.mockResolvedValue(admin);
     getAdminAnnouncementsMock.mockResolvedValue({ items: [], total: 0 });
     getAdminAssignmentsMock.mockResolvedValue({ items: [], total: 0 });
+    getAdminUserDirectionDistributionMock.mockResolvedValue(directionDistribution);
     getAuditLogsMock.mockResolvedValue({ items: [] });
     getDirectionsMock.mockResolvedValue(directions);
     getOutboxJobsMock.mockResolvedValue({ items: [] });
@@ -238,6 +265,13 @@ describe("admin account activity UI", () => {
       pageSize: 20,
       search: "沉睡学生",
     });
+    expect(getAdminUserDirectionDistributionMock).toHaveBeenCalledOnce();
+    expect(screen.getByRole("heading", { name: "人员技术组分布" })).toBeInTheDocument();
+    expect(screen.getByText("4 人 · 66.7%")).toBeInTheDocument();
+    expect(screen.getByText("0 人 · 0%")).toBeInTheDocument();
+    expect(screen.getByText("已停用")).toBeInTheDocument();
+    expect(screen.getAllByText("未设置技术组")).toHaveLength(2);
+    expect(screen.getByText("2 人 · 33.3%")).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "超过 10 天未进入" }),
     ).toHaveAttribute("aria-current", "page");

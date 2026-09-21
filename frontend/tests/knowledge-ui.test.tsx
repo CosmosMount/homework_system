@@ -232,6 +232,63 @@ function nestedOverview(): KnowledgeOverview {
 }
 
 describe("knowledge document renderer", () => {
+  it("renders heading descendants, heading emoji, and Feishu callout styling", () => {
+    const { container } = render(
+      <KnowledgeBlocks
+        blocks={[
+          {
+            id: "heading-3",
+            type: "heading",
+            level: 3,
+            segments: [{ text: "📚" }, { text: " 三级标题" }],
+            children: [{
+              id: "heading-content",
+              type: "paragraph",
+              segments: [{ text: "标题下正文不会丢失" }],
+            }],
+          },
+          {
+            id: "dark-blue-callout",
+            type: "callout",
+            background_color: 12,
+            border_color: 12,
+            text_color: 12,
+            emoji_id: "books",
+            children: [{
+              id: "callout-content",
+              type: "paragraph",
+              segments: [{ text: "高亮内容" }],
+            }],
+          },
+          {
+            id: "reference-emoji-callout",
+            type: "callout",
+            emoji_id: "star-struck",
+            children: [{
+              id: "second-callout-content",
+              type: "paragraph",
+              segments: [{ text: "第二个高亮内容" }],
+            }],
+          },
+        ]}
+        onOpenDocument={vi.fn()}
+        tokenToDocument={new Map()}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "📚三级标题" })).toBeInTheDocument();
+    expect(screen.getByText("标题下正文不会丢失")).toBeInTheDocument();
+    const callout = screen.getByText("高亮内容").closest("aside");
+    expect(callout).toHaveClass(
+      "bg-blue-400/[0.16]",
+      "border-blue-400/55",
+      "text-blue-950",
+    );
+    expect(callout?.querySelector(".border-l")).toBeNull();
+    expect(container).toHaveTextContent("📚");
+    expect(container).toHaveTextContent("🤩");
+  });
+
   it.each([["连杆.MP4", "video/mp4"], ["演示.webm", "video/webm"]])("plays localized video %s inline and retries failures", (fileName, mimeType) => {
     render(<KnowledgeBlocks blocks={[{ id: "video", type: "attachment", asset_id: "video-id", file_name: fileName, mime_type: mimeType }]} onOpenDocument={vi.fn()} tokenToDocument={new Map()} />);
     const video = screen.getByLabelText(fileName);

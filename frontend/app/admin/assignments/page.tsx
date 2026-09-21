@@ -17,7 +17,7 @@ export default async function AdminAssignmentsPage() {
       <AdminPageHeader
         eyebrow="ADMIN / ASSIGNMENTS"
         title="作业管理"
-        description="管理固定受众快照、公共截止、个人延期、提交统计与优秀版本。"
+        description="管理固定受众快照、公共截止、提交统计与优秀版本。"
         actions={
           <Link
             className={commandLinkClassName + " group"}

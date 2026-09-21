@@ -2,9 +2,11 @@ import { redirect } from "next/navigation";
 
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { UserAdminPanel } from "@/components/admin/user-admin-panel";
+import { UserDirectionDistribution } from "@/components/admin/user-direction-distribution";
 import { AppShell } from "@/components/layout/app-shell";
 import {
   getAdminUsers,
+  getAdminUserDirectionDistribution,
   getDirections,
   requireAdmin,
 } from "@/lib/api/server";
@@ -54,9 +56,10 @@ function adminUsersHref({
 export default async function AdminUsersPage({
   searchParams,
 }: AdminUsersPageProps) {
-  const [admin, directions, filters] = await Promise.all([
+  const [admin, directions, distribution, filters] = await Promise.all([
     requireAdmin(),
     getDirections(),
+    getAdminUserDirectionDistribution(),
     searchParams,
   ]);
   const activityValue = singleValue(filters.activity);
@@ -93,6 +96,7 @@ export default async function AdminUsersPage({
         title="用户管理"
         description="管理账号、技术方向与最近进入时间；超过 10 天未进入的账号可在后端复核后安全清理。"
       />
+      <UserDirectionDistribution distribution={distribution} />
       <UserAdminPanel
         activity={activity}
         directionId={directionId ?? undefined}

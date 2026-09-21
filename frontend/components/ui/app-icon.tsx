@@ -20,6 +20,7 @@ export type AppIconName =
   | "menu"
   | "monitor"
   | "profile"
+  | "pin"
   | "users"
   | "x";
 
@@ -116,6 +117,13 @@ function IconShape({ name }: Pick<AppIconProps, "name">): ReactNode {
         <>
           <circle cx="12" cy="8" r="3.2" />
           <path d="M5.5 20a6.5 6.5 0 0 1 13 0" />
+        </>
+      );
+    case "pin":
+      return (
+        <>
+          <path d="M8.5 4.5h7l.8 4.2 2.2 2.2v1.6h-5.5V20l-1 1-1-1v-7.5H5.5v-1.6l2.2-2.2.8-4.2Z" />
+          <path d="M9 4.5h6" />
         </>
       );
     case "eye":

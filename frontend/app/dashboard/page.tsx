@@ -1,4 +1,6 @@
 import Link from "next/link";
+
+import { AppIcon } from "@/components/ui/app-icon";
 import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/layout/app-shell";
@@ -82,7 +84,8 @@ export default async function DashboardPage() {
               >
                 <div className="flex flex-wrap gap-2 font-mono text-xs">
                   {announcement.is_pinned ? (
-                    <span className="bg-[var(--color-accent-fill)] px-2 py-0.5 text-white">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-accent-fill)] px-2.5 py-1 font-sans text-[11px] font-semibold text-white shadow-[var(--shadow-button)]">
+                      <AppIcon name="pin" size={12} />
                       置顶
                     </span>
                   ) : null}

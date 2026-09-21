@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { buttonClassName, FormMessage } from "@/components/ui/form-controls";
+import { AppIcon } from "@/components/ui/app-icon";
 import { csrfFetch } from "@/lib/api/client";
 import type { Session } from "@/lib/api/types";
 
@@ -52,12 +53,13 @@ export function SessionList({
               <div className="flex flex-wrap items-center gap-3">
                 <h2 className="font-medium">{session.user_agent_summary}</h2>
                 {session.is_current ? (
-                  <span className="bg-[var(--color-success)] px-2 py-0.5 text-xs text-black">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-success)]/25 bg-[var(--color-success)]/10 px-2.5 py-1 text-xs font-semibold text-[var(--color-success)]">
+                    <AppIcon name="monitor" size={13} />
                     当前设备
                   </span>
                 ) : null}
                 {session.remembered ? (
-                  <span className="border border-[var(--color-info)] px-2 py-0.5 text-xs text-[var(--color-info)]">
+                  <span className="inline-flex items-center rounded-full border border-[var(--color-info)]/30 px-2.5 py-1 text-xs font-medium text-[var(--color-info)]">
                     已记住登录
                   </span>
                 ) : null}
