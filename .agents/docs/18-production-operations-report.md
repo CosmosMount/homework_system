@@ -1,5 +1,11 @@
 # 生产运维与故障恢复验收报告
 
+## 2026-09-22 站内知识库文档引用部署
+
+- 发布范围仅包含已提交的站内知识库引用功能：公告正文、作业说明、作业私密评语选择器，`source` 参数解析和公告邮件绝对链接。固定标签为 `knowledge-references-20260922`；Backend/Worker 镜像 `sha256:021445cc5c7325fbe0b809662d979f6d97d473d7be1e5de8951fcc4e69e930c9`，Frontend 镜像 `sha256:aa343aac5818205d1f8be7b593fe8fc7b5d60d2c65c6b17bad2a67d1066951fd`。
+- 发布前已构建镜像并运行前端生产构建；使用新镜像执行一次幂等 `alembic upgrade head`，当前版本为 `20260921_0027 (head)`，无迁移差异。PostgreSQL/MinIO 容器和数据卷未重建；未触发飞书同步、邮件发送或真实业务写接口。
+- 先替换 Backend/Worker，健康后再替换 Frontend/Nginx。六服务均 healthy、重启 0；`/login`、`/health/live`、`/health/ready`、`/health/worker` 为 200，匿名 `/knowledge` 为 307、`/api/v1/knowledge` 为 401。发布后 Backend、Worker、Frontend、Nginx 近期错误日志无 error/exception/5xx，应用回滚标签为 `knowledge-references-rollback-20260922`。
+
 ## 2026-09-21 账号自动清理与邮箱复用修复部署
 
 - 只读排查确认 Worker 持续记录 `inactive_account_cleanup_failed`，PostgreSQL 报 `submission versions are immutable` 且重复注册触发 `uq_users_email_normalized`。生产迁移前为 `20260916_0026`，用户 165、激活管理员 16、超期候选 1（`active admin`）；不读取或公开其身份。修复只覆盖 `app/users/repository.py` 与 `20260921_0027`，未将其他未提交工作区文件纳入镜像。

@@ -6,6 +6,12 @@
 - `/knowledge` 支持 `source` 稳定来源标识并兼容当前快照 `doc` UUID；公告邮件将安全清洗后的站内知识库相对链接补成 `APP_BASE_URL` 绝对链接，私密评语邮件边界不变。
 - 新增前端引用组件/纯函数及后端 Markdown、邮件回归测试。无数据库迁移、API endpoint、依赖、飞书写回或生产部署；代码提交 `2e2757d`。
 
+## 2026-09-22：站内内容引用知识库文档部署
+
+- 固定标签 `knowledge-references-20260922` 已完成 Backend/Worker、Frontend/Nginx 两阶段替换；Backend/Worker 镜像为 `sha256:021445cc5c7325fbe0b809662d979f6d97d473d7be1e5de8951fcc4e69e930c9`，Frontend 镜像为 `sha256:aa343aac5818205d1f8be7b593fe8fc7b5d60d2c65c6b17bad2a67d1066951fd`。
+- 仅执行幂等 Alembic 检查，数据库保持 `20260921_0027 (head)`；PostgreSQL/MinIO 未重建。六服务 healthy、重启 0，健康入口 200，匿名知识库页面/API 为 307/401，近期应用错误与 Nginx 5xx 为 0。
+- 当前应用回滚标签为 `knowledge-references-rollback-20260922`；部署未触发真实知识库同步或业务写接口。
+
 ## 2026-09-21：账号自动清理与邮箱复用已部署
 
 - Backend/Worker 已切换定向修复镜像，数据库 `20260916_0026 → 20260921_0027`；Frontend/Nginx 和 PostgreSQL/MinIO 容器与卷未替换。Worker 启动后清理 1 个真实超期账号，用户 `165 → 164`、激活管理员 `16 → 15`、超期候选 `1 → 0`。用户邮箱/学号唯一占用随成功事务释放；隔离恢复副本已验证相同邮箱与学号可再次创建账号，未用真实邮箱调用生产注册写接口。

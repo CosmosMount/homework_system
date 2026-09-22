@@ -5,7 +5,8 @@
 - 正式计划：`.agents/plans/plan_internal_knowledge_references.md`。
 - 已完成公告正文、作业说明、作业私密评语的统一知识库文档选择器；引用使用稳定 `source_token`，知识库页面兼容 `source` 与既有 `doc` 参数，公告邮件自动补全绝对链接。
 - 已补充前后端针对性测试并通过；无 API、数据库字段、迁移、依赖或飞书写回。
-- 代码已提交 `2e2757d`；文档与任务记录待本笔提交后归档。
+- 2026-09-22 已部署标签 `knowledge-references-20260922`：Backend/Worker `sha256:021445cc5c7325fbe0b809662d979f6d97d473d7be1e5de8951fcc4e69e930c9`，Frontend `sha256:aa343aac5818205d1f8be7b593fe8fc7b5d60d2c65c6b17bad2a67d1066951fd`；数据库保持 `20260921_0027 (head)`，仅执行幂等迁移检查，PostgreSQL/MinIO 未重建。
+- 部署后六服务 healthy、重启 0；`/login`、`/health/live`、`/health/ready`、`/health/worker` 返回 200，匿名 `/knowledge` 为 307、`/api/v1/knowledge` 为 401，近期错误日志无异常。代码提交 `2e2757d`、`0a659c1`，文档提交 `d422d83`。
 
 ## 置顶、当前设备与品牌字标视觉优化（2026-09-18）
 

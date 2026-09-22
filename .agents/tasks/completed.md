@@ -987,3 +987,4 @@
 - 正式计划为 `.agents/plans/plan_internal_knowledge_references.md`；公告正文、作业 Markdown 说明和作业私密评语均可从最近成功知识库快照按标题选择文档并插入稳定 `source_token` 引用。
 - `/knowledge` 新增 `source` 解析并保留 `doc` 兼容；公告邮件把相对知识库链接转换为 `APP_BASE_URL` 绝对地址；评语邮件仍不含正文或引用内容。未新增评论区、数据库表/字段、迁移、依赖或飞书写回。
 - 前端选择器/纯函数测试、后端 Markdown/邮件测试及前端完整测试、TypeScript、ESLint、后端 Ruff 和定向 Pytest 均通过。代码提交：`2e2757d`；文档归档提交见后续记录。
+- 2026-09-22 已部署 `knowledge-references-20260922`：Backend/Worker `sha256:021445cc5c7325fbe0b809662d979f6d97d473d7be1e5de8951fcc4e69e930c9`，Frontend `sha256:aa343aac5818205d1f8be7b593fe8fc7b5d60d2c65c6b17bad2a67d1066951fd`；六服务 healthy、重启 0，数据库仍为 `20260921_0027 (head)`，PostgreSQL/MinIO 未重建。健康入口均 200，知识库匿名页面/API 分别为 307/401，发布后近期应用错误与 Nginx 5xx 检查为 0；回滚标签为 `knowledge-references-rollback-20260922`。
