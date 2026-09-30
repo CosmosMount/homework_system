@@ -1,5 +1,31 @@
 # 当前任务
 
+## 工作区提交整理（2026-09-30）
+
+既有改动已按知识库、业务后端、业务前端和文档记录整理；详细验证及提交说明移入 `completed.md`，唯一计划为 `.agents/plans/plan_commit_cleanup_20260930.md`。本次仅本地提交，未推送或执行部署、数据迁移。
+
+## 作业与通知统一邮件提醒（2026-09-30）
+
+源码与部署均已完成，记录已移入 `completed.md`，正式计划为 `.agents/plans/plan_assignment_notification_email_reminder.md`。固定标签 `email-reminder-20260930`，数据库保持 `20260927_0029`。Docker 生产构建、前端完整 179 项、后端定向 106 项、静态检查、备份空卷恢复和隔离 PostgreSQL 入队验证通过；六服务健康，无迁移，未发送真实邮件。
+
+## 已关闭作业重新打开（2026-09-28）
+
+源码与生产部署已完成，正式计划为 `.agents/plans/plan_assignment_reopen.md`；完整记录已移入 `completed.md`。生产标签为 `assignment-reopen-20260928`，数据库保持 `20260927_0029`。
+
+## 作业截止时间移除（2026-09-27）
+
+源码、迁移、验证及生产部署已完成，详情已移入 `completed.md`；正式计划为 `.agents/plans/plan_assignment_remove_deadlines.md`。生产运行标签为 `assignment-no-deadline-20260927`，数据库为 `20260927_0029`。历史修正截止任务仅作阶段记录。
+
+## 作业修正截止及学生完成状态（2026-09-27）
+
+源码、隔离验证及生产部署均已完成，记录已移入 `completed.md`；唯一计划为 `.agents/plans/plan_assignment_review_deadline.md`。生产数据库为 `20260927_0028`。
+
+学生状态标签字体微调此前已完成并部署，上一 Frontend/Compose 标签为 `assignment-status-font-20260927`；Backend/Worker 仍运行原 `review-deadline-completion-20260927` 镜像，数据库仍为 `20260927_0028`。
+
+学生列表公共截止、个人延期和修正截止字体已继续统一并部署；当前 Frontend/Compose 固定标签为 `assignment-deadline-font-20260927`，Backend/Worker 镜像及数据库版本不变。完成记录已移入 `completed.md`。
+
+2026-09-25 独立交付的飞书培训综述已扩写为中、英文各六页的独立 LaTeX 文稿与 PDF，完成情况记录于 `completed.md`；对应唯一计划为 `.agents/plans/plan_training_illustration.md`。该交付不改变下方平台开发任务状态。
+
 # 当前任务：站内内容引用知识库文档（2026-09-21）
 
 - 正式计划：`.agents/plans/plan_internal_knowledge_references.md`。

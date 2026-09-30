@@ -157,7 +157,8 @@ AUTH-012 新增 Worker 内部十五天自动清理，无新增 HTTP API、请求
 | `DELETE /admin/announcements/{id}` | 未发布通知取消活动定时任务并物理删除；已发布或手工归档通知归档标记删除；返回 204 | NEWS-003、NEWS-009、NFR-006 |
 | `POST /admin/announcements/{id}/publish` | 立即发布或确认定时计划 | NEWS-003、NEWS-005～NEWS-006 |
 | `POST /admin/announcements/{id}/archive` | 归档 | NEWS-003 |
-| `POST /admin/announcements/{id}/send-update` | 为当前受众创建一次更新提醒 Outbox | NEWS-007、MAIL-002～MAIL-005 |
+| `POST /admin/announcements/{id}/send-update` | 兼容旧路径，调用与 `send-email` 相同的统一邮件提醒逻辑，不额外生成站内提醒 | NEWS-007、MAIL-002～MAIL-005 |
+| `POST /admin/announcements/{id}/send-email` | 真实管理员向当前已发布通知受众发送统一邮件提醒；不区分发布或修改，按通知 `revision` 与用户 UUID 使用唯一事件键，要求 CSRF 和 `Idempotency-Key` | NEWS-006～NEWS-007、MAIL-001～MAIL-005 |
 
 创建/修改主体：
 
@@ -193,7 +194,7 @@ AUTH-012 新增 Worker 内部十五天自动清理，无新增 HTTP API、请求
 | 方法与路径 | 行为 | 需求 |
 | --- | --- | --- |
 | `GET /assignments` | `status,query,page,page_size`；普通学生只返回正式受众快照（发布时成员、激活时开放作业补录及新入技术组时历史作业追加）中未归档的作业与最新提交摘要；管理员当前 Session 开启学生视图时，按该账号技术方向对新规则作业执行只读受众预览，不写入或改变快照，历史届次受众仍按原快照兼容 | HW-002、HW-003、HW-006、HW-008、AUTH-011 |
-| `GET /assignments/{assignment_id}` | 返回未归档作业的要求、外链、有效截止、附件规则、本人提交摘要和优秀作业摘要；归档作业 404，管理员当前 Session 开启学生视图时仍按学生规则读取 | HW-001、HW-004、HW-006、HW-008、SHOW-002、AUTH-011 |
+| `GET /assignments/{assignment_id}` | 返回未归档作业的要求、外链、附件规则、提交资格、本人提交与完成状态摘要和优秀作业摘要；归档作业 404，管理员学生视图仍按学生规则读取 | HW-001、HW-006、HW-008、SHOW-002、AUTH-011 |
 | `POST /assignments/{assignment_id}/submission-versions` | 创建本人正式版本；管理员当前 Session 开启学生视图时允许以自身账号创建个人版本，普通管理员视图仍禁止代交 | SUB-001～SUB-005、FILE-001、AUTH-011 |
 | `GET /assignments/{assignment_id}/submission` | 返回本人提交聚合、版本和评语 | SUB-003、SUB-005～SUB-007 |
 | `GET /assignments/{assignment_id}/excellent-submissions` | 返回该作业已标记的优秀版本摘要；学生视图管理员按临时受众预览规则读取 | SHOW-001～SHOW-005、AUTH-011 |
@@ -209,7 +210,7 @@ AUTH-012 新增 Worker 内部十五天自动清理，无新增 HTTP API、请求
 }
 ```
 
-返回 `201`：`{submission_id, version_id, version_number, submitted_at, total_file_bytes}`。`file_ids` 最多包含 100 个不重复 UUID；浏览器可一次选择多张图片或其他允许类型附件，但每个文件仍分别经过现有 `/uploads*` 会话，正式版本只在用户确认时一次绑定全部可用文件。超过有效截止返回 `409 ASSIGNMENT_CLOSED`，未完成文件返回 `409 FILE_NOT_AVAILABLE`。
+返回 `201`：`{submission_id, version_id, version_number, submitted_at, total_file_bytes}`。`file_ids` 最多包含 100 个不重复 UUID；浏览器可一次选择多张图片或其他允许类型附件，但每个文件仍分别经过现有 `/uploads*` 会话，正式版本只在用户确认时一次绑定全部可用文件。作业手动关闭或归档返回 `409 ASSIGNMENT_CLOSED`，未完成文件返回 `409 FILE_NOT_AVAILABLE`。
 
 ### 管理接口
 
@@ -218,18 +219,18 @@ AUTH-012 新增 Worker 内部十五天自动清理，无新增 HTTP API、请求
 | `GET /admin/assignments` | 搜索未删除作业及提交统计；手工归档仍返回，已删除归档不返回 | HW-005、HW-008 |
 | `POST /admin/assignments` | 创建草稿 | HW-001～HW-003 |
 | `GET /admin/assignments/{id}` | 读取未删除作业配置、受众预估/快照和统计；已删除归档统一 404 | HW-002、HW-005、HW-008 |
-| `PATCH /admin/assignments/{id}` | 按 `revision` 修改作业；草稿可修改完整配置，`published/closed` 允许标题、说明、培训资料链接、提交说明、受众和公共截止变化。受众变化按当前激活学生原子替换权威快照；发布时间与附件规则必须原值回传。截止前移不得早于最后正式提交；自动关闭作业把截止延至未来时重新开放，提前关闭作业保持关闭 | HW-002～HW-003、HW-007、NFR-006 |
+| `PATCH /admin/assignments/{id}` | 按 `revision` 修改作业；`published/closed` 可改文案和受众，后者按当前激活学生原子替换快照。发布时间与附件规则须原值回传；不接受截止字段 | HW-002、HW-007、NFR-006 |
 | `DELETE /admin/assignments/{id}` | 草稿取消活动定时任务并物理删除；已发布、已关闭或手工归档作业归档标记删除；返回 204 | HW-003、HW-008、NFR-006 |
 | `POST /admin/assignments/{id}/publish` | 固化受众快照并发布 | HW-002～HW-003 |
 | `POST /admin/assignments/{id}/close` | 提前关闭 | HW-003 |
+| `POST /admin/assignments/{id}/reopen` | 真实管理员将未删除的 `closed` 作业恢复为 `published` 并清空 `closed_at`；已发布幂等，草稿/归档为 `409 STATE_CONFLICT`，已删除为 404；要求 CSRF，写脱敏审计 | HW-003、SUB-004、NFR-002、NFR-006 |
 | `POST /admin/assignments/{id}/archive` | 归档 | HW-003 |
-| `PUT /admin/assignments/{id}/extensions/{user_id}` | `{extended_deadline,reason}` | HW-004 |
-| `DELETE /admin/assignments/{id}/extensions/{user_id}` | 截止前移除尚未使用的延期 | HW-004 |
+| `POST /admin/assignments/{id}/send-email` | 真实管理员向当前已发布/已关闭作业受众发送统一邮件提醒；按作业 `revision` 与用户 UUID 使用唯一事件键，重复请求幂等，要求 CSRF 和 `Idempotency-Key` | HW-009、MAIL-001～MAIL-005 |
 | `GET /admin/assignments/{id}/submissions` | 按方向、提交/反馈状态分页列出“当前受众并集历史提交者”；每项返回 `completed_version_id`、`completed_at`、`is_completed` 与 `in_current_audience`。`is_completed` 仅在确认版本等于最新版本时为真；统计新增当前受众 `completed_count` | HW-005、SUB-009 |
 | `POST /admin/assignments/{id}/excellent-submissions/{version_id}` | 把本作业版本标记为优秀作业 | SHOW-001～SHOW-003 |
 | `DELETE /admin/assignments/{id}/excellent-submissions/{version_id}` | 取消优秀标记 | SHOW-004 |
 
-作业草稿主体包含 `title`、`description_markdown`、`training_url`、`submission_instructions`、`audience`、`allowed_extensions`、`max_total_bytes`、`publish_at`、`deadline` 和 `revision`。`max_total_bytes` 最大为 2147483648。
+作业草稿主体包含 `title`、`description_markdown`、`training_url`、`submission_instructions`、`audience`、`allowed_extensions`、`max_total_bytes`、`publish_at` 和编辑时的 `revision`。不接受或返回截止与个人延期字段；旧客户端提交这些字段返回验证错误。
 
 作业删除以独立删除标记区分手工归档和已删除归档。物理删除只适用于尚无学生生命周期的 `draft`；`published/closed` 删除必须转为 `archived` 并写删除标记，手工 `archived` 首次 DELETE 补写标记；常规管理列表/详情只返回未删除内容，重复 DELETE 对已有标记幂等 204。归档删除不得删除固定受众、提交、版本、评语、优秀标记和附件；学生列表、详情、优秀作业读取以及优秀附件重新签名均排除归档作业，提交所有者的历史版本仍按不可变记录保留。
 
@@ -367,7 +368,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 }
 ```
 
-`purpose` 只接受 `announcement_attachment`、`assignment_submission` 或 `submission_feedback`。数据库检查约束继续允许 `competition_submission` 仅为保存 legacy 文件元数据，公共请求 Schema 与 Service 必须拒绝该值。`submission_feedback` 的 `context_id` 是个人作业版本 UUID，只允许真实管理员，且在初始化阶段限制安全图片扩展名和单张 10 MiB；完成与正式绑定仍复核内容检测和全部边界。服务端按上下文验证权限、扩展名和总量；普通作业附件仍额外验证作业截止时间。
+`purpose` 只接受 `announcement_attachment`、`assignment_submission` 或 `submission_feedback`。数据库检查约束继续允许 `competition_submission` 仅为保存 legacy 文件元数据，公共请求 Schema 与 Service 必须拒绝该值。`submission_feedback` 的 `context_id` 是个人作业版本 UUID，只允许真实管理员，且在初始化阶段限制安全图片扩展名和单张 10 MiB；完成与正式绑定仍复核内容检测和全部边界。服务端按上下文验证权限、扩展名和总量；普通作业附件初始化复核已发布、未删除与当前受众。
 
 ### 分片与完成
 
@@ -448,7 +449,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 | `GET /admin/knowledge` | 返回 `configured`、学生当前快照和最近运行的脱敏状态 | 真实管理员，KB-004～KB-005、KB-008 |
 | `POST /admin/knowledge/sync` | CSRF 校验后创建同步运行、审计和 Outbox，返回 `202 {run}` | 真实管理员，KB-004～KB-005 |
 
-目录和文档响应不返回飞书 app secret、tenant token、MinIO 对象键或飞书错误正文。目录独立文件只返回内部资源 UUID、安全标题、大小和媒体类型，不返回永久地址。文档既有结构化块 JSON 的 `children` 可出现在标题及其他块上并须递归渲染，富文本 segment 的 `text` 可包含经清理的 Unicode Emoji；提示块沿用可选 `emoji_id/background_color/border_color/text_color`。结构还可包含图片块的可选纯文本 `caption`、`type=equation` 的独立公式块，以及富文本 segment 的 `equation=true` 行内公式标记；这些均为既有 JSON 兼容语义，不改变公开路径或必填字段。图片说明来自飞书 `image.caption.content`，移除空字符、限制 20,000 字符，纯空白时省略，不接受 HTML。LaTeX 和 Emoji 只作为文本内容返回，不接受 HTML。文件型富文本 segment 使用 `file=true`，并可返回可空 `asset_id`、`file_name`、`file_size`、`mime_type` 和 `unavailable_reason`；块附件也可返回同一失败原因。`unavailable_reason` 只允许 `type_not_allowed`、`too_large`、`unavailable`，不得返回上游错误正文。媒体路径只接受内部 UUID，不接受对象键或任意 URL。
+目录和文档响应不返回飞书 app secret、tenant token、MinIO 对象键或飞书错误正文。目录独立文件只返回内部资源 UUID、安全标题、大小和媒体类型，不返回永久地址。文档既有结构化块 JSON 的 `children` 可出现在标题及其他块上并须递归渲染，富文本 segment 的 `text` 可包含经清理的 Unicode Emoji；提示块沿用可选 `emoji_id/background_color/border_color/text_color`。结构还可包含图片块的可选纯文本 `caption`、`type=equation` 的独立公式块，以及富文本 segment 的 `equation=true` 行内公式标记；这些均为既有 JSON 兼容语义，不改变公开路径或必填字段。图片说明来自飞书 `image.caption.content`，移除空字符、限制 20,000 字符，纯空白时省略，不接受 HTML。LaTeX 和 Emoji 只作为文本内容返回，不接受 HTML。文件型富文本 segment 以 `text` 返回优先采用飞书源标题的显示文字，`file_name` 保留安全资源名；块附件可选 `display_title` 作为显示标题，`file_name` 仍用于文件类型判断和下载。标题缺失时回退安全资源名，文件型 segment 使用 `file=true`，并可返回可空 `asset_id`、`file_name`、`file_size`、`mime_type` 和 `unavailable_reason`；块附件也可返回同一失败原因。`unavailable_reason` 只允许 `type_not_allowed`、`too_large`、`unavailable`，不得返回上游错误正文。媒体路径只接受内部 UUID，不接受对象键或任意 URL。
 
 `source_url`、块内既有 `fallback_url` 与文件 segment 的安全 HTTPS `href` 继续作为快照来源/兼容元数据返回；真实学生和管理员学生视图不得把它们渲染为飞书原文或文件失败回退链接。成功本地化附件、富文本内嵌文件与 Drive 文件引用都通过 `GET /knowledge/assets/{asset_id}/content` 授权下载，并通过当前成功快照的文档资源关系取得授权。
 
@@ -517,3 +518,13 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 ## 2026-09-21 知识库引用契约
 
 本功能不新增 API。三个管理编辑器复用受保护的 `GET /knowledge` 响应中的 `documents[].title` 与稳定 `documents[].source_token`，生成 `/knowledge?source=<URL 编码 source_token>` Markdown 链接。知识库页面继续接受 `?doc=<当前成功快照文档 UUID>`，并新增 `?source=<稳定来源标识>`；只在当前成功快照中匹配，未匹配时返回根层状态。所有读取仍需要有效 Session，管理员同步接口和内容授权不改变。
+
+## 作业修正截止增量（2026-09-27）
+
+以下为 `20260927_0028` 的历史接口记录，已由 `20260927_0029` 移除截止与延期规则取代；当前接口以上方作业接口表为准。
+
+- POST/PATCH `/admin/assignments*` 接受可选带时区 `review_deadline`。POST 省略/null 保存为 `deadline`；PATCH 省略保留原值，但原值等于原 `deadline` 时跟随本次 `deadline`；显式 null 重置为本次正常截止。
+- 管理响应增加必填 `review_deadline`；学生列表/详情增加必填 `review_deadline` 和可空 `closed_at`，后者用于区分提前关闭与正常自动关闭。学生 `latest_submission` 摘要增加必填布尔值 `is_completed` 与可空 `completed_at`；只有 `completed_version_id == latest_version_id` 才返回已完成及确认时间，旧版本确认不会误报。`effective_deadline` 继续表示个人延期或正常截止；`can_submit` 为后端最终资格。工作台截止及列表排序按本人可提交截止（有历史评语时为修正截止）。
+- `review_deadline >= deadline`；显式非法时间走统一验证错误。PATCH 解析默认值后若违反时间关系、修正截止前移早于历史提交/个人延期，返回 `409 STATE_CONFLICT`。延期必须 `deadline < extended_deadline <= review_deadline`，越界返回 `422 BUSINESS_RULE_VIOLATION`。
+- 正式提交和作业上传初始化统一使用 SUB-004：正常截止/个人延期前无需评语，之后必须存在本人该作业任一版本评语，且始终 `now < review_deadline`。不满足返回 `409 ASSIGNMENT_CLOSED`；受众和角色校验保持原错误。成功请求的幂等重放不创建版本，最终截止后仍返回原结果。
+- 自动关闭仍按正常截止执行，修正资格实时判断；上传完成不代表正式提交，跨最终截止提交仍拒绝。无新增接口或后台任务。

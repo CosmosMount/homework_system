@@ -129,13 +129,13 @@ PostgreSQL / MinIO / SMTP Adapter
 | `auth` | 密码、普通/持久 Session、IP 附加绑定、一次性令牌、CSRF、限流与本人注销路由 | AUTH-001～AUTH-013 |
 | `users` | 邮箱验证后激活、角色、技术方向、禁用状态、全量正常学生技术组分布、账号擦除编排和队长/个人数据清理；后续学生激活事务补录开放作业受众，届次字段仅历史兼容 | AUTH-003、AUTH-007～AUTH-012 |
 | `announcements` | 受众、发布、置顶、归档与管理员删除 | NEWS-001～NEWS-009 |
-| `assignments` | 个人任务、发布时快照与新学生激活补录、截止、延期、管理员删除和优秀作业标记 | HW-001～HW-008、SHOW-001～SHOW-005 |
+| `assignments` | 个人任务、发布时快照与新学生激活补录、截止、延期、管理员删除、邮件提醒和优秀作业标记 | HW-001～HW-009、SHOW-001～SHOW-005 |
 | `teams` | 全局独立队伍、组队个人简介、站内确认邀请、邀请码、公开目录、自动分配、可转让队长与管理员纠错 | TEAM-001～TEAM-013 |
 | `intentions` | 多题问卷、非归档状态安全编辑与答案结构冻结、全部学生/指定技术组受众、本人最新回答与次数上限、管理员目标学生统计/实名名单、二维码 token、受众内手动成员/技术组/全部学生邮件编排、问卷物理删除，以及第一志愿到用户技术方向的显式事务编排 | INT-001～INT-010 |
 | `help_requests` | 学生本人私密工单、已解答问题的登录态匿名公开读取、面向管理员的新工单提醒、管理员处理/删除与学生答复通知 | HELP-001～HELP-008 |
 | `submissions` | 个人作业提交聚合、不可变版本、私密评语及其有序受保护图片；legacy 赛事列只匹配历史数据库结构 | SUB-001～SUB-008 |
 | `uploads` | 分片会话、对象校验、下载/安全页内预览的共享授权、清理 | FILE-001～FILE-007 |
-| `notifications` | 面向登录用户的站内通知、按目标业务分类徽标、已读、Outbox 和邮件；表名 `student_notifications` 仅为历史兼容 | NEWS-005～NEWS-006、HELP-001～HELP-005、MAIL-001～MAIL-005 |
+| `notifications` | 面向登录用户的站内通知、按目标业务分类徽标、已读、Outbox 和邮件；表名 `student_notifications` 仅为历史兼容 | NEWS-005～NEWS-007、HW-009、HELP-001～HELP-005、MAIL-001～MAIL-005 |
 | `audit` | 关键写操作差异与安全事件 | NFR-006 |
 
 ## 写入事务模式
@@ -206,6 +206,7 @@ PostgreSQL 提交前不调用 MinIO，因此数据库失败时账号、引用和
 - 发布、归档、提前关闭和问卷重新开启使用行锁或条件更新，状态不匹配返回 409；问卷只允许 `closed → open` 重新开启并写独立审计动作，不重置内容、回答、二维码 token、时间窗口或提交次数；公告归档事务同时锁定并标记该公告的未读站内提醒为已读。
 - 发布后作业修改复用作业行锁与 revision：标题、说明、培训资料链接、提交说明、受众和公共截止可更新，发布时间与附件规则逐项冻结。受众变化时先更新配置，再按当前激活学生原子替换 `assignment_audience_users`；提交历史不级联删除。截止前移在锁内读取该作业最后正式提交时间；正式版本创建也先锁同一作业行，因此校验与并发提交串行。截止变化同步重排关闭 Outbox；自动关闭只有在新截止位于未来时重新开放，提前关闭保持关闭。
 - 评语写入锁定提交版本并校验 revision；最多 10 张图片逐项锁定，复核上传者、`submission_feedback` 目的、版本上下文、可用状态、唯一占用、服务端检测类型及 10 MiB/50 MiB 边界，再原子替换 `feedback_files` 顺序。新增/修订评语、图片关联、站内提醒、脱敏审计和唯一 `submission_feedback_email` Outbox 在同一 PostgreSQL 事务提交，SMTP 在 Worker 中异步执行。邮件 payload 不保存评语正文、图片 UUID 或对象地址。
+- 已发布通知和作业的统一邮件提醒都在资源行锁内读取当前受众，并以 `resource_id + revision + user_id` 生成唯一 Outbox 事件键；通知快照包含安全 Markdown 正文，作业邮件只包含标题和登录态链接。重复点击同一 revision 收敛为已有任务，邮件投递仍由 Worker 在请求事务之外执行。
 - 通知/作业删除先以包含删除标记的查询锁定资源：未发布内容在同一事务删除活动定时发布 Outbox、物理删除根记录并写审计；已发布内容转为 `archived` 并写 `deleted_at`，手工归档内容首次删除只补写删除标记、revision 和审计。普通详情与管理列表统一限制 `deleted_at IS NULL`，DELETE 对已有标记幂等返回 204；学生读取继续排除归档资源，正式提交、历史提醒与文件引用不级联删除。
 - 管理员删除独立队伍时锁定队伍和当前成员，随后物理删除队伍并由外键级联成员关系与邀请，在同一事务写脱敏审计；学生解散队伍时先把待处理邀请改为 `cancelled`。当前队伍不被任何提交引用；Service 不查询 `submissions.owner_team_id`，删除不会触碰 legacy 赛事提交、版本、评语、附件或 MinIO 对象。
 - MinIO 与 PostgreSQL 不能跨系统事务；对象先完成校验再入版本，孤立对象由 Worker 延迟清理；账号擦除则先在数据库事务撤销引用并写具名对象清理 Outbox，绝不依据桶扫描猜测删除。
@@ -230,7 +231,7 @@ PostgreSQL 提交前不调用 MinIO，因此数据库失败时账号、引用和
 1. 真实管理员的 `POST /admin/knowledge/sync` 在同一事务创建 `knowledge_sync_runs`、审计和唯一事件键的 `sync_knowledge` Outbox，立即返回 `202`。
 2. 常规更新只有 Worker 从 Outbox 领取任务并访问固定 `https://open.feishu.cn`；首次上线可由内部前台运维命令接管唯一活动运行并复用同一同步器。Web、API 和 Next.js 始终不直接访问飞书，也不依赖现有官网运行时。
 3. Worker 或内部运维命令从 `FEISHU_WIKI_URL` 的 `/wiki/space/{space_id}` 或 `/wiki/{node_token}` 路径解析整个空间或单篇文档目标。同步行为以参考仓库提交 `c28f8a0` 为契约：Wiki 目录使用 `page_size=50` 和 `page_token` 串行 DFS 先序递归，Docx 按目录顺序逐篇串行，每篇先以 `page_size=500` 分页读取 blocks，再读取文档元数据标题。
-4. 每篇文档先发现普通附件、富文本内联附件，以及 `mention_doc.url` 或 `text_run` 链接中受信租户严格 `/file/{token}` Drive 文件，再转换结构化块；标题与正文富文本中的 Emoji 从 Unicode 或受控名称转成纯文本，未知但带合法 `elements` 的块型降级为段落，所有块继续递归保留子树。飞书图片的 `caption.content` 经文本清理后保存为可选 `caption`，富文本 `equation.content` 保留行内公式标记，`block_type=16` 转为独立公式块。资源引用显式记录远端端点：图片、正文附件和内联附件使用 `/drive/v1/medias/{token}/download`，目录 `obj_type=file` 与正文 Drive 文件引用使用 `/drive/v1/files/{token}/download`；两类 Drive 下载共用请求前等待 350 ms 的串行队列，白板请求发送 `Accept: image/png`。响应按 `Content-Length` 和累计读取双重执行大小边界，文件默认 1 GiB、图片/白板默认 50 MiB；Service 只保留 64 KiB 首块完成类型探测，随后以最多 1 MiB 上游读取聚合为固定 16 MiB MinIO multipart，并增量计算大小与 SHA-256，异常时关闭飞书响应并中止 multipart。普通文件沿用全局安全类型；知识库专用入口额外允许末扩展名为 `.exe` 且无安全/危险双扩展的文件，并在创建 multipart 前验证 `MZ`、有界 PE 头、CPU 架构、PE32/PE32+、可执行标志且非 DLL。成功 Drive 引用复用文档资源关联与 MinIO 写入；图片或白板失败跳过对应块，正文文件失败归一为 `type_not_allowed/too_large/unavailable` 并保留真实管理员排障回退，目录独立文件失败保留无资源关联的不可下载节点。
+4. 每篇文档先发现普通附件、富文本内联附件，以及 `mention_doc.url` 或 `text_run` 链接中受信租户严格 `/file/{token}` Drive 文件，再转换结构化块；标题与正文富文本中的 Emoji 从 Unicode 或受控名称转成纯文本，未知但带合法 `elements` 的块型降级为段落，所有块继续递归保留子树。飞书图片的 `caption.content` 经文本清理后保存为可选 `caption`，富文本 `equation.content` 保留行内公式标记，`block_type=16` 转为独立公式块。资源引用显式记录远端端点：图片、正文附件和内联附件使用 `/drive/v1/medias/{token}/download`，目录 `obj_type=file` 与正文 Drive 文件引用使用 `/drive/v1/files/{token}/download`；两类 Drive 下载共用请求前等待 350 ms 的串行队列，白板请求发送 `Accept: image/png`。响应按 `Content-Length` 和累计读取双重执行大小边界，文件默认 2 GiB、图片/白板默认 50 MiB；Service 只保留 64 KiB 首块完成类型探测，随后以最多 1 MiB 上游读取聚合为固定 16 MiB MinIO multipart，并增量计算大小与 SHA-256，异常时关闭飞书响应并中止 multipart。普通文件沿用全局安全类型；知识库专用入口额外允许末扩展名为 `.exe` 且无安全/危险双扩展的文件，并在创建 multipart 前验证 `MZ`、有界 PE 头、CPU 架构、PE32/PE32+、可执行标志且非 DLL。同步时分别保留用于下载和类型判断的安全文件名，以及优先来自飞书块或富文本的显示标题；成功 Drive 引用复用文档资源关联与 MinIO 写入；图片或白板失败跳过对应块，正文文件失败归一为 `type_not_allowed/too_large/unavailable` 并保留真实管理员排障回退，目录独立文件失败保留无资源关联的不可下载节点。
 5. 任一目录、正文或标题错误，以及正文树非法/循环/缺失子块引用或表格缺失单元格，使整次运行失败；目录、全部目标文档和引用完整写入后才把运行标为 `succeeded`。读取 Service 只选择最新成功运行，失败或重试不替换旧快照。
 6. 同步运行的部分唯一常量索引保证 `pending/running` 合计最多一条；事件键与可重复清空同一运行快照保证 Worker 重领幂等。
 

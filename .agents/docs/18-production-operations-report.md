@@ -1,5 +1,51 @@
 # 生产运维与故障恢复验收报告
 
+## 2026-09-30 作业与通知统一邮件提醒部署
+
+- 固定标签 `email-reminder-20260930` 已上线，Backend/Worker 镜像 `sha256:030348c9613558104d18205e0b655f07c292c4900b56215e413894b73a80a50e`，Frontend 镜像 `sha256:323fa7fed16a96263026ebfe06c41c37cd154242a83c2bef51cc60ca06c69f9c`，均以 `appuser` 运行。2026-09-30 17:50:24（北京时间）完成两阶段切换与 Nginx 重载。旧镜像固定为 `email-reminder-rollback-20260930`。
+- 线上旧基线为 `knowledge-file-2gib-title-20260929`；后端差异仅为本任务的 9 个运行源文件，迁移文件一致。Frontend Docker 内 Next.js 正式编译、TypeScript、页面生成均通过，已消除源码阶段本机构建限制；完整前端 29 文件/179 项通过，生产依赖审计 0 漏洞。相关后端 106 项与静态检查沿用本轮源码验证结果。
+- 新 OpenPGP 每日备份 `pnx-backup-20260930T093940Z-daily`：归档 7,025,168,220 字节，数据库快照 97,835,477 字节，对象 2,296 个/12,396,456,765 字节。独立空卷恢复 RPO 218 秒、RTO 299 秒，数据库引用无缺失、大小及 SHA-256 无差异；2 个未关联对象按规范告警保留，未执行生产对象清理。恢复副本模型无漂移，作业与通知的真实 PostgreSQL 入队、同 revision 去重及新 revision 再发送验证通过，测试外层事务回滚且未运行 SMTP。隔离容器、网络与恢复数据卷已精确清理。
+- 六服务 healthy、重启 0；登录与 live/ready/worker 入口 200，匿名作业 API 与两个新提醒 POST 均为 401；运行 API 和前端编译产物确认包含统一提醒。生产仍为 `20260927_0029 (head)`，未运行迁移，PostgreSQL/MinIO 容器与持久卷未重建。前后用户/作业/通知/提交/版本/Outbox 计数均为 `145/19/6/269/343/1420`，部署后应用严重错误和 Nginx 5xx 为 0。
+- 未携带真实管理员登录态、未触发业务提醒邮件或飞书同步。回滚 Worker 前需确认新类型邮件队列已处理完，或保留新 Worker 支持；不得让旧 Worker 消费未知任务。加密备份和 GPG 材料仍在同机 `/tmp`，异机分离保管的既有运维要求保持。
+
+## 2026-09-29 知识库文件 2 GiB 与源标题部署
+
+- 运行固定标签 `knowledge-file-2gib-title-20260929`：Backend/Worker `sha256:d2e89f7cbf11293c1355f7781e9c07efbaec8bb2a9466e78cfac793152479ada`，Frontend `sha256:37a1d95871238075bc19f2ad04c45c21566a40922a34b760b0cd8326b5299935`。已固定部署前镜像回滚标签 `knowledge-file-2gib-title-rollback-20260929`。Backend 隔离候选对线上镜像只有知识库配置与规范化两个源码文件变化；迁移文件未改。
+- 原备份公钥在 2026-09-28 到期，首轮加密失败未发布；同一密钥延长至 2027-09-29 后生成每日加密备份 `pnx-backup-20260929T071539Z-daily`，归档 893,669,805 字节、0600、外层 SHA-256 校验通过。独立空卷项目恢复 PostgreSQL 与 2,264 个对象，大小/哈希/引用零差异、未跟踪 0，RPO 91 秒、RTO 206 秒；恢复副本运行新 Backend 镜像检查 `20260927_0029 (head)` 与 `alembic check` 无漂移，隔离资源已精确清理。
+- Backend/Worker 与 Frontend/Nginx 分阶段切换后六服务 healthy、重启 0；PostgreSQL/MinIO 容器及数据卷未替换。运行 Worker 为文件 2 GiB、图片/白板 50 MiB；登录和四个健康入口 200，匿名知识库页面 307、普通/管理 API 401。知识库同步记录保持 `failed=4/succeeded=62`，无新同步；近期无应用错误或 Nginx 5xx。本次不涉及数据库迁移，当前仍为 `20260927_0029`。
+- 旧成功快照未自动更新，真实管理员下一次手动成功同步后才会纳入 1～2 GiB 合规文件与刷新源标题。加密备份和密钥材料仍位于同机 `/tmp`，须异机转移并分离保存。
+
+## 2026-09-28 已关闭作业重新打开部署
+
+- 固定标签 `assignment-reopen-20260928`，Backend/Worker 镜像 `sha256:f194491c9dc9b73c174ee894f78cb5ff6c72389218d383fdca6f5f9a38700415`、Frontend `sha256:a32a20365bc74cfb45f52ea445409dd6323f7c5179ad67d97fbe0f663105b7b4`。当前生产源码已重建独立回滚镜像，Backend `sha256:95961881ef1d8e815b6a69fffec7ee115cb6768c79c5fea59d5c06235fc9f150`、Frontend `sha256:85100bf3f6da5da512ecd53dc12c3d32c4c603c5123707109589d75f7cd76ca3`；关键 Backend 文件哈希与旧运行容器一致。
+- 新每日 OpenPGP 加密备份 `pnx-backup-20260928T090729Z-daily`：归档 879,298,587 字节，数据库 86,337,047 字节，对象 2,237 个。独立 `pnx-restore-assignment-reopen-20260928` 从空 PostgreSQL/MinIO 卷链式恢复，RPO 84 秒、RTO 213 秒、未追踪对象 0；隔离项目和卷已清理。备份与密钥材料仍位于同机 `/tmp`，须按既有要求转移至受控异机并分离保存。
+- 本次无迁移；生产数据库保持 `20260927_0029 (head)`，`alembic check` 无漂移。先替换 Backend/Worker，健康后刷新 Nginx，再替换 Frontend 并刷新 Nginx；PostgreSQL/MinIO 未重建。六服务 healthy、重启 0，登录及三个健康端点 200、匿名作业页 307、重新打开 API 匿名 401；运行 OpenAPI 包含新接口，近期应用严重错误及 Nginx 5xx 为 0。未持真实管理员 Session 调用生产作业状态写接口。
+- 相关后端定向测试、Ruff、格式、严格 Mypy，前端完整 29 文件/176 项、ESLint、TypeScript 与镜像内生产构建通过。完整后端套件沿用既有 ASGI 等待点记录，未宣称全量通过。
+
+## 2026-09-27 作业截止时间移除部署
+
+- 用户授权取消作业全部截止设置及限制，并重新开放历史自动关闭作业。生产切换前数据库为 `20260927_0028`；候选 Backend/Worker `sha256:d3bb2a90e77004d41f899fab04dfc4423eede1538d8cf2799061d5cc47200e34`、Frontend `sha256:2ddfdfee7f664ec7f34ac4c59bf0c33779adbcf0ccc7ff0ee860912e7ba4c75b`，固定标签 `assignment-no-deadline-20260927`，原镜像固定为 `assignment-no-deadline-rollback-20260927`。
+- 新 OpenPGP 每日备份 `pnx-backup-20260927T122300Z-daily` 为 871,639,594 字节，数据库 dump 86,310,521 字节、对象 2,215 个；独立项目 `pnx-restore-assignment-deadline-20260927` 从空 PostgreSQL/MinIO 卷恢复，对象缺失、大小/哈希差异和未跟踪对象均为 0。在生产副本上完成 `0028→0029→0028→0029`，降级后 5 份迁移开放的作业恢复关闭且两列非空，重新升级恢复开放；`alembic check` 无模型漂移。隔离项目和卷已清理。
+- 生产迁移前停止旧 Worker，应用 `0029` 后分阶段替换 Backend/Worker、Frontend/Nginx。5 份自动关闭作业重新开放；作业合计 11 份已发布、2 份归档，旧任务为 6 dead/7 sent，没有待处理旧任务。生产 `alembic current` 为 `20260927_0029 (head)` 且 `alembic check` 无漂移。六服务 healthy、登录和健康端点 200、匿名作业页面 307/API 401。PostgreSQL/MinIO 容器及卷未重建。Frontend 启动窗口出现一次 `destination stream closed early`，随后重复冒烟成功且未再出现；其他服务近期严重错误行 0。
+- 后端相关 112 项、独立 PostgreSQL 迁移测试和前端完整 175 项通过，镜像内生产构建与静态检查通过。完整后端测试在既有 ASGI 等待点中断，未计为全量通过。备份及 GPG 密钥仍在同机 `/tmp`，须按既有运维要求异机分离保管；旧应用回滚必须先降级至 `0028`。
+
+## 2026-09-27 学生作业截止时间字体热更新
+
+- 列表卡片的公共截止、个人延期和修正截止字体统一为正文同系 14px 中等字重。固定 Frontend/Compose 标签 `assignment-deadline-font-20260927`，Backend 镜像仅增加同名别名；只替换 Frontend/Nginx，Backend/Worker、PostgreSQL/MinIO 运行容器和数据卷保持。
+- 前端定向 5 项、ESLint、严格 TypeScript 和镜像内生产构建通过；六服务 healthy、登录 200、匿名作业页 307，近期前端/Nginx 严重错误为 0。无迁移或业务数据写入，沿用当天已恢复验证的加密备份。
+
+## 2026-09-27 学生作业状态标签字体热更新
+
+- Frontend 固定镜像 `assignment-status-font-20260927` 已替换并刷新 Nginx；Backend/Worker 保持 `review-deadline-completion-20260927` 原镜像，PostgreSQL/MinIO 容器和数据卷保持。为统一 Compose 标签，现有 Backend 镜像仅增加同名别名；`.env` 已固定新标签。
+- 学生列表和详情状态标签改用正文同系 14px 中等字重，原有提交资格和完成确认语义不变。Frontend/Nginx healthy、六服务健康，`/login` 200、匿名 `/assignments` 307，近期严重日志为空。无迁移、业务数据写入或新备份；沿用当天已恢复验证的加密备份。
+
+## 2026-09-27 作业修正截止与学生完成状态部署
+
+- 运行基线为 `knowledge-references-20260922`、数据库 `20260921_0027`；实际生产使用 `infra/compose/compose.yml`，固定标签写入 `.env`。候选 Backend/Worker 和 Frontend 均构建为 `review-deadline-completion-20260927`，旧镜像保留 `review-deadline-rollback-20260927` 标签。
+- 新 OpenPGP 每日备份 `pnx-backup-20260927T102541Z-daily` 为 853,656,725 字节，含数据库 86,295,346 字节和 2,202 个对象。独立 `pnx-restore-review-20260927` 从空 PostgreSQL/MinIO 卷恢复、对象引用对账完成，未跟踪对象为 0；候选在恢复副本完成 `0027→0028→0027→0028`，`alembic check` 无漂移，测试项目和卷已清理。
+- 生产只前滚一次 `0027→0028`，先替换 Backend/Worker，健康后替换 Frontend/Nginx。六服务 healthy，`/login` 和 `/api/v1/health/ready` 为 200，匿名 `/api/v1/assignments` 为 401、`/assignments` 为 307；运行库为 `20260927_0028 (head)` 且无模型漂移，部署后近期服务严重错误日志为空。PostgreSQL/MinIO 容器和数据卷未重建，未调用带登录态的业务写接口。
+- 加密备份和 GPG 密钥位于同机 `/tmp`，仍须由部署方迁至受控异机介质并分离保存。完整后端测试在新增完成状态后重跑时停留于既有等待点；相关 84 项通过，新增展示前的完整 571 项通过，前端完整 178 项和候选镜像内生产构建通过。
+
 ## 2026-09-22 站内知识库文档引用部署
 
 - 发布范围仅包含已提交的站内知识库引用功能：公告正文、作业说明、作业私密评语选择器，`source` 参数解析和公告邮件绝对链接。固定标签为 `knowledge-references-20260922`；Backend/Worker 镜像 `sha256:021445cc5c7325fbe0b809662d979f6d97d473d7be1e5de8951fcc4e69e930c9`，Frontend 镜像 `sha256:aa343aac5818205d1f8be7b593fe8fc7b5d60d2c65c6b17bad2a67d1066951fd`。

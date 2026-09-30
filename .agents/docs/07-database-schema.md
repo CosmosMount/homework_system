@@ -1,5 +1,7 @@
 # 数据库结构
 
+2026-09-29 知识库文件上限调整为 2 GiB，内嵌文件优先展示同步时规范化的飞书源标题；沿用现有 `knowledge_assets.size_bytes` 的 `BIGINT`、`file_name` 和文档块 JSONB，无数据库字段或迁移变更。
+
 ## 十五天自动清理兼容说明（2026-09-10）
 
 无新增迁移或字段。复用 `users.last_active_at/email_verified_at/created_at`、既有擦除外键和 `pnx.account_erasure` 事务标记；候选按 `COALESCE(last_active_at,email_verified_at,created_at) < 当前时间 - 15 天` 选择，用户 UUID 游标分批，锁后重新校验。自动审计 `actor_user_id=NULL`、`action=user.auto_delete`、`mode=automatic`，不伪造管理员；文件仍进入 `delete_account_object` Outbox。不可逆数据清理需删除前数据库/MinIO 同点备份才能恢复。
@@ -178,12 +180,12 @@ erDiagram
 
 ### `assignments`
 
-`id`, `title`, `description_markdown`, `description_html`, `training_url`, `submission_instructions`, `status`, `all_students`, `audience_match`, `allowed_extensions`, `max_total_bytes`, `publish_at`, `published_at`, `deadline`, `created_by`, `updated_by`, `closed_at`, `archived_at`, `deleted_at`, `created_at`, `updated_at`, `revision`。
+`id`, `title`, `description_markdown`, `description_html`, `training_url`, `submission_instructions`, `status`, `all_students`, `audience_match`, `allowed_extensions`, `max_total_bytes`, `publish_at`, `published_at`, `deadline`, `review_deadline`, `created_by`, `updated_by`, `closed_at`, `archived_at`, `deleted_at`, `created_at`, `updated_at`, `revision`。
 
 - `allowed_extensions` 存规范化小写数组，并由服务层保证是全局白名单子集。
 - `max_total_bytes` 满足 `1 <= value <= 2147483648`。
-- `deadline > publish_at`。
-- `published/closed` 更新在 Service 的作业行锁内允许替换受众配置，继续冻结 `publish_at`、`allowed_extensions` 和 `max_total_bytes`；公共截止前移时聚合读取本作业 `submission_versions.submitted_at` 最大值，禁止早于已有正式提交，并与 `close_assignment` Outbox 及自动/提前关闭语义协调。该规则复用现有字段和索引，不新增迁移。
+- `deadline`、`review_deadline` 在 `20260927_0029` 后可空，仅保留历史值用于审计与降级；新作业写入 NULL，不参与任何提交规则或响应。原时间检查约束和状态/截止索引已移除。
+- `published/closed` 更新在 Service 作业行锁内允许替换受众配置，继续冻结 `publish_at`、`allowed_extensions` 和 `max_total_bytes`；不再创建自动关闭 Outbox。
 - 管理员删除 `draft` 时可物理删除本行；`published/closed` 删除转为 `archived` 并写 `deleted_at`，手工归档保持空值直至再次删除。约束保证 `deleted_at IS NULL OR status='archived'`；普通详情与管理列表只读取空值行，关联提交与版本继续受 `RESTRICT` 和不可变规则保护。
 
 ### `assignment_cohorts`、`assignment_directions`
@@ -194,7 +196,7 @@ erDiagram
 
 `assignment_id`, `user_id`, `cohort_id_at_publish`, `direction_id_at_publish`, `created_at`，复合主键 `(assignment_id, user_id)`。
 
-- 发布事务生成初始受众；后续账号首次激活为普通学生时，同一激活事务为仍处于 `published`、未过公共截止且匹配的作业追加该学生。
+- 发布事务生成初始受众；后续账号首次激活为普通学生时，同一激活事务为仍处于 `published` 且匹配的作业追加该学生。
 - 激活学生技术方向实际变化为非空值时，同一用户更新或问卷批量配置事务按当前分类追加 `published/closed`、未归档且未删除的匹配作业；只插入缺失复合主键，不移除旧快照，`created_at` 与方向快照记录本次补录事实。迁移 `20260908_0024` 用固定时间标记为现有 active student 执行同一幂等补录，downgrade 只删除该标记行。
 - 管理员修改 `published/closed` 作业受众时，在同一作业事务删除旧快照并按当前 `active student` 重建；`cohort_id_at_publish` 和 `direction_id_at_publish` 记录本次快照生成时分类。用户方向变化只追加新分类匹配的缺失历史作业，不移除旧分类已存在的行。
 - 快照移除不级联删除 `submissions`、版本、评语、优秀标记、附件、延期、提醒或审计；管理名单以当前快照与历史提交者并集查询。
@@ -204,7 +206,7 @@ erDiagram
 `assignment_id`, `user_id`, `extended_deadline`, `reason`, `granted_by`, `created_at`, `updated_at`, `revision`。
 
 - 复合唯一 `(assignment_id, user_id)`。
-- `extended_deadline` 必须晚于作业公共截止时间。
+- 本表仅保存历史延期事实供审计与回滚；新版本不读写，延期不影响提交资格。
 
 ## 独立队伍与 legacy 赛事数据
 
@@ -531,3 +533,11 @@ CHECK (
 # 2026-09-10 自助方向权限迁移增补
 
 `20260910_0025`（前序 `20260908_0024`）为单行 `team_settings` 添加非空布尔 `is_direction_change_open`，默认 false，保留既有组队状态和 revision。降级仅删除此列，保留方向、队伍及作业受众。人数由当前 `users.direction_id → directions.name` 派生，不另存岗位或人数；规则写入先锁设置行，再锁业务行。
+
+### 作业修正截止迁移 `20260927_0028`
+
+本节为历史迁移记录；现行规则由后续 `20260927_0029` 覆盖。
+
+`20260927_0029` 将两列改为可空、删除两项时间约束及状态/截止索引；仅依据最近一次关闭审计为 `assignment.close_automatic` 的未归档、未删除作业重新开放，并写迁移审计。待执行的自动关闭与延期邮件任务标记为取消。降级回填新作业的兼容截止值、恢复约束，并把迁移开放且尚为 `published` 的作业恢复为 `closed`；已取消任务不重新投递。
+
+从 `20260921_0027` 升级：先添加可空列，按 `GREATEST(deadline, MAX(assignment_extensions.extended_deadline))` 回填，再设非空和检查约束。无延期时等于正常截止。downgrade 仅移除新约束与列；提交、版本、评语、延期与对象均保留。应用回退恢复旧截止逻辑；部署时须协调 Backend/Worker 切换，不能让旧 Backend 在非空列迁移后继续创建作业。
