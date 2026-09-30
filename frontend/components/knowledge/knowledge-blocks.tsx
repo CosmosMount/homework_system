@@ -47,7 +47,7 @@ function InlineFile({ allowFeishuSourceLinks, segment }: Readonly<{
   allowFeishuSourceLinks: boolean;
   segment: KnowledgeRichSegment;
 }>) {
-  const name = segment.file_name || segment.text || "附件";
+  const name = segment.text || segment.file_name || "附件";
   const href = segment.asset_id
     ? assetUrl(segment.asset_id)
     : allowFeishuSourceLinks
@@ -61,7 +61,7 @@ function InlineFile({ allowFeishuSourceLinks, segment }: Readonly<{
     <span className="min-w-0 break-all font-medium text-slate-900">{name}</span>
     {metadata ? <span className="hidden shrink-0 text-xs text-slate-500 sm:inline">{metadata}</span> : null}
     {href
-      ? <a aria-label={(segment.asset_id ? "下载 " : "在飞书查看 ") + name} className="shrink-0 font-semibold text-[#1687c9] underline decoration-[#1687c9]/45 underline-offset-2 transition hover:text-slate-950" download={segment.asset_id ? name : undefined} href={href} rel={segment.asset_id ? undefined : "noreferrer"} target={segment.asset_id ? undefined : "_blank"}>{segment.asset_id ? "下载" : "在飞书查看"}</a>
+      ? <a aria-label={(segment.asset_id ? "下载 " : "在飞书查看 ") + name} className="shrink-0 font-semibold text-[#1687c9] underline decoration-[#1687c9]/45 underline-offset-2 transition hover:text-slate-950" download={segment.asset_id ? segment.file_name || name : undefined} href={href} rel={segment.asset_id ? undefined : "noreferrer"} target={segment.asset_id ? undefined : "_blank"}>{segment.asset_id ? "下载" : "在飞书查看"}</a>
       : <span className="shrink-0 text-xs font-medium text-slate-500">{unavailableReasonLabel(segment.unavailable_reason)}</span>}
   </span>;
 }
@@ -282,11 +282,11 @@ function VideoAttachment({ block }: Readonly<{ block: KnowledgeBlock }>) {
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const href = assetUrl(block.asset_id!);
-  const name = block.file_name || "知识库视频";
+  const name = block.display_title || block.file_name || "知识库视频";
   return <figure className="my-5 min-w-0 overflow-hidden rounded border border-slate-200 bg-slate-50">
     <figcaption className="flex items-center justify-between gap-3 p-3 sm:p-4">
       <span className="min-w-0 break-words text-sm font-semibold text-slate-900">{name}</span>
-      <a aria-label={"下载 " + name} className="shrink-0 text-sm font-semibold text-[#1687c9] underline" download={name} href={href}>下载</a>
+      <a aria-label={"下载 " + name} className="shrink-0 text-sm font-semibold text-[#1687c9] underline" download={block.file_name || name} href={href}>下载</a>
     </figcaption>
     <video
       aria-label={name}
@@ -316,7 +316,7 @@ function AttachmentBlock({ allowFeishuSourceLinks, block }: Readonly<{ allowFeis
       ? block.fallback_url
       : undefined;
   const metadata = [formatFileSize(block.file_size), block.mime_type].filter(Boolean).join(" · ");
-  return <div className="my-5 flex min-w-0 items-center gap-3 border border-slate-200 bg-slate-50 p-3 sm:p-4" style={{ borderRadius: 4 }}><span className="grid size-10 shrink-0 place-items-center rounded bg-[#1687c9]/10 text-[#1687c9]"><Icon name="file" size={20} /></span><div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold text-slate-900">{block.file_name || "附件"}</p>{metadata ? <p className="mt-1 break-words text-xs text-slate-500">{metadata}</p> : null}</div>{href ? <a className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded border border-[#1687c9]/45 px-3 py-2 text-sm font-semibold text-[#1687c9] transition hover:border-[#1687c9] hover:bg-[#1687c9]/10 hover:text-slate-950" download={block.asset_id ? block.file_name : undefined} href={href} rel={block.asset_id ? undefined : "noreferrer"} target={block.asset_id ? undefined : "_blank"}>{block.asset_id ? <><Icon name="download" size={16} /><span className="hidden sm:inline">下载</span></> : "在飞书查看"}</a> : <span className="shrink-0 text-xs font-medium text-slate-500">{unavailableReasonLabel(block.unavailable_reason)}</span>}</div>;
+  return <div className="my-5 flex min-w-0 items-center gap-3 border border-slate-200 bg-slate-50 p-3 sm:p-4" style={{ borderRadius: 4 }}><span className="grid size-10 shrink-0 place-items-center rounded bg-[#1687c9]/10 text-[#1687c9]"><Icon name="file" size={20} /></span><div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold text-slate-900">{block.display_title || block.file_name || "附件"}</p>{metadata ? <p className="mt-1 break-words text-xs text-slate-500">{metadata}</p> : null}</div>{href ? <a className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded border border-[#1687c9]/45 px-3 py-2 text-sm font-semibold text-[#1687c9] transition hover:border-[#1687c9] hover:bg-[#1687c9]/10 hover:text-slate-950" download={block.asset_id ? block.file_name : undefined} href={href} rel={block.asset_id ? undefined : "noreferrer"} target={block.asset_id ? undefined : "_blank"}>{block.asset_id ? <><Icon name="download" size={16} /><span className="hidden sm:inline">下载</span></> : "在飞书查看"}</a> : <span className="shrink-0 text-xs font-medium text-slate-500">{unavailableReasonLabel(block.unavailable_reason)}</span>}</div>;
 }
 
 function tableCellData(cell: KnowledgeBlock[] | KnowledgeTableCell) {

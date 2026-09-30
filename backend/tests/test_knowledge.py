@@ -131,6 +131,12 @@ def configured_settings() -> Settings:
     )
 
 
+def test_knowledge_default_file_limit_is_separate_from_visual_limit() -> None:
+    settings = configured_settings()
+    assert settings.feishu_knowledge_max_file_bytes == 2_147_483_648
+    assert settings.feishu_knowledge_max_asset_bytes == 52_428_800
+
+
 @pytest.mark.asyncio
 async def test_feishu_client_uses_fixed_host_bearer_auth_and_recursive_nodes() -> None:
     transport = RecordingTransport()
@@ -335,9 +341,9 @@ async def test_feishu_client_requests_whiteboard_as_png_only() -> None:
     assert limits[next(url for url in limits if "/whiteboards/" in url)] == 52_428_800
     assert limits[next(url for url in limits if "/medias/image-token/" in url)] == 52_428_800
     assert (
-        limits[next(url for url in limits if "/medias/attachment-token/" in url)] == 1_073_741_824
+        limits[next(url for url in limits if "/medias/attachment-token/" in url)] == 2_147_483_648
     )
-    assert limits[next(url for url in limits if "/files/" in url)] == 1_073_741_824
+    assert limits[next(url for url in limits if "/files/" in url)] == 2_147_483_648
 
 
 class TrackingStreamBody:
@@ -505,7 +511,7 @@ def test_normalizer_rejects_unsafe_links_and_localizes_known_assets() -> None:
         {
             "block_id": "inline-file-source",
             "block_type": 23,
-            "file": {"token": "inline-file-token", "name": "说明.pdf"},
+            "file": {"token": "inline-file-token", "name": "encoded-17.pdf", "title": "说明文档"},
         },
     ]
 
@@ -519,7 +525,7 @@ def test_normalizer_rejects_unsafe_links_and_localizes_known_assets() -> None:
         },
         asset_names={
             ("image-token", "image"): "知识库图片.png",
-            ("inline-file-token", "attachment"): "说明.pdf",
+            ("inline-file-token", "attachment"): "encoded-17.pdf",
             ("board-token", "whiteboard"): "白板.png",
         },
         fallback_url="https://pnx.feishu.cn/wiki/source",
@@ -530,13 +536,17 @@ def test_normalizer_rejects_unsafe_links_and_localizes_known_assets() -> None:
         ("inline-file-token", "attachment"),
         ("board-token", "whiteboard"),
     }
+    inline_reference = next(reference for reference in references if reference.kind == "attachment")
+    assert inline_reference.file_name == "encoded-17.pdf"
+    assert inline_reference.display_title == "说明文档"
     assert normalized[0]["type"] == "heading"
     segments = normalized[1]["segments"]
     assert isinstance(segments, list)
     assert segments[0]["href"] == "https://example.edu/guide"
     assert "href" not in segments[1]
     assert segments[2]["document_token"] == "next-doc"
-    assert segments[3]["text"] == "说明.pdf"
+    assert segments[3]["text"] == "说明文档"
+    assert segments[3]["file_name"] == "encoded-17.pdf"
     assert segments[3]["href"] == (f"/api/v1/knowledge/assets/{attachment_id}/content")
     assert normalized[2]["asset_id"] == str(image_id)
     assert normalized[3]["asset_id"] == str(board_id)
@@ -767,8 +777,8 @@ def test_normalizer_discovers_and_localizes_trusted_drive_file_links() -> None:
         blocks,
         assets={("drive-mention-token", "attachment"): mention_asset_id},
         asset_names={
-            ("drive-mention-token", "attachment"): "训练说明.pdf",
-            ("drive-link-token", "attachment"): "数据集.zip",
+            ("drive-mention-token", "attachment"): "encoded-42.pdf",
+            ("drive-link-token", "attachment"): "encoded-43.zip",
         },
         fallback_url="https://pnx.feishu.cn/wiki/source",
         asset_sizes={("drive-mention-token", "attachment"): 2048},
@@ -789,17 +799,43 @@ def test_normalizer_discovers_and_localizes_trusted_drive_file_links() -> None:
     assert segments[0]["file"] is True
     assert segments[0]["asset_id"] == str(mention_asset_id)
     assert segments[0]["href"] == (f"/api/v1/knowledge/assets/{mention_asset_id}/content")
-    assert segments[0]["file_name"] == "训练说明.pdf"
+    assert segments[0]["file_name"] == "encoded-42.pdf"
+    assert segments[0]["text"] == "训练说明.pdf"
     assert segments[0]["file_size"] == 2048
     assert segments[0]["mime_type"] == "application/pdf"
     assert "document_token" not in segments[0]
     assert segments[1]["file"] is True
+    assert segments[1]["file_name"] == "encoded-43.zip"
     assert segments[1]["asset_id"] is None
     assert segments[1]["unavailable_reason"] == "too_large"
     assert segments[1]["href"] == "https://pnx.larksuite.com/file/drive-link-token"
     assert "file" not in segments[2]
     assert segments[2]["href"] == ("https://feishu.cn.example.edu/file/untrusted-token")
     assert segments[3]["document_token"] == "next-document-token"
+
+
+def test_inline_file_without_source_title_falls_back_to_safe_asset_name() -> None:
+    asset_id = uuid4()
+    blocks = [
+        {"block_id": "page", "block_type": 1, "children": ["text"]},
+        {
+            "block_id": "text",
+            "block_type": 2,
+            "text": {"elements": [{"file": {"file_token": "inline-token", "name": "  "}}]},
+        },
+    ]
+
+    normalized = normalize_document(
+        blocks,
+        assets={("inline-token", "attachment"): asset_id},
+        asset_names={("inline-token", "attachment"): "安全文件名.pdf"},
+        fallback_url="https://pnx.feishu.cn/wiki/source",
+    )
+
+    segment = normalized[0]["segments"][0]
+    assert segment["text"] == "安全文件名.pdf"
+    assert segment["file_name"] == "安全文件名.pdf"
+    assert segment["href"] == f"/api/v1/knowledge/assets/{asset_id}/content"
 
 
 def test_normalizer_preserves_inline_and_display_equations() -> None:
@@ -932,7 +968,7 @@ def test_normalizer_preserves_reference_metadata_and_merged_tables() -> None:
         {
             "block_id": "file",
             "block_type": 23,
-            "file": {"token": "file-token", "name": "资料.pdf"},
+            "file": {"token": "file-token", "name": "encoded-18.pdf", "title": "资料标题"},
         },
         {
             "block_id": "table",
@@ -981,7 +1017,7 @@ def test_normalizer_preserves_reference_metadata_and_merged_tables() -> None:
     normalized = normalize_document(
         blocks,
         assets={("file-token", "attachment"): attachment_id},
-        asset_names={("file-token", "attachment"): "资料.pdf"},
+        asset_names={("file-token", "attachment"): "encoded-18.pdf"},
         fallback_url="https://pnx.feishu.cn/wiki/source",
         asset_sizes={("file-token", "attachment"): 4096},
         asset_media_types={("file-token", "attachment"): "application/pdf"},
@@ -997,6 +1033,8 @@ def test_normalizer_preserves_reference_metadata_and_merged_tables() -> None:
     assert normalized[2]["text_color"] == 6
     assert normalized[2]["emoji_id"] == "bulb"
     assert normalized[3]["file_size"] == 4096
+    assert normalized[3]["file_name"] == "encoded-18.pdf"
+    assert normalized[3]["display_title"] == "资料标题"
     assert normalized[3]["mime_type"] == "application/pdf"
     rows = normalized[4]["rows"]
     assert isinstance(rows, list)

@@ -913,6 +913,7 @@ export type KnowledgeBlock = {
   text_color?: number | string;
   asset_id?: string | null;
   file_name?: string;
+  display_title?: string;
   caption?: string;
   fallback_url?: string;
   file_size?: number;

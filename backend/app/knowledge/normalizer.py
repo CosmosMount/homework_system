@@ -109,6 +109,7 @@ class AssetReference:
     width: int | None = None
     height: int | None = None
     download_endpoint: AssetDownloadEndpoint = "media"
+    display_title: str | None = None
 
 
 def safe_href(value: object) -> str | None:
@@ -198,6 +199,7 @@ def _rich_text(
     *,
     assets: dict[tuple[str, str], UUID],
     asset_names: dict[tuple[str, str], str],
+    asset_titles: dict[tuple[str, str], str],
     fallback_url: str,
     asset_sizes: dict[tuple[str, str], int],
     asset_media_types: dict[tuple[str, str], str],
@@ -257,7 +259,10 @@ def _rich_text(
             token = inline_file.get("file_token")
             if isinstance(token, str) and token:
                 file_key = (token, "attachment")
-                text = asset_names.get(file_key, "附件")
+                text = _clean_text(
+                    inline_file.get("title") or inline_file.get("name"), limit=255
+                ).strip()
+                text = text or asset_titles.get(file_key) or asset_names.get(file_key, "附件")
                 asset_id = assets.get(file_key)
                 href = (
                     f"/api/v1/knowledge/assets/{asset_id}/content"
@@ -266,7 +271,11 @@ def _rich_text(
                 )
         if file_key is not None:
             asset_id = assets.get(file_key)
-            text = asset_names.get(file_key, text or "附件")
+            text = (
+                _clean_text(text.strip(), limit=255)
+                or asset_titles.get(file_key)
+                or asset_names.get(file_key, "附件")
+            )
             if asset_id is not None:
                 href = f"/api/v1/knowledge/assets/{asset_id}/content"
         if not text:
@@ -288,7 +297,7 @@ def _rich_text(
             asset_id = assets.get(file_key)
             segment["file"] = True
             segment["asset_id"] = str(asset_id) if asset_id is not None else None
-            segment["file_name"] = asset_names.get(file_key, text)
+            segment["file_name"] = asset_names.get(file_key, _clean_text(text, limit=255))
             if asset_id is not None:
                 file_size = asset_sizes.get(file_key)
                 media_type = asset_media_types.get(file_key)
@@ -333,6 +342,7 @@ def discover_asset_references(blocks: list[dict[str, Any]]) -> list[AssetReferen
         width: object = None,
         height: object = None,
         download_endpoint: AssetDownloadEndpoint = "media",
+        display_title: str | None = None,
     ) -> None:
         if not isinstance(token, str) or not token or (token, kind) in seen:
             return
@@ -345,6 +355,7 @@ def discover_asset_references(blocks: list[dict[str, Any]]) -> list[AssetReferen
                 width=width if isinstance(width, int) and width > 0 else None,
                 height=height if isinstance(height, int) and height > 0 else None,
                 download_endpoint=download_endpoint,
+                display_title=display_title,
             )
         )
 
@@ -360,13 +371,16 @@ def discover_asset_references(blocks: list[dict[str, Any]]) -> list[AssetReferen
             )
         attachment = block.get("file")
         if isinstance(attachment, dict):
-            raw_name = attachment.get("name")
+            raw_name = attachment.get("name") or attachment.get("title")
             add_reference(
                 attachment.get("token"),
                 "attachment",
                 file_name=(
-                    _clean_text(raw_name, limit=255) if isinstance(raw_name, str) else "附件"
+                    _clean_text(raw_name, limit=255).strip()
+                    if isinstance(raw_name, str) and raw_name.strip()
+                    else "附件"
                 ),
+                display_title=_clean_text(attachment.get("title"), limit=255).strip() or None,
             )
         board = block.get("board")
         if not isinstance(board, dict):
@@ -398,7 +412,7 @@ def discover_asset_references(blocks: list[dict[str, Any]]) -> list[AssetReferen
                 add_reference(
                     drive_file_token,
                     "attachment",
-                    file_name=file_name or "附件",
+                    file_name=file_name.strip() or "附件",
                     download_endpoint="file",
                 )
                 continue
@@ -408,13 +422,28 @@ def discover_asset_references(blocks: list[dict[str, Any]]) -> list[AssetReferen
             source_id = inline_file.get("source_block_id")
             source = by_id.get(source_id) if isinstance(source_id, str) else None
             source_file = source.get("file") if isinstance(source, dict) else None
-            raw_name = source_file.get("name") if isinstance(source_file, dict) else None
+            raw_name = (
+                source_file.get("name") or source_file.get("title")
+                if isinstance(source_file, dict)
+                else None
+            )
+            raw_name = raw_name or inline_file.get("name") or inline_file.get("title")
             add_reference(
                 inline_file.get("file_token"),
                 "attachment",
                 file_name=(
-                    _clean_text(raw_name, limit=255) if isinstance(raw_name, str) else "附件"
+                    _clean_text(raw_name, limit=255).strip()
+                    if isinstance(raw_name, str) and raw_name.strip()
+                    else "附件"
                 ),
+                display_title=(
+                    _clean_text(
+                        (source_file.get("title") if isinstance(source_file, dict) else None)
+                        or inline_file.get("title"),
+                        limit=255,
+                    ).strip()
+                )
+                or None,
             )
     return references
 
@@ -429,6 +458,11 @@ def normalize_document(
     asset_media_types: dict[tuple[str, str], str] | None = None,
     asset_failures: dict[tuple[str, str], AssetUnavailableReason] | None = None,
 ) -> list[dict[str, Any]]:
+    asset_titles = {
+        (reference.token, reference.kind): reference.display_title or reference.file_name
+        for reference in discover_asset_references(raw_blocks)
+        if reference.kind == "attachment" and reference.file_name != "附件"
+    }
     resolved_asset_sizes = asset_sizes or {}
     resolved_asset_media_types = asset_media_types or {}
     resolved_asset_failures = asset_failures or {}
@@ -497,6 +531,7 @@ def normalize_document(
                 detail,
                 assets=assets,
                 asset_names=asset_names,
+                asset_titles=asset_titles,
                 fallback_url=fallback_url,
                 asset_sizes=resolved_asset_sizes,
                 asset_media_types=resolved_asset_media_types,
@@ -543,6 +578,8 @@ def normalize_document(
                 return None
             result["asset_id"] = str(asset_id) if asset_id is not None else None
             result["file_name"] = asset_names.get(key, "知识库附件")
+            if normalized_type == "attachment" and key in asset_titles:
+                result["display_title"] = asset_titles[key]
             result["fallback_url"] = fallback_url
             if normalized_type == "attachment" and asset_id is not None:
                 file_size = resolved_asset_sizes.get(key)

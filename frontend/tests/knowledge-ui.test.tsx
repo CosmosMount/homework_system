@@ -623,6 +623,20 @@ describe("knowledge document renderer", () => {
     expect(openDocument).toHaveBeenCalledWith("next-document");
   });
 
+  it("shows source titles while preserving safe download filenames", () => {
+    render(<KnowledgeBlocks blocks={[
+      { id: "file", type: "attachment", asset_id: "file-id", file_name: "encoded-18.pdf", display_title: "资料标题", mime_type: "application/pdf" },
+      { id: "inline", type: "paragraph", segments: [{ text: "说明文档", file: true, asset_id: "inline-id", file_name: "encoded-17.pdf" }] },
+      { id: "video", type: "attachment", asset_id: "video-id", file_name: "encoded-19.mp4", display_title: "演示视频", mime_type: "video/mp4" },
+    ]} onOpenDocument={vi.fn()} tokenToDocument={new Map()} />);
+
+    expect(screen.getByText("资料标题")).toBeInTheDocument();
+    expect(screen.getByText("说明文档")).toBeInTheDocument();
+    expect(screen.getByLabelText("演示视频").tagName).toBe("VIDEO");
+    expect(screen.getByRole("link", { name: "下载 说明文档" })).toHaveAttribute("download", "encoded-17.pdf");
+    expect(screen.getByRole("link", { name: "下载 演示视频" })).toHaveAttribute("download", "encoded-19.mp4");
+  });
+
   it("keeps visible content as a boundary between image galleries", () => {
     render(
       <KnowledgeBlocks
