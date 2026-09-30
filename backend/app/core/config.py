@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     app_base_url: AnyHttpUrl = AnyHttpUrl("http://localhost:8080")
     app_timezone: str = "Asia/Shanghai"
     trusted_hosts: str = "localhost,127.0.0.1,backend"
+    csrf_trusted_origins: str = ""
     campus_email_domain: str = "connect.hkust-gz.edu.cn"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
@@ -96,6 +97,30 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_optional_secret(cls, value: object) -> object:
         return None if value == "" else value
+
+    @field_validator("csrf_trusted_origins")
+    @classmethod
+    def validate_csrf_trusted_origins(cls, value: str) -> str:
+        normalized: list[str] = []
+        for raw_origin in value.split(","):
+            origin = raw_origin.strip().rstrip("/")
+            if not origin:
+                continue
+            parts = urlsplit(origin)
+            if (
+                parts.scheme not in {"http", "https"}
+                or not parts.netloc
+                or parts.path not in {"", "/"}
+                or parts.query
+                or parts.fragment
+                or parts.username
+                or parts.password
+            ):
+                raise ValueError("CSRF_TRUSTED_ORIGINS must contain origins only")
+            canonical = f"{parts.scheme}://{parts.netloc}"
+            if canonical not in normalized:
+                normalized.append(canonical)
+        return ",".join(normalized)
 
     @model_validator(mode="before")
     @classmethod
@@ -266,6 +291,22 @@ class Settings(BaseSettings):
     def app_origin(self) -> str:
         parts = urlsplit(str(self.app_base_url))
         return f"{parts.scheme}://{parts.netloc}"
+
+    @property
+    def trusted_origin_list(self) -> list[str]:
+        origins = [self.app_origin]
+        for origin in self.csrf_trusted_origins_list:
+            if origin not in origins:
+                origins.append(origin)
+        return origins
+
+    @property
+    def csrf_trusted_origins_list(self) -> list[str]:
+        return [
+            origin
+            for origin in self.csrf_trusted_origins.split(",")
+            if origin
+        ]
 
     @property
     def session_cookie_name(self) -> str:

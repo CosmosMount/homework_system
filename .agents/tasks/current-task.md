@@ -1,5 +1,9 @@
 # 当前任务
 
+## 备用域名登录来源修复（2026-09-30）
+
+已将 `pnx-tutorial.demonmaster.cn` 加入当前 Docker Compose 的 `TRUSTED_HOSTS` 与 `CSRF_TRUSTED_ORIGINS`，保持 `APP_BASE_URL=http://10.4.150.222:5000` 主链接不变。后端新增显式备用 Origin 白名单并完成镜像重建；Backend、Worker healthy。备用域名登录携带正确 Origin 时已通过来源校验，错误账号返回正常 `INVALID_CREDENTIALS`，不再返回 `CSRF_FAILED`。正式计划为 `.agents/plans/plan_trusted_csrf_origins.md`。
+
 ## 工作区提交整理（2026-09-30）
 
 既有改动已按知识库、业务后端、业务前端和文档记录整理；详细验证及提交说明移入 `completed.md`，唯一计划为 `.agents/plans/plan_commit_cleanup_20260930.md`。本次仅本地提交，未推送或执行部署、数据迁移。

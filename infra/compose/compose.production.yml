@@ -5,6 +5,7 @@ x-app-environment: &app-environment
   APP_BASE_URL: "${APP_BASE_URL:?APP_BASE_URL is required}"
   APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Shanghai}"
   TRUSTED_HOSTS: "${TRUSTED_HOSTS:?TRUSTED_HOSTS is required}"
+  CSRF_TRUSTED_ORIGINS: "${CSRF_TRUSTED_ORIGINS:-}"
   CAMPUS_EMAIL_DOMAIN: "${CAMPUS_EMAIL_DOMAIN:-connect.hkust-gz.edu.cn}"
   LOG_LEVEL: "${LOG_LEVEL:-INFO}"
   SESSION_COOKIE_SECURE: "true"

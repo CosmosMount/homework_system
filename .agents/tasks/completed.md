@@ -267,6 +267,8 @@
 - 前端 47 项测试、ESLint、严格 TypeScript 和生产构建通过。
 - Frontend 镜像已重建并替换，Frontend/Nginx 已重启；六个 Compose 服务健康，四个健康端点和 5000 端口登录页验收通过。
 
+- 2026-09-30 备用域名登录来源修复：当前 Docker Compose 的 `.env` 保持主链接 `APP_BASE_URL=http://10.4.150.222:5000`，新增 `pnx-tutorial.demonmaster.cn` 到 `TRUSTED_HOSTS` 与 `CSRF_TRUSTED_ORIGINS`。后端新增显式 Origin 解析/校验和配置透传，Backend/Worker 重建后 healthy；备用域名健康接口 200，携带该 Origin 的登录请求通过来源校验并返回正常 `INVALID_CREDENTIALS`。无数据库迁移。
+
 # 已完成任务
 
 ## 2026-09-29 知识库文件 2 GiB 与内嵌源标题（已部署）

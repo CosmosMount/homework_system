@@ -18,7 +18,7 @@ def require_same_origin(request: Request, settings: Settings) -> None:
     if origin is None:
         referer = request.headers.get("referer")
         origin = _origin_from_referer(referer) if referer is not None else None
-    if origin != settings.app_origin:
+    if origin not in settings.trusted_origin_list:
         raise ApplicationError(
             status_code=403,
             code="CSRF_FAILED",

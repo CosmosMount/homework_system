@@ -5,6 +5,7 @@ x-app-environment: &app-environment
   APP_BASE_URL: "${APP_BASE_URL:-http://localhost:8080}"
   APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Shanghai}"
   TRUSTED_HOSTS: "${TRUSTED_HOSTS:-localhost,127.0.0.1,backend}"
+  CSRF_TRUSTED_ORIGINS: "${CSRF_TRUSTED_ORIGINS:-}"
   CAMPUS_EMAIL_DOMAIN: "${CAMPUS_EMAIL_DOMAIN:-connect.hkust-gz.edu.cn}"
   LOG_LEVEL: "${LOG_LEVEL:-INFO}"
   SESSION_CURRENT_SECRET: "${SESSION_CURRENT_SECRET:-development-only-session-secret-at-least-32-bytes}"

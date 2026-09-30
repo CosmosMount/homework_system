@@ -133,6 +133,7 @@ minio
 - `APP_BASE_URL`
 - `APP_TIMEZONE=Asia/Shanghai`
 - `TRUSTED_HOSTS`
+- `CSRF_TRUSTED_ORIGINS`：可选的备用浏览器入口 Origin，使用完整 `https://host[:port]` 并以逗号分隔；主入口 `APP_BASE_URL` 自动加入，禁止填写路径、查询参数或片段。
 - `CAMPUS_EMAIL_DOMAIN=connect.hkust-gz.edu.cn`，生产值必须与产品要求一致
 - `SESSION_CURRENT_SECRET`、`SESSION_PREVIOUS_SECRET`
 - `CSRF_SECRET`

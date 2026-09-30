@@ -59,7 +59,7 @@ AUTH-012 十五天自动清理仅由 Worker 内部调用，不冒充管理员、
 
 - 所有 `POST`、`PUT`、`PATCH`、`DELETE` 请求要求 `X-CSRF-Token`，值与 `__Host-pnx_csrf` Cookie 和 Session 内哈希匹配。
 - 生产 CSRF Cookie 名为 `__Host-pnx_csrf`，属性为 `Secure; SameSite=Lax; Path=/`，可被同源前端读取，但不能包含 Session 信息；本地 HTTP 开发使用 `pnx_csrf`。其浏览器会话/持久生命周期必须与当前 Session 类型一致，轮换 CSRF 时不得把普通 Cookie 意外升级为持久 Cookie，也不得超过 Session 绝对期限。
-- 登录、注册和密码申请没有现有 Session，仍校验 `Origin`/`Referer` 是否为配置的应用源，并接受 Nginx 的同源限制。
+- 登录、注册和密码申请没有现有 Session，仍校验 `Origin`/`Referer` 是否为 `APP_BASE_URL` 或显式配置的 `CSRF_TRUSTED_ORIGINS`，并接受 Nginx 的同源限制。
 - CORS 生产配置只允许应用自身 Origin，不允许通配源和凭证组合。
 - 状态变化不允许使用 GET；预签名 URL 只能执行指定对象、方法、分片和短期校验头。
 

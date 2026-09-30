@@ -102,6 +102,22 @@ def test_production_accepts_https_and_independent_strong_secrets() -> None:
     assert settings.app_origin == "https://training.example.edu"
 
 
+def test_csrf_trusted_origins_allow_explicit_alternate_origins() -> None:
+    settings = Settings(
+        app_env="test",
+        app_base_url="http://10.4.150.222:5000",
+        csrf_trusted_origins="https://pnx-tutorial.demonmaster.cn/",
+    )
+
+    assert settings.trusted_origin_list == [
+        "http://10.4.150.222:5000",
+        "https://pnx-tutorial.demonmaster.cn",
+    ]
+
+    with pytest.raises(ValidationError, match="CSRF_TRUSTED_ORIGINS"):
+        Settings(app_env="test", csrf_trusted_origins="https://example.edu/path")
+
+
 def test_production_rejects_non_same_origin_minio_and_duplicate_secrets() -> None:
     values = production_values()
     values["minio_public_base_url"] = "https://objects.example.edu/storage"
