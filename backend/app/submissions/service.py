@@ -8,8 +8,8 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.assignments.policy import can_submit_assignment
 from app.assignments.repository import AssignmentRepository
-from app.assignments.service import AssignmentService
 from app.audit.models import AuditLog
 from app.audit.repository import AuditRepository
 from app.auth.service import AuthenticatedContext, context_effective_role, context_is_admin
@@ -249,17 +249,18 @@ class SubmissionService:
         ):
             await self._session.rollback()
             raise self._not_found()
-        extension = await self._assignments.get_extension(
+        submission = await self._submissions.get_for_assignment_owner(
             assignment_id,
             context.user.id,
+            for_update=True,
         )
         now = self._clock()
-        if not AssignmentService._can_submit(assignment, extension, now):
+        if not can_submit_assignment(assignment):
             await self._session.rollback()
             raise ApplicationError(
                 status_code=409,
                 code="ASSIGNMENT_CLOSED",
-                message="作业已超过当前账号的有效截止时间。",
+                message="作业已关闭，不能创建新版本。",
             )
 
         _, total_bytes = await self._validate_files(
@@ -268,11 +269,6 @@ class SubmissionService:
             allowed_extensions=assignment.allowed_extensions,
             max_total_bytes=assignment.max_total_bytes,
             file_ids=payload.file_ids,
-        )
-        submission = await self._submissions.get_for_assignment_owner(
-            assignment_id,
-            context.user.id,
-            for_update=True,
         )
         if submission is None:
             submission = Submission(
@@ -756,7 +752,7 @@ class SubmissionService:
                     user_id=user_id,
                     notification_type="submission_feedback",
                     event_key=event_key,
-                    title=f"收到新的私密评语：{title}",
+                    title=f"收到新的作业评语：{title}",
                     target_type="submission",
                     target_id=submission.id,
                     target_url=target_url,

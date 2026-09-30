@@ -54,9 +54,10 @@ async def test_erasure_releases_email_and_preserves_shared_immutable_version() -
                             INSERT INTO assignments
                             (id, title, description_markdown, description_html,
                              submission_instructions, allowed_extensions, max_total_bytes,
-                             publish_at, deadline, created_at, updated_at, revision)
+                             publish_at, deadline, review_deadline,
+                             created_at, updated_at, revision)
                             VALUES (:id, 'Test', 'Test', 'Test', 'Test', ARRAY['pdf'],
-                                    100, :now, :deadline, :now, :now, 1)
+                                    100, :now, :deadline, :deadline, :now, :now, 1)
                         """),
                         {"id": assignment_id, "now": now, "deadline": now + timedelta(days=1)},
                     )

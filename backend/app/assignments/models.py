@@ -39,7 +39,6 @@ class Assignment(TimestampRevisionMixin, Base):
             "cardinality(allowed_extensions) >= 1",
             name="allowed_extensions_present",
         ),
-        CheckConstraint("deadline > publish_at", name="deadline_after_publish"),
         CheckConstraint(
             "status = 'draft' OR published_at IS NOT NULL",
             name="published_at_present",
@@ -57,7 +56,6 @@ class Assignment(TimestampRevisionMixin, Base):
             name="deleted_requires_archived",
         ),
         Index("ix_assignments_status_publish_at", "status", "publish_at"),
-        Index("ix_assignments_status_deadline", "status", "deadline"),
     )
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid7)
@@ -82,7 +80,9 @@ class Assignment(TimestampRevisionMixin, Base):
     max_total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     publish_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # 0029 保留旧记录的时间供审计和回滚，新作业不设置，也不参与运行时规则。
+    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

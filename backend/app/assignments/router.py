@@ -8,8 +8,6 @@ from app.assignments.schemas import (
     AssignmentAdminResponse,
     AssignmentCreateRequest,
     AssignmentDetailResponse,
-    AssignmentExtensionRequest,
-    AssignmentExtensionResponse,
     AssignmentPage,
     AssignmentPatchRequest,
     AssignmentSubmissionAdminPage,
@@ -242,6 +240,44 @@ async def close_assignment(
 
 
 @router.post(
+    "/admin/assignments/{assignment_id}/send-email",
+    response_model=AssignmentAdminResponse,
+)
+async def send_assignment_email_reminder(
+    assignment_id: UUID,
+    request: Request,
+    service: AssignmentServiceDependency,
+    admin: AdminContextDependency,
+    _csrf: CsrfDependency,
+    _idempotency_key: Annotated[
+        str,
+        Header(alias="Idempotency-Key", min_length=8, max_length=200),
+    ],
+) -> AssignmentAdminResponse:
+    return await service.send_email_reminder(
+        assignment_id,
+        audit=_audit_context(request, admin),
+    )
+
+
+@router.post(
+    "/admin/assignments/{assignment_id}/reopen",
+    response_model=AssignmentAdminResponse,
+)
+async def reopen_assignment(
+    assignment_id: UUID,
+    request: Request,
+    service: AssignmentServiceDependency,
+    admin: AdminContextDependency,
+    _csrf: CsrfDependency,
+) -> AssignmentAdminResponse:
+    return await service.reopen(
+        assignment_id,
+        audit=_audit_context(request, admin),
+    )
+
+
+@router.post(
     "/admin/assignments/{assignment_id}/archive",
     response_model=AssignmentAdminResponse,
 )
@@ -256,48 +292,6 @@ async def archive_assignment(
         assignment_id,
         audit=_audit_context(request, admin),
     )
-
-
-@router.put(
-    "/admin/assignments/{assignment_id}/extensions/{user_id}",
-    response_model=AssignmentExtensionResponse,
-)
-async def put_assignment_extension(
-    assignment_id: UUID,
-    user_id: UUID,
-    payload: AssignmentExtensionRequest,
-    request: Request,
-    service: AssignmentServiceDependency,
-    admin: AdminContextDependency,
-    _csrf: CsrfDependency,
-) -> AssignmentExtensionResponse:
-    return await service.put_extension(
-        assignment_id,
-        user_id,
-        payload,
-        audit=_audit_context(request, admin),
-    )
-
-
-@router.delete(
-    "/admin/assignments/{assignment_id}/extensions/{user_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_class=Response,
-)
-async def delete_assignment_extension(
-    assignment_id: UUID,
-    user_id: UUID,
-    request: Request,
-    service: AssignmentServiceDependency,
-    admin: AdminContextDependency,
-    _csrf: CsrfDependency,
-) -> Response:
-    await service.delete_extension(
-        assignment_id,
-        user_id,
-        audit=_audit_context(request, admin),
-    )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

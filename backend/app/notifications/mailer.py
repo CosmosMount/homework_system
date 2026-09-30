@@ -3,13 +3,11 @@ import re
 import smtplib
 import ssl
 from dataclasses import dataclass
-from datetime import datetime
 from email.message import EmailMessage
 from html import escape
 from typing import Protocol, cast
 from urllib.parse import quote
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
 from app.core.config import Settings
 from app.core.markdown import render_announcement_markdown
@@ -117,7 +115,11 @@ def render_mail(
         )
         return RenderedMail(recipient=recipient, subject=subject, text=text, html=html)
 
-    if job.job_type in {"announcement_email", "announcement_update_email"}:
+    if job.job_type in {
+        "announcement_email",
+        "announcement_update_email",
+        "announcement_reminder_email",
+    }:
         title = str(job.payload["title"])
         summary = str(job.payload["summary"])
         target_url = str(job.payload["target_url"])
@@ -127,7 +129,11 @@ def render_mail(
         subject_title = " ".join(title.splitlines()).strip()
         if not subject_title:
             raise PermanentMailError("MISSING_TITLE")
-        prefix = "通知更新" if job.job_type == "announcement_update_email" else "新通知"
+        prefix = (
+            "通知提醒"
+            if job.job_type == "announcement_reminder_email"
+            else ("通知更新" if job.job_type == "announcement_update_email" else "新通知")
+        )
         subject = f"PNX Training Hub {prefix}：{subject_title}"
         body_markdown = job.payload.get("body_markdown")
         inline_images = _inline_images(secret_payload)
@@ -173,6 +179,24 @@ def render_mail(
             inline_images=inline_images,
         )
 
+    if job.job_type == "assignment_reminder_email":
+        title = str(job.payload["title"])
+        target_url = str(job.payload["target_url"])
+        if not target_url.startswith("/assignments/") or "://" in target_url:
+            raise PermanentMailError("INVALID_TARGET_URL")
+        subject_title = " ".join(title.splitlines()).strip()
+        if not subject_title:
+            raise PermanentMailError("MISSING_TITLE")
+        link = f"{base_url}{target_url}"
+        subject = f"PNX Training Hub 作业提醒：{subject_title}"
+        text = f"{full_name}，你好：\n\n作业《{title}》有新的提醒。\n\n请登录平台查看作业：\n{link}"
+        html = (
+            f"<p>{safe_name}，你好：</p>"
+            f"<p>作业《{escape(title)}》有新的提醒。</p>"
+            f'<p><a href="{escape(link)}">登录平台查看作业</a></p>'
+        )
+        return RenderedMail(recipient=recipient, subject=subject, text=text, html=html)
+
     if job.job_type == "intention_open_email":
         title = str(job.payload["title"])
         target_url = str(job.payload["target_url"])
@@ -193,36 +217,6 @@ def render_mail(
         )
         return RenderedMail(recipient=recipient, subject=subject, text=text, html=html)
 
-    if job.job_type == "assignment_extension_email":
-        title = str(job.payload["title"])
-        target_url = str(job.payload["target_url"])
-        deadline_raw = str(job.payload["extended_deadline"])
-        if not target_url.startswith("/assignments/") or "://" in target_url:
-            raise PermanentMailError("INVALID_TARGET_URL")
-        try:
-            deadline = datetime.fromisoformat(deadline_raw)
-        except ValueError as exc:
-            raise PermanentMailError("INVALID_DEADLINE") from exc
-        if deadline.tzinfo is None:
-            raise PermanentMailError("INVALID_DEADLINE")
-        deadline_text = deadline.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M")
-        link = f"{base_url}{target_url}"
-        subject_title = " ".join(title.splitlines()).strip()
-        if not subject_title:
-            raise PermanentMailError("MISSING_TITLE")
-        subject = f"PNX Training Hub 作业延期：{subject_title}"
-        text = (
-            f"{full_name}，你好：\n\n作业《{title}》的个人截止时间已延长至 "
-            f"{deadline_text}（Asia/Shanghai）。\n\n请登录平台查看作业详情：\n{link}"
-        )
-        html = (
-            f"<p>{safe_name}，你好：</p>"
-            f"<p>作业《{escape(title)}》的个人截止时间已延长至 "
-            f"<strong>{escape(deadline_text)}（Asia/Shanghai）</strong>。</p>"
-            f'<p><a href="{escape(link)}">登录平台查看作业详情</a></p>'
-        )
-        return RenderedMail(recipient=recipient, subject=subject, text=text, html=html)
-
     if job.job_type == "submission_feedback_email":
         title = str(job.payload["title"])
         target_url = str(job.payload["target_url"])
@@ -237,11 +231,11 @@ def render_mail(
             raise PermanentMailError("MISSING_TITLE")
         link = f"{base_url}{target_url}"
         subject = f"PNX Training Hub 作业评语更新：{subject_title}"
-        text = f"{full_name}，你好：\n\n作业《{title}》有新的私密评语。\n\n请登录平台查看：\n{link}"
+        text = f"{full_name}，你好：\n\n作业《{title}》有新的评语。\n\n请登录平台查看：\n{link}"
         html = (
             f"<p>{safe_name}，你好：</p>"
-            f"<p>作业《{escape(title)}》有新的私密评语。</p>"
-            f'<p><a href="{escape(link)}">登录平台查看私密评语</a></p>'
+            f"<p>作业《{escape(title)}》有新的评语。</p>"
+            f'<p><a href="{escape(link)}">登录平台查看评语</a></p>'
         )
         return RenderedMail(recipient=recipient, subject=subject, text=text, html=html)
 

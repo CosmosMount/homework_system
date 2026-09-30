@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.urls import normalize_http_url
 
@@ -32,6 +32,8 @@ class AssignmentAudience(BaseModel):
 
 
 class AssignmentCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str = Field(min_length=1, max_length=200)
     description_markdown: str = Field(min_length=1, max_length=200_000)
     training_url: str | None = Field(default=None, max_length=2000)
@@ -40,7 +42,6 @@ class AssignmentCreateRequest(BaseModel):
     allowed_extensions: list[str] = Field(min_length=1, max_length=100)
     max_total_bytes: int = Field(ge=1, le=2_147_483_648)
     publish_at: datetime
-    deadline: datetime
 
     @field_validator("training_url")
     @classmethod
@@ -57,13 +58,12 @@ class AssignmentCreateRequest(BaseModel):
             raise ValueError("allowed_extensions 包含无效扩展名")
         return normalized
 
-    @model_validator(mode="after")
-    def validate_times(self) -> "AssignmentCreateRequest":
-        if self.publish_at.tzinfo is None or self.deadline.tzinfo is None:
-            raise ValueError("publish_at 与 deadline 必须包含时区")
-        if self.deadline <= self.publish_at:
-            raise ValueError("deadline 必须晚于 publish_at")
-        return self
+    @field_validator("publish_at")
+    @classmethod
+    def validate_publish_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("publish_at 必须包含时区")
+        return value
 
 
 class AssignmentPatchRequest(AssignmentCreateRequest):
@@ -92,7 +92,6 @@ class AssignmentAdminResponse(BaseModel):
     max_total_bytes: int
     publish_at: datetime
     published_at: datetime | None
-    deadline: datetime
     closed_at: datetime | None
     archived_at: datetime | None
     estimated_recipient_count: int
@@ -110,34 +109,14 @@ class AssignmentAdminPage(BaseModel):
     total: int
 
 
-class AssignmentExtensionRequest(BaseModel):
-    extended_deadline: datetime
-    reason: str = Field(min_length=1, max_length=2000)
-
-    @model_validator(mode="after")
-    def validate_timezone(self) -> "AssignmentExtensionRequest":
-        if self.extended_deadline.tzinfo is None:
-            raise ValueError("extended_deadline 必须包含时区")
-        return self
-
-
-class AssignmentExtensionResponse(BaseModel):
-    assignment_id: UUID
-    user_id: UUID
-    extended_deadline: datetime
-    reason: str
-    granted_by: UUID | None
-    created_at: datetime
-    updated_at: datetime
-    revision: int
-
-
 class AssignmentSubmissionSummary(BaseModel):
     submission_id: UUID
     latest_version_id: UUID
     latest_version_number: int
     submitted_at: datetime
     has_feedback: bool
+    is_completed: bool
+    completed_at: datetime | None
 
 
 class ExcellentSubmissionSummaryResponse(BaseModel):
@@ -151,9 +130,6 @@ class AssignmentSummaryResponse(BaseModel):
     id: UUID
     title: str
     status: AssignmentStatus
-    public_deadline: datetime
-    effective_deadline: datetime
-    has_personal_extension: bool
     can_submit: bool
     latest_submission: AssignmentSubmissionSummary | None
 

@@ -153,7 +153,6 @@ class DashboardUserResponse(BaseModel):
 class DashboardAssignmentItem(BaseModel):
     id: UUID
     title: str
-    deadline: datetime
 
 
 class DashboardTeamItem(BaseModel):

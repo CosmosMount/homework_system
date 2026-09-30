@@ -607,17 +607,6 @@ class AnnouncementService:
                 for user in users
             ]
         )
-        if announcement.send_email:
-            for user in users:
-                self._outbox.add(
-                    self._mail_job_for(
-                        announcement=announcement,
-                        user=user,
-                        job_type="announcement_email",
-                        event_key=f"announcement:{announcement.id}:email:{user.id}",
-                        now=now,
-                    )
-                )
         announcement.status = "published"
         announcement.published_at = now
         announcement.publish_at = announcement.publish_at or now
@@ -631,7 +620,6 @@ class AnnouncementService:
             ip_prefix=ip_prefix,
             change_summary={
                 "recipient_count": len(users),
-                "send_email": announcement.send_email,
             },
             now=now,
         )
@@ -860,12 +848,13 @@ class AnnouncementService:
             )
         await self._session.commit()
 
-    async def send_update(
+    async def send_email_reminder(
         self,
         announcement_id: UUID,
         *,
         audit: AnnouncementAuditContext,
     ) -> AnnouncementAdminResponse:
+        """按当前 revision 统一发送通知邮件提醒。"""
         announcement = await self._announcements.get_by_id(
             announcement_id,
             for_update=True,
@@ -875,45 +864,34 @@ class AnnouncementService:
             raise self._not_found()
         if announcement.status != "published":
             await self._session.rollback()
-            raise self._state_conflict("只有已发布通知可以发送更新提醒。")
+            raise self._state_conflict("只有已发布通知可以发送邮件提醒。")
+
         users = await self._announcements.audience_users(announcement)
-        revision_event = f"announcement:{announcement.id}:update:{announcement.revision}"
-        if users:
-            existing = await self._outbox.get_by_event_key(f"{revision_event}:email:{users[0].id}")
-            if existing is not None:
-                await self._session.commit()
-                return await self._admin_response(announcement)
+        revision_event = f"announcement:{announcement.id}:reminder:{announcement.revision}:email:"
+        event_keys = [f"{revision_event}{user.id}" for user in users]
+        existing = await self._outbox.existing_event_keys(event_keys)
         now = self._clock()
-        self._notifications.add_all(
-            [
-                self._notification_for(
-                    announcement=announcement,
-                    user=user,
-                    event_key=revision_event,
-                    notification_type="announcement_update",
-                    now=now,
-                )
-                for user in users
-            ]
-        )
-        for user in users:
+        for user, event_key in zip(users, event_keys, strict=True):
+            if event_key in existing:
+                continue
             self._outbox.add(
                 self._mail_job_for(
                     announcement=announcement,
                     user=user,
-                    job_type="announcement_update_email",
-                    event_key=f"{revision_event}:email:{user.id}",
+                    job_type="announcement_reminder_email",
+                    event_key=event_key,
                     now=now,
                 )
             )
         self._add_audit(
             actor_user_id=audit.actor.user.id,
-            action="announcement.send_update",
+            action="announcement.send_email_reminder",
             announcement_id=announcement.id,
             request_id=audit.request_id,
             ip_prefix=audit.ip_prefix,
             change_summary={
                 "recipient_count": len(users),
+                "queued_count": len([key for key in event_keys if key not in existing]),
                 "announcement_revision": announcement.revision,
             },
             now=now,
@@ -925,7 +903,7 @@ class AnnouncementService:
             raise ApplicationError(
                 status_code=409,
                 code="STATE_CONFLICT",
-                message="本次更新提醒已经发送。",
+                message="邮件提醒状态发生冲突，请刷新后重试。",
             ) from exc
         await self._session.refresh(announcement)
         return await self._admin_response(announcement)
@@ -1061,18 +1039,12 @@ class AnnouncementService:
                 page_size=5,
                 status=None,
                 query=None,
-                now=self._clock(),
                 limit=5,
             )
             assignment_items = [
                 DashboardAssignmentItem(
                     id=record.assignment.id,
                     title=record.assignment.title,
-                    deadline=(
-                        record.extension.extended_deadline
-                        if record.extension is not None
-                        else record.assignment.deadline
-                    ),
                 )
                 for record in records
             ]

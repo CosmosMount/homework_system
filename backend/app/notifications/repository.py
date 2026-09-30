@@ -15,7 +15,8 @@ MAIL_JOB_TYPES = (
     "security_alert",
     "announcement_email",
     "announcement_update_email",
-    "assignment_extension_email",
+    "announcement_reminder_email",
+    "assignment_reminder_email",
     "submission_feedback_email",
     "intention_open_email",
 )

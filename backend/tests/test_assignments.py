@@ -9,14 +9,18 @@ from pydantic import ValidationError
 from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.assignments.models import Assignment, AssignmentAudienceUser, AssignmentExtension
+from app.assignments.models import Assignment, AssignmentAudienceUser
 from app.assignments.policy import can_submit_assignment
 from app.assignments.repository import AssignmentRepository, AssignmentStats
 from app.assignments.schemas import (
     AssignmentCreateRequest,
     AssignmentPatchRequest,
 )
-from app.assignments.service import AssignmentAuditContext, AssignmentService
+from app.assignments.service import (
+    AssignmentAuditContext,
+    AssignmentService,
+    ScheduledAssignmentProcessor,
+)
 from app.auth.service import AuthenticatedContext
 from app.core.errors import ApplicationError
 from app.notifications.mailer import render_mail
@@ -29,7 +33,7 @@ from app.users.models import User
 def make_assignment(
     *,
     status: str,
-    deadline: datetime,
+    deadline: datetime | None = None,
     closed_at: datetime | None = None,
 ) -> Assignment:
     now = datetime.now(UTC)
@@ -49,6 +53,7 @@ def make_assignment(
         publish_at=now - timedelta(hours=2),
         published_at=now - timedelta(hours=1),
         deadline=deadline,
+        review_deadline=deadline,
         created_by=actor_id,
         updated_by=actor_id,
         closed_at=closed_at,
@@ -63,7 +68,6 @@ def make_assignment(
 def make_patch_request(
     assignment: Assignment,
     *,
-    deadline: datetime | None = None,
     title: str | None = None,
     audience: dict[str, object] | None = None,
 ) -> AssignmentPatchRequest:
@@ -77,7 +81,6 @@ def make_patch_request(
         allowed_extensions=list(assignment.allowed_extensions),
         max_total_bytes=assignment.max_total_bytes,
         publish_at=assignment.publish_at,
-        deadline=deadline or assignment.deadline,
     )
 
 
@@ -117,121 +120,68 @@ def make_patch_service(
     return service, session, repository, outbox, audit_repository
 
 
-def make_extension(assignment: Assignment, deadline: datetime) -> AssignmentExtension:
+def test_submit_policy_uses_publication_status_only() -> None:
     now = datetime.now(UTC)
-    return AssignmentExtension(
-        assignment_id=assignment.id,
-        user_id=uuid4(),
-        extended_deadline=deadline,
-        reason="仅管理员可见的理由",
-        granted_by=uuid4(),
-        created_at=now,
-        updated_at=now,
-        revision=1,
-    )
+    published = make_assignment(status="published", deadline=now - timedelta(days=1))
+    assert can_submit_assignment(published)
+    published.deadline = None
+    assert can_submit_assignment(published)
+    published.deleted_at = now
+    assert not can_submit_assignment(published)
+    for status in ("draft", "closed", "archived"):
+        assert not can_submit_assignment(make_assignment(status=status))
 
 
-def test_submit_policy_distinguishes_public_extension_automatic_and_early_close() -> None:
+def test_assignment_schema_rejects_removed_deadline_fields() -> None:
     now = datetime.now(UTC)
-    published = make_assignment(
-        status="published",
-        deadline=now + timedelta(minutes=10),
-    )
-    assert can_submit_assignment(published, None, now)
-    assert not can_submit_assignment(published, None, now + timedelta(minutes=11))
-
-    automatic = make_assignment(
-        status="closed",
-        deadline=now - timedelta(minutes=1),
-        closed_at=now - timedelta(minutes=1),
-    )
-    extension = make_extension(automatic, now + timedelta(hours=1))
-    assert can_submit_assignment(automatic, extension, now)
-
-    early = make_assignment(
-        status="closed",
-        deadline=now + timedelta(hours=1),
-        closed_at=now,
-    )
-    assert not can_submit_assignment(
-        early,
-        make_extension(early, now + timedelta(hours=2)),
-        now,
-    )
-
-
-def test_assignment_schema_normalizes_extensions_and_rejects_invalid_times() -> None:
-    now = datetime.now(UTC)
-    request = AssignmentCreateRequest(
+    data = dict(
         title="作业",
         description_markdown="说明",
-        training_url="https://example.invalid/training",
         submission_instructions="提交说明",
         audience={"all_students": True},
         allowed_extensions=[".PDF", "zip"],
         max_total_bytes=1024,
         publish_at=now,
-        deadline=now + timedelta(days=1),
     )
+    request = AssignmentCreateRequest(**data)
     assert request.allowed_extensions == ["pdf", "zip"]
-
-    with pytest.raises(ValidationError):
-        AssignmentCreateRequest(
-            **{
-                **request.model_dump(),
-                "publish_at": now,
-                "deadline": now,
-            }
-        )
+    for field in ("deadline", "review_deadline"):
+        with pytest.raises(ValidationError):
+            AssignmentCreateRequest(**data, **{field: now + timedelta(days=1)})
+        with pytest.raises(ValidationError):
+            AssignmentPatchRequest(**data, revision=1, **{field: now + timedelta(days=1)})
 
 
 @pytest.mark.asyncio
-async def test_patch_published_assignment_allows_safe_deadline_shortening(
+async def test_patch_published_assignment_updates_text_without_scheduling_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = datetime.now(UTC)
-    assignment = make_assignment(
-        status="published",
-        deadline=now + timedelta(days=2),
-    )
-    new_deadline = now + timedelta(days=1)
-    last_submitted_at = now + timedelta(hours=12)
+    assignment = make_assignment(status="published", deadline=now - timedelta(days=1))
     service, session, repository, outbox, audit_repository = make_patch_service(
-        assignment,
-        now=now,
-        last_submitted_at=last_submitted_at,
+        assignment, now=now, last_submitted_at=now - timedelta(hours=1)
     )
+    monkeypatch.setattr("app.assignments.service.validate_audience", AsyncMock())
     monkeypatch.setattr(
-        "app.assignments.service.validate_audience",
-        AsyncMock(),
-    )
-    monkeypatch.setattr(
-        "app.assignments.service.active_students_for_audience",
-        AsyncMock(return_value=[]),
+        "app.assignments.service.active_students_for_audience", AsyncMock(return_value=[])
     )
     admin = cast(User, SimpleNamespace(id=uuid4()))
-
     response = await service.patch(
         assignment.id,
-        make_patch_request(assignment, deadline=new_deadline, title="修正后的作业"),
+        make_patch_request(assignment, title="修正后的作业"),
         audit=AssignmentAuditContext(
             actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
             request_id="update-request",
             ip_prefix="127.0.0.0/24",
         ),
     )
-
     assert response.title == "修正后的作业"
-    assert assignment.title == "修正后的作业"
-    assert assignment.deadline == new_deadline
+    assert assignment.deadline == now - timedelta(days=1)
     assert assignment.revision == 2
-    repository.last_submitted_at.assert_awaited_once_with(assignment.id)
+    repository.last_submitted_at.assert_not_awaited()
+    outbox.add.assert_not_called()
+    assert audit_repository.add.call_args.args[0].change_summary["changed_fields"] == ["title"]
     session.commit.assert_awaited_once()
-    close_job = outbox.add.call_args.args[0]
-    assert close_job.job_type == "close_assignment"
-    assert close_job.available_at == new_deadline
-    audit = audit_repository.add.call_args.args[0]
-    assert audit.change_summary["changed_fields"] == ["title", "deadline"]
 
 
 @pytest.mark.asyncio
@@ -306,142 +256,181 @@ async def test_patch_existing_assignment_replaces_current_audience_snapshot(
 
 
 @pytest.mark.asyncio
-async def test_patch_published_assignment_rejects_deadline_before_submission(
+async def test_patch_manually_closed_assignment_remains_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = datetime.now(UTC)
-    assignment = make_assignment(
-        status="published",
-        deadline=now + timedelta(days=2),
-    )
-    last_submitted_at = now + timedelta(hours=36)
-    service, session, repository, outbox, _audit = make_patch_service(
-        assignment,
-        now=now,
-        last_submitted_at=last_submitted_at,
-    )
-    monkeypatch.setattr(
-        "app.assignments.service.validate_audience",
-        AsyncMock(),
-    )
-    admin = cast(User, SimpleNamespace(id=uuid4()))
-
-    with pytest.raises(ApplicationError) as exc_info:
-        await service.patch(
-            assignment.id,
-            make_patch_request(assignment, deadline=now + timedelta(days=1)),
-            audit=AssignmentAuditContext(
-                actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
-                request_id="rejected-update-request",
-                ip_prefix="127.0.0.0/24",
-            ),
-        )
-
-    assert exc_info.value.code == "STATE_CONFLICT"
-    assert exc_info.value.message == "截止时间不能早于已有正式提交时间。"
-    assert assignment.deadline == now + timedelta(days=2)
-    assert assignment.title == "测试作业"
-    assert assignment.revision == 1
-    repository.last_submitted_at.assert_awaited_once_with(assignment.id)
-    session.rollback.assert_awaited_once()
-    session.commit.assert_not_awaited()
-    outbox.add.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_patch_automatically_closed_assignment_reopens_only_for_future_deadline(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    now = datetime.now(UTC)
-    old_deadline = now - timedelta(days=1)
-    assignment = make_assignment(
-        status="closed",
-        deadline=old_deadline,
-        closed_at=old_deadline,
-    )
-    new_deadline = now + timedelta(days=1)
-    service, session, _repository, outbox, _audit = make_patch_service(
-        assignment,
-        now=now,
-        last_submitted_at=old_deadline,
-    )
+    assignment = make_assignment(status="closed", closed_at=now - timedelta(hours=1))
+    service, session, _, outbox, _ = make_patch_service(assignment, now=now, last_submitted_at=None)
     monkeypatch.setattr("app.assignments.service.validate_audience", AsyncMock())
     monkeypatch.setattr(
-        "app.assignments.service.active_students_for_audience",
-        AsyncMock(return_value=[]),
+        "app.assignments.service.active_students_for_audience", AsyncMock(return_value=[])
     )
     admin = cast(User, SimpleNamespace(id=uuid4()))
-
     response = await service.patch(
         assignment.id,
-        make_patch_request(assignment, deadline=new_deadline),
-        audit=AssignmentAuditContext(
-            actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
-            request_id="reopen-update-request",
-            ip_prefix="127.0.0.0/24",
-        ),
-    )
-
-    assert response.status == "published"
-    assert assignment.closed_at is None
-    close_job = outbox.add.call_args.args[0]
-    assert close_job.available_at == new_deadline
-    session.commit.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_patch_early_closed_assignment_keeps_manual_close_semantics(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    now = datetime.now(UTC)
-    assignment = make_assignment(
-        status="closed",
-        deadline=now + timedelta(days=2),
-        closed_at=now - timedelta(hours=1),
-    )
-    new_deadline = now + timedelta(days=3)
-    service, session, _repository, outbox, _audit = make_patch_service(
-        assignment,
-        now=now,
-        last_submitted_at=now - timedelta(hours=2),
-    )
-    monkeypatch.setattr("app.assignments.service.validate_audience", AsyncMock())
-    monkeypatch.setattr(
-        "app.assignments.service.active_students_for_audience",
-        AsyncMock(return_value=[]),
-    )
-    admin = cast(User, SimpleNamespace(id=uuid4()))
-
-    response = await service.patch(
-        assignment.id,
-        make_patch_request(assignment, deadline=new_deadline),
+        make_patch_request(assignment, title="更新说明"),
         audit=AssignmentAuditContext(
             actor=cast(AuthenticatedContext, SimpleNamespace(user=admin)),
             request_id="closed-update-request",
             ip_prefix="127.0.0.0/24",
         ),
     )
-
     assert response.status == "closed"
     assert assignment.closed_at == now - timedelta(hours=1)
     outbox.add.assert_not_called()
     session.commit.assert_awaited_once()
 
 
-def make_extension_mail_job() -> OutboxJob:
+@pytest.mark.asyncio
+async def test_reopen_closed_assignment_restores_submission_and_audits() -> None:
+    now = datetime.now(UTC)
+    assignment = make_assignment(status="closed", closed_at=now - timedelta(hours=1))
+    service, session, repository, _, audit_repository = make_patch_service(
+        assignment, now=now, last_submitted_at=None
+    )
+    service._admin_response = AsyncMock(return_value=assignment)  # type: ignore[method-assign]
+    actor = cast(User, SimpleNamespace(id=uuid4()))
+    audit = AssignmentAuditContext(
+        actor=cast(AuthenticatedContext, SimpleNamespace(user=actor)),
+        request_id="reopen-request",
+        ip_prefix="127.0.0.0/24",
+    )
+    assert not can_submit_assignment(assignment)
+
+    await service.reopen(assignment.id, audit=audit)
+
+    repository.get_by_id.assert_awaited_once_with(assignment.id, for_update=True)
+    assert assignment.status == "published"
+    assert assignment.closed_at is None
+    assert assignment.updated_by == actor.id
+    assert assignment.revision == 2
+    assert can_submit_assignment(assignment)
+    assert audit_repository.add.call_args.args[0].action == "assignment.reopen"
+    session.commit.assert_awaited_once()
+
+    await service.reopen(assignment.id, audit=audit)
+    assert assignment.revision == 2
+    assert audit_repository.add.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["draft", "archived"])
+async def test_reopen_rejects_non_closed_assignment(status: str) -> None:
+    now = datetime.now(UTC)
+    assignment = make_assignment(status=status)
+    service, session, _, _, audit_repository = make_patch_service(
+        assignment, now=now, last_submitted_at=None
+    )
+    audit = AssignmentAuditContext(
+        actor=cast(AuthenticatedContext, SimpleNamespace(user=SimpleNamespace(id=uuid4()))),
+        request_id="invalid-reopen",
+        ip_prefix="127.0.0.0/24",
+    )
+
+    with pytest.raises(ApplicationError) as error:
+        await service.reopen(assignment.id, audit=audit)
+
+    assert error.value.code == "STATE_CONFLICT"
+    session.rollback.assert_awaited_once()
+    audit_repository.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reopen_rejects_deleted_assignment() -> None:
+    now = datetime.now(UTC)
+    assignment = make_assignment(status="closed", closed_at=now)
+    assignment.deleted_at = now
+    service, session, _, _, _ = make_patch_service(assignment, now=now, last_submitted_at=None)
+    with pytest.raises(ApplicationError) as error:
+        await service.reopen(
+            assignment.id,
+            audit=AssignmentAuditContext(
+                actor=cast(AuthenticatedContext, SimpleNamespace(user=SimpleNamespace(id=uuid4()))),
+                request_id="deleted-reopen",
+                ip_prefix="127.0.0.0/24",
+            ),
+        )
+    assert error.value.code == "RESOURCE_NOT_FOUND"
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_send_email_reminder_is_idempotent_per_assignment_revision() -> None:
+    now = datetime.now(UTC)
+    assignment = make_assignment(status="published")
+    session = AsyncMock(spec=AsyncSession)
+    service = AssignmentService(cast(AsyncSession, session), clock=lambda: now)
+    student = SimpleNamespace(
+        id=uuid4(),
+        email="student@connect.hkust-gz.edu.cn",
+        full_name="测试学生",
+    )
+    repository = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=assignment),
+        audience_users=AsyncMock(return_value=[student]),
+    )
+    outbox = SimpleNamespace(
+        existing_event_keys=AsyncMock(
+            side_effect=[
+                set(),
+                {f"assignment:{assignment.id}:reminder:{assignment.revision}:email:{student.id}"},
+                set(),
+            ]
+        ),
+        add=Mock(),
+    )
+    service._assignments = cast(AssignmentRepository, repository)
+    service._outbox = cast(OutboxRepository, outbox)
+    service._audit = Mock()
+    service._admin_response = AsyncMock(return_value=assignment)  # type: ignore[method-assign]
+    audit = AssignmentAuditContext(
+        actor=cast(AuthenticatedContext, SimpleNamespace(user=SimpleNamespace(id=uuid4()))),
+        request_id="reminder-request",
+        ip_prefix="127.0.0.0/24",
+    )
+
+    await service.send_email_reminder(assignment.id, audit=audit)
+    await service.send_email_reminder(assignment.id, audit=audit)
+
+    outbox.add.assert_called_once()
+    job = outbox.add.call_args.args[0]
+    assert job.job_type == "assignment_reminder_email"
+    assert job.event_key.endswith(f":email:{student.id}")
+    assert session.commit.await_count == 2
+
+    assignment.revision += 1
+    await service.send_email_reminder(assignment.id, audit=audit)
+    assert outbox.add.call_count == 2
+    assert outbox.add.call_args.args[0].event_key != job.event_key
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["draft", "archived"])
+async def test_assignment_reminder_rejects_unavailable_status(status: str) -> None:
+    assignment = make_assignment(status=status)
+    session = AsyncMock(spec=AsyncSession)
+    service = AssignmentService(cast(AsyncSession, session))
+    service._assignments = cast(
+        AssignmentRepository, SimpleNamespace(get_by_id=AsyncMock(return_value=assignment))
+    )
+    with pytest.raises(ApplicationError) as error:
+        await service.send_email_reminder(
+            assignment.id,
+            audit=cast(AssignmentAuditContext, SimpleNamespace()),
+        )
+    assert error.value.code == "STATE_CONFLICT"
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+def make_legacy_job(job_type: str) -> OutboxJob:
     now = datetime.now(UTC)
     return OutboxJob(
         id=uuid4(),
-        job_type="assignment_extension_email",
-        event_key=f"assignment-extension:{uuid4()}",
-        payload={
-            "recipient": "student@connect.hkust-gz.edu.cn",
-            "full_name": "测试 <同学>",
-            "assignment_id": str(uuid4()),
-            "title": "作业 <script>alert(1)</script>",
-            "extended_deadline": (now + timedelta(days=1)).isoformat(),
-            "target_url": f"/assignments/{uuid4()}",
-        },
+        job_type=job_type,
+        event_key=f"legacy:{uuid4()}",
+        payload={"assignment_id": str(uuid4())},
         secret_payload_ciphertext=None,
         status="processing",
         available_at=now,
@@ -456,35 +445,52 @@ def make_extension_mail_job() -> OutboxJob:
     )
 
 
-def test_extension_mail_uses_shanghai_time_and_contains_no_reason() -> None:
-    rendered = render_mail(
-        make_extension_mail_job(),
-        {},
-        app_base_url="https://training.example.invalid",
+def test_assignment_reminder_mail_contains_only_safe_assignment_link() -> None:
+    assignment_id = uuid4()
+    job = OutboxJob(
+        id=uuid4(),
+        job_type="assignment_reminder_email",
+        event_key=f"assignment:{assignment_id}:reminder:1:email:{uuid4()}",
+        payload={
+            "recipient": "student@connect.hkust-gz.edu.cn",
+            "full_name": "测试 <同学>",
+            "assignment_id": str(assignment_id),
+            "title": "作业 <script>alert(1)</script>",
+            "target_url": f"/assignments/{assignment_id}",
+        },
+        secret_payload_ciphertext=None,
+        status="processing",
+        available_at=datetime.now(UTC),
+        attempt_count=0,
+        max_attempts=8,
+        locked_by="worker",
+        locked_at=datetime.now(UTC),
+        last_error_code=None,
+        last_error_summary=None,
+        created_at=datetime.now(UTC),
+        sent_at=None,
     )
 
-    assert "Asia/Shanghai" in rendered.text
-    assert "仅管理员可见的理由" not in rendered.text
+    rendered = render_mail(job, {}, app_base_url="https://training.example.invalid")
+
+    assert rendered.subject.startswith("PNX Training Hub 作业提醒：")
+    assert "https://training.example.invalid/assignments/" in rendered.text
     assert "<script>" not in rendered.html
-    assert "&lt;script&gt;" in rendered.html
+    assert "/storage/" not in rendered.text
 
 
 class FakeAssignmentProcessor:
     def __init__(self) -> None:
         self.publish_calls: list[tuple[UUID, UUID]] = []
-        self.close_calls: list[tuple[UUID, UUID]] = []
 
     async def publish(self, assignment_id: UUID, job_id: UUID) -> None:
         self.publish_calls.append((assignment_id, job_id))
-
-    async def close(self, assignment_id: UUID, job_id: UUID) -> None:
-        self.close_calls.append((assignment_id, job_id))
 
 
 class AssignmentProcessorHarness(OutboxProcessor):
     def __init__(self, job: OutboxJob, processor: FakeAssignmentProcessor) -> None:
         self._job = job
-        self._assignment_processor = processor
+        self._assignment_processor = cast(ScheduledAssignmentProcessor, processor)
         self.sent_ids: list[UUID] = []
         self.failed_ids: list[UUID] = []
 
@@ -506,11 +512,12 @@ class AssignmentProcessorHarness(OutboxProcessor):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("job_type", ["publish_assignment", "close_assignment"])
+@pytest.mark.parametrize(
+    "job_type", ["publish_assignment", "close_assignment", "assignment_extension_email"]
+)
 async def test_worker_dispatches_assignment_schedule_jobs(job_type: str) -> None:
     assignment_id = uuid4()
-    job = make_extension_mail_job()
-    job.job_type = job_type
+    job = make_legacy_job(job_type)
     job.payload = {"assignment_id": str(assignment_id)}
     processor = FakeAssignmentProcessor()
     harness = AssignmentProcessorHarness(job, processor)
@@ -518,7 +525,6 @@ async def test_worker_dispatches_assignment_schedule_jobs(job_type: str) -> None
     assert await harness.run_once() == 1
     expected = [(assignment_id, job.id)]
     assert processor.publish_calls == (expected if job_type == "publish_assignment" else [])
-    assert processor.close_calls == (expected if job_type == "close_assignment" else [])
     assert harness.sent_ids == [job.id]
     assert harness.failed_ids == []
 
@@ -570,7 +576,7 @@ async def test_new_student_is_added_to_matching_open_assignment_snapshots() -> N
     assert session.statement is not None
     sql = str(session.statement)
     assert "assignments.status" in sql
-    assert "assignments.deadline" in sql
+    assert "assignments.deadline" not in sql
     assert "assignment_audience_users" in sql
     assert "NOT (EXISTS" in sql
     assert len(session.added) == 1
@@ -749,12 +755,11 @@ async def test_student_assignment_queries_exclude_archived_resources() -> None:
         page_size=20,
         status=None,
         query=None,
-        now=datetime.now(UTC),
     )
 
     statement = session.execute.await_args.args[0]
     assert "assignments.status IN" in str(statement)
-    assert "assignments.status !=" not in str(statement)
+    assert "assignments.deadline" not in str(statement).split("WHERE", 1)[1]
 
 
 @pytest.mark.asyncio

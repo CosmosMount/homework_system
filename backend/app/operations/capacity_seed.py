@@ -20,7 +20,6 @@ CAPACITY_DIRECTION_COUNT = 8
 
 _UUID_EPOCH_MS = 1_767_225_600_000
 _PUBLISHED_BASE = datetime(2025, 9, 1, 8, tzinfo=UTC)
-_FUTURE_END = datetime(2030, 7, 1, 8, tzinfo=UTC)
 
 type Row = dict[str, object]
 
@@ -281,7 +280,7 @@ class CapacityDatasetBuilder:
             assignment_id = _capacity_uuid("assignment", assignment_index)
             publish_at = _PUBLISHED_BASE + timedelta(days=assignment_index)
             archived = assignment_index >= 30
-            deadline = publish_at + timedelta(days=60) if archived else _FUTURE_END
+            archived_at = publish_at + timedelta(days=61) if archived else None
             assignments.append(
                 {
                     "id": assignment_id,
@@ -297,11 +296,12 @@ class CapacityDatasetBuilder:
                     "max_total_bytes": 2_147_483_648,
                     "publish_at": publish_at,
                     "published_at": publish_at,
-                    "deadline": deadline,
+                    "deadline": None,
+                    "review_deadline": None,
                     "created_by": self._admin_ids[assignment_index % CAPACITY_ADMIN_COUNT],
                     "updated_by": self._admin_ids[assignment_index % CAPACITY_ADMIN_COUNT],
-                    "closed_at": deadline if archived else None,
-                    "archived_at": deadline + timedelta(days=1) if archived else None,
+                    "closed_at": archived_at if archived else None,
+                    "archived_at": archived_at,
                     **_mixin_fields(publish_at),
                 }
             )

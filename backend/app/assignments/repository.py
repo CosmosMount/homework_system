@@ -22,7 +22,6 @@ from app.assignments.models import (
     AssignmentCohort,
     AssignmentDirection,
     AssignmentExcellentSubmission,
-    AssignmentExtension,
 )
 from app.submissions.models import Feedback, Submission, SubmissionVersion
 from app.users.models import User
@@ -31,7 +30,6 @@ from app.users.models import User
 @dataclass(frozen=True, slots=True)
 class StudentAssignmentRecord:
     assignment: Assignment
-    extension: AssignmentExtension | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +165,20 @@ class AssignmentRepository:
             ).all()
         )
 
+    async def audience_users(self, assignment_id: UUID) -> list[User]:
+        """返回当前受众快照中的有效学生，供显式邮件提醒使用。"""
+        statement = (
+            select(User)
+            .join(AssignmentAudienceUser, AssignmentAudienceUser.user_id == User.id)
+            .where(
+                AssignmentAudienceUser.assignment_id == assignment_id,
+                User.role == "student",
+                User.status == "active",
+            )
+            .order_by(User.id)
+        )
+        return list((await self._session.scalars(statement)).all())
+
     async def replace_audience_snapshot(
         self,
         *,
@@ -207,7 +219,6 @@ class AssignmentRepository:
                     select(Assignment.id)
                     .where(
                         Assignment.status == "published",
-                        Assignment.deadline > created_at,
                         self._live_audience_condition(user),
                         ~existing_snapshot,
                     )
@@ -343,33 +354,6 @@ class AssignmentRepository:
         )
         return bool(value)
 
-    async def get_extension(
-        self,
-        assignment_id: UUID,
-        user_id: UUID,
-        *,
-        for_update: bool = False,
-    ) -> AssignmentExtension | None:
-        statement = select(AssignmentExtension).where(
-            AssignmentExtension.assignment_id == assignment_id,
-            AssignmentExtension.user_id == user_id,
-        )
-        if for_update:
-            statement = statement.with_for_update()
-        result: AssignmentExtension | None = await self._session.scalar(statement)
-        return result
-
-    def add_extension(self, extension: AssignmentExtension) -> None:
-        self._session.add(extension)
-
-    async def delete_extension(self, assignment_id: UUID, user_id: UUID) -> None:
-        await self._session.execute(
-            delete(AssignmentExtension).where(
-                AssignmentExtension.assignment_id == assignment_id,
-                AssignmentExtension.user_id == user_id,
-            )
-        )
-
     async def get_for_student(
         self,
         assignment_id: UUID,
@@ -389,15 +373,7 @@ class AssignmentRepository:
             )
         row = (
             await self._session.execute(
-                select(Assignment, AssignmentExtension)
-                .outerjoin(
-                    AssignmentExtension,
-                    and_(
-                        AssignmentExtension.assignment_id == Assignment.id,
-                        AssignmentExtension.user_id == user_id,
-                    ),
-                )
-                .where(
+                select(Assignment).where(
                     Assignment.id == assignment_id,
                     Assignment.status.in_(("published", "closed")),
                     audience_match,
@@ -406,7 +382,7 @@ class AssignmentRepository:
         ).one_or_none()
         if row is None:
             return None
-        return StudentAssignmentRecord(assignment=row[0], extension=row[1])
+        return StudentAssignmentRecord(assignment=row[0])
 
     async def list_for_student(
         self,
@@ -417,25 +393,13 @@ class AssignmentRepository:
         page_size: int,
         status: str | None,
         query: str | None,
-        now: datetime,
         limit: int | None = None,
     ) -> tuple[list[StudentAssignmentRecord], int]:
         submission_exists = exists().where(
             Submission.assignment_id == Assignment.id,
             Submission.owner_user_id == user_id,
         )
-        effective_deadline = func.coalesce(
-            AssignmentExtension.extended_deadline,
-            Assignment.deadline,
-        )
-        auto_closed = and_(
-            Assignment.status == "closed",
-            Assignment.closed_at >= Assignment.deadline,
-        )
-        accepts_submissions = and_(
-            or_(Assignment.status == "published", auto_closed),
-            effective_deadline > now,
-        )
+        accepts_submissions = Assignment.status == "published"
         snapshot_match = exists().where(
             AssignmentAudienceUser.assignment_id == Assignment.id,
             AssignmentAudienceUser.user_id == user_id,
@@ -459,25 +423,15 @@ class AssignmentRepository:
         elif status == "closed":
             filters.append(~accepts_submissions)
 
-        base = (
-            select(Assignment, AssignmentExtension)
-            .outerjoin(
-                AssignmentExtension,
-                and_(
-                    AssignmentExtension.assignment_id == Assignment.id,
-                    AssignmentExtension.user_id == user_id,
-                ),
-            )
-            .where(*filters)
-        )
+        base = select(Assignment).where(*filters)
         count = 0
         if limit is None:
             count = int(
                 await self._session.scalar(select(func.count()).select_from(base.subquery())) or 0
             )
         statement = base.order_by(
-            (effective_deadline <= now),
-            effective_deadline,
+            ~accepts_submissions,
+            Assignment.publish_at.desc(),
             Assignment.id,
         )
         if limit is not None:
@@ -486,7 +440,7 @@ class AssignmentRepository:
             statement = statement.offset((page - 1) * page_size).limit(page_size)
         rows = (await self._session.execute(statement)).all()
         return (
-            [StudentAssignmentRecord(assignment=row[0], extension=row[1]) for row in rows],
+            [StudentAssignmentRecord(assignment=row[0]) for row in rows],
             count,
         )
 

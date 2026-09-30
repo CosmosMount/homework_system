@@ -228,7 +228,28 @@ async def send_announcement_update(
         Header(alias="Idempotency-Key", min_length=8, max_length=200),
     ],
 ) -> AnnouncementAdminResponse:
-    return await service.send_update(
+    return await service.send_email_reminder(
+        announcement_id,
+        audit=_audit_context(request, admin),
+    )
+
+
+@router.post(
+    "/admin/announcements/{announcement_id}/send-email",
+    response_model=AnnouncementAdminResponse,
+)
+async def send_announcement_email_reminder(
+    announcement_id: UUID,
+    request: Request,
+    service: AnnouncementServiceDependency,
+    admin: AdminContextDependency,
+    _csrf: CsrfDependency,
+    _idempotency_key: Annotated[
+        str,
+        Header(alias="Idempotency-Key", min_length=8, max_length=200),
+    ],
+) -> AnnouncementAdminResponse:
+    return await service.send_email_reminder(
         announcement_id,
         audit=_audit_context(request, admin),
     )

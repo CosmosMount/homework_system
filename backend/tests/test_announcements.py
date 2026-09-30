@@ -88,6 +88,96 @@ def make_student(
     )
 
 
+@pytest.mark.asyncio
+async def test_publish_creates_in_app_notifications_without_automatic_email() -> None:
+    announcement = make_announcement(all_students=True)
+    announcement.status = "draft"
+    assert announcement.send_email is True  # 历史字段不再触发发布时邮件。
+    student = make_student(cohort_id=None, direction_id=None)
+    service = AnnouncementService(cast(AsyncSession, AsyncMock(spec=AsyncSession)))
+    service._announcements = cast(
+        AnnouncementRepository,
+        SimpleNamespace(audience_users=AsyncMock(return_value=[student])),
+    )
+    notifications = Mock()
+    outbox = Mock()
+    service._notifications = notifications
+    service._outbox = outbox
+    service._audit = Mock()
+    await service._apply_publish(
+        announcement,
+        actor_user_id=uuid4(),
+        request_id="publish-test",
+        ip_prefix="127.0.0.0/24",
+        now=datetime.now(UTC),
+    )
+    assert announcement.status == "published"
+    assert len(notifications.add_all.call_args.args[0]) == 1
+    outbox.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reminder_deduplicates_recipients_and_allows_new_revision() -> None:
+    announcement = make_announcement(all_students=True)
+    student = make_student(cohort_id=None, direction_id=None)
+    session = AsyncMock(spec=AsyncSession)
+    service = AnnouncementService(cast(AsyncSession, session))
+    service._announcements = cast(
+        AnnouncementRepository,
+        SimpleNamespace(
+            get_by_id=AsyncMock(return_value=announcement),
+            audience_users=AsyncMock(return_value=[student]),
+        ),
+    )
+    outbox = SimpleNamespace(
+        existing_event_keys=AsyncMock(
+            side_effect=[
+                set(),
+                {f"announcement:{announcement.id}:reminder:1:email:{student.id}"},
+                set(),
+            ]
+        ),
+        add=Mock(),
+    )
+    service._outbox = cast(OutboxRepository, outbox)
+    service._audit = Mock()
+    service._admin_response = AsyncMock(return_value=announcement)  # type: ignore[method-assign]
+    audit = AnnouncementAuditContext(
+        actor=cast(AuthenticatedContext, SimpleNamespace(user=SimpleNamespace(id=uuid4()))),
+        request_id="reminder-test",
+        ip_prefix="127.0.0.0/24",
+    )
+    await service.send_email_reminder(announcement.id, audit=audit)
+    await service.send_email_reminder(announcement.id, audit=audit)
+    outbox.add.assert_called_once()
+    job = outbox.add.call_args.args[0]
+    assert job.job_type == "announcement_reminder_email"
+    assert job.payload["body_markdown"] == announcement.body_markdown
+    announcement.revision += 1
+    await service.send_email_reminder(announcement.id, audit=audit)
+    assert outbox.add.call_count == 2
+    assert outbox.add.call_args.args[0].event_key != job.event_key
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["draft", "scheduled", "archived"])
+async def test_announcement_reminder_rejects_unpublished_status(status: str) -> None:
+    announcement = make_announcement(all_students=True)
+    announcement.status = status
+    session = AsyncMock(spec=AsyncSession)
+    service = AnnouncementService(cast(AsyncSession, session))
+    service._announcements = cast(
+        AnnouncementRepository, SimpleNamespace(get_by_id=AsyncMock(return_value=announcement))
+    )
+    with pytest.raises(ApplicationError) as error:
+        await service.send_email_reminder(
+            announcement.id, audit=cast(AnnouncementAuditContext, SimpleNamespace())
+        )
+    assert error.value.code == "STATE_CONFLICT"
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
 def test_audience_matching_covers_all_union_intersection_and_unclassified() -> None:
     cohort_id = uuid4()
     direction_id = uuid4()
@@ -140,6 +230,7 @@ async def test_dashboard_includes_published_assignment_for_admin_student_view(
             deadline=datetime(2026, 9, 3, 14, 9, tzinfo=UTC),
         ),
         extension=None,
+        submission_deadline=None,
     )
     assignment_repository = SimpleNamespace(
         list_for_student=AsyncMock(return_value=([assignment_record], 1)),
@@ -202,7 +293,6 @@ async def test_dashboard_includes_published_assignment_for_admin_student_view(
         page_size=5,
         status=None,
         query=None,
-        now=now,
         limit=5,
     )
 
@@ -287,7 +377,7 @@ def make_announcement_mail_job(job_type: str) -> OutboxJob:
 
 @pytest.mark.parametrize(
     "job_type",
-    ["announcement_email", "announcement_update_email"],
+    ["announcement_email", "announcement_update_email", "announcement_reminder_email"],
 )
 def test_announcement_mail_renders_sanitized_content_and_contains_no_attachment_url(
     job_type: str,
@@ -310,11 +400,22 @@ def test_announcement_mail_renders_sanitized_content_and_contains_no_attachment_
     assert "/storage/" not in rendered.html
 
 
+def test_announcement_reminder_mail_uses_one_neutral_prefix() -> None:
+    rendered = render_mail(
+        make_announcement_mail_job("announcement_reminder_email"),
+        {},
+        app_base_url="https://training.example.invalid",
+    )
+
+    assert rendered.subject.startswith("PNX Training Hub 通知提醒：")
+    assert "新通知" not in rendered.subject
+    assert "通知更新" not in rendered.subject
+
+
 def test_announcement_mail_absolutizes_internal_knowledge_references() -> None:
     job = make_announcement_mail_job("announcement_email")
     job.payload["body_markdown"] = (
-        "[培训文档](/knowledge?source=doc-token)\n\n"
-        "[危险](javascript:alert('xss'))"
+        "[培训文档](/knowledge?source=doc-token)\n\n[危险](javascript:alert('xss'))"
     )
 
     rendered = render_mail(

@@ -13,7 +13,7 @@ def test_migration_chain_has_single_head() -> None:
 
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["20260921_0027"]
+    assert script.get_heads() == ["20260927_0029"]
 
 
 def test_account_erasure_version_guard_migration_restricts_fk_updates() -> None:

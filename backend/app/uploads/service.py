@@ -439,15 +439,11 @@ class UploadService:
             )
         ):
             raise self._not_found()
-        personal_extension = await self._assignments.get_extension(
-            payload.context_id,
-            context.user.id,
-        )
-        if not can_submit_assignment(assignment, personal_extension, self._clock()):
+        if not can_submit_assignment(assignment):
             raise ApplicationError(
                 status_code=409,
                 code="ASSIGNMENT_CLOSED",
-                message="作业已超过当前账号的有效截止时间。",
+                message="作业已关闭，不能上传新版本附件。",
             )
         if extension not in assignment.allowed_extensions:
             raise ApplicationError(

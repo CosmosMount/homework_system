@@ -342,9 +342,9 @@ class OutboxProcessor:
                 elif job.job_type == "publish_assignment":
                     assignment_id = UUID(str(job.payload["assignment_id"]))
                     await self._assignment_processor.publish(assignment_id, job.id)
-                elif job.job_type == "close_assignment":
-                    assignment_id = UUID(str(job.payload["assignment_id"]))
-                    await self._assignment_processor.close(assignment_id, job.id)
+                elif job.job_type in {"close_assignment", "assignment_extension_email"}:
+                    # 0029 之前创建的任务已失效，安全完成而不关闭作业或发送延期邮件。
+                    pass
                 elif job.job_type == "sync_knowledge":
                     run_id = UUID(str(job.payload["run_id"]))
                     await self._knowledge_sync.synchronize(run_id)
@@ -363,7 +363,11 @@ class OutboxProcessor:
                         await self._mark_token_superseded(job.id)
                         continue
                     secret_payload = self._secret_payload(job)
-                    if job.job_type in {"announcement_email", "announcement_update_email"}:
+                    if job.job_type in {
+                        "announcement_email",
+                        "announcement_update_email",
+                        "announcement_reminder_email",
+                    }:
                         inline_images = await self._announcement_inline_images(job)
                         if inline_images:
                             secret_payload = {
