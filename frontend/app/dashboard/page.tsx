@@ -134,12 +134,6 @@ export default async function DashboardPage() {
                   key={assignment.id}
                 >
                   <p className="font-medium">{assignment.title}</p>
-                  <time
-                    className="mt-1 block font-mono text-xs text-[var(--color-text-muted)]"
-                    dateTime={assignment.deadline}
-                  >
-                    有效截止 {formatDateTime(assignment.deadline)}
-                  </time>
                 </Link>
               ))}
             </div>

@@ -72,9 +72,6 @@ export function AnnouncementEditor({
   const [pinnedUntil, setPinnedUntil] = useState(
     localDateTime(initialAnnouncement?.pinned_until ?? null),
   );
-  const [sendEmail, setSendEmail] = useState(
-    initialAnnouncement?.send_email ?? false,
-  );
   const [attachmentIds, setAttachmentIds] = useState(
     initialAnnouncement?.attachment_file_ids ?? [],
   );
@@ -89,6 +86,7 @@ export function AnnouncementEditor({
     ),
   );
   const [pending, setPending] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -107,7 +105,8 @@ export function AnnouncementEditor({
       attachment_file_ids: attachmentIds,
       publish_at: apiDateTime(publishAt),
       pinned_until: apiDateTime(pinnedUntil),
-      send_email: sendEmail,
+      // 邮件提醒由发布后的统一按钮显式触发，保留字段仅兼容旧 API 客户端。
+      send_email: false,
     };
   }
 
@@ -138,6 +137,7 @@ export function AnnouncementEditor({
       },
     );
     setAnnouncement(saved);
+    setDirty(false);
     setAttachmentIds(saved.attachment_file_ids);
     setAttachmentDetails(
       Object.fromEntries(
@@ -169,7 +169,7 @@ export function AnnouncementEditor({
   }
 
   async function publish() {
-    if (!window.confirm("确认发布？发布会为实际受众生成站内提醒，邮件会进入可靠队列。")) {
+    if (!window.confirm("确认发布？发布会为实际受众生成站内提醒。")) {
       return;
     }
     setPending(true);
@@ -225,26 +225,28 @@ export function AnnouncementEditor({
     }
   }
 
-  async function sendUpdate() {
+  async function sendEmailReminder() {
     if (
       announcement === null ||
-      !window.confirm("确认向当前受众发送这一 revision 的更新提醒？")
+      !window.confirm("确认向当前通知受众发送邮件提醒？同一版本重复点击不会重复发送。")
     ) {
       return;
     }
     setPending(true);
+    setMessage(null);
     setError(null);
     try {
-      const saved = await persist();
+      const saved = dirty ? await persist() : announcement;
+      if (saved === null) return;
       const updated = await csrfFetch<AnnouncementAdmin>(
-        "/admin/announcements/" + saved.id + "/send-update",
+        "/admin/announcements/" + saved.id + "/send-email",
         {
           method: "POST",
           headers: { "Idempotency-Key": createIdempotencyKey() },
         },
       );
       setAnnouncement(updated);
-      setMessage("更新提醒已写入站内提醒与邮件队列。");
+      setMessage("邮件提醒已写入发送队列。相同版本重复操作不会重复发送。");
       router.refresh();
     } catch (nextError) {
       if (!(nextError instanceof Error) || nextError.message !== "FORM_INVALID") {
@@ -259,6 +261,7 @@ export function AnnouncementEditor({
     setAttachmentIds((current) =>
       current.includes(file.file_id) ? current : [...current, file.file_id],
     );
+    setDirty(true);
     setAttachmentDetails((current) => ({
       ...current,
       [file.file_id]: {
@@ -284,6 +287,7 @@ export function AnnouncementEditor({
     const end = input?.selectionEnd ?? start;
     const next = insertMarkdownAtSelection(bodyMarkdown, snippet, start, end);
     setBodyMarkdown(next.value);
+    setDirty(true);
     const nextCursor = next.cursor;
     requestAnimationFrame(() => {
       input?.focus();
@@ -301,6 +305,7 @@ export function AnnouncementEditor({
       input?.selectionEnd ?? bodyMarkdown.length,
     );
     setBodyMarkdown(next.value);
+    setDirty(true);
     requestAnimationFrame(() => {
       input?.focus();
       input?.setSelectionRange(next.cursor, next.cursor);
@@ -328,7 +333,7 @@ export function AnnouncementEditor({
               className={inputClassName}
               disabled={!editable}
               maxLength={200}
-              onChange={(event) => setTitle(event.target.value)}
+              onChange={(event) => { setTitle(event.target.value); setDirty(true); }}
               required
               value={title}
             />
@@ -339,7 +344,7 @@ export function AnnouncementEditor({
               className={inputClassName + " min-h-24 py-3"}
               disabled={!editable}
               maxLength={500}
-              onChange={(event) => setSummary(event.target.value)}
+              onChange={(event) => { setSummary(event.target.value); setDirty(true); }}
               required
               value={summary}
             />
@@ -351,7 +356,7 @@ export function AnnouncementEditor({
               className={inputClassName + " min-h-80 py-3 font-mono text-sm"}
               disabled={!editable}
               maxLength={200000}
-              onChange={(event) => setBodyMarkdown(event.target.value)}
+              onChange={(event) => { setBodyMarkdown(event.target.value); setDirty(true); }}
               required
               value={bodyMarkdown}
             />
@@ -373,7 +378,7 @@ export function AnnouncementEditor({
                 checked={allStudents}
                 disabled={!editable}
                 name="audience-mode"
-                onChange={() => setAllStudents(true)}
+                onChange={() => { setAllStudents(true); setDirty(true); }}
                 type="radio"
               />
               全部激活学生
@@ -383,7 +388,7 @@ export function AnnouncementEditor({
                 checked={!allStudents}
                 disabled={!editable}
                 name="audience-mode"
-                onChange={() => setAllStudents(false)}
+                onChange={() => { setAllStudents(false); setDirty(true); }}
                 type="radio"
               />
               按技术方向
@@ -399,9 +404,7 @@ export function AnnouncementEditor({
                       <input
                         checked={directionIds.includes(direction.id)}
                         disabled={!editable || !direction.is_active}
-                        onChange={() =>
-                          setDirectionIds(toggle(directionIds, direction.id))
-                        }
+                        onChange={() => { setDirectionIds(toggle(directionIds, direction.id)); setDirty(true); }}
                         type="checkbox"
                       />
                       {direction.name}{direction.is_active ? "" : "（停用）"}
@@ -420,7 +423,7 @@ export function AnnouncementEditor({
             <input
               className={inputClassName}
               disabled={!editable}
-              onChange={(event) => setPublishAt(event.target.value)}
+              onChange={(event) => { setPublishAt(event.target.value); setDirty(true); }}
               type="datetime-local"
               value={publishAt}
             />
@@ -430,19 +433,10 @@ export function AnnouncementEditor({
             <input
               className={inputClassName}
               disabled={!editable}
-              onChange={(event) => setPinnedUntil(event.target.value)}
+              onChange={(event) => { setPinnedUntil(event.target.value); setDirty(true); }}
               type="datetime-local"
               value={pinnedUntil}
             />
-          </label>
-          <label className="flex min-h-11 items-center gap-2 border border-[var(--color-border-strong)] px-4 text-sm sm:col-span-2">
-            <input
-              checked={sendEmail}
-              disabled={!editable}
-              onChange={(event) => setSendEmail(event.target.checked)}
-              type="checkbox"
-            />
-            首次发布时同时写入逐学生邮件任务
           </label>
         </section>
 
@@ -478,11 +472,12 @@ export function AnnouncementEditor({
                       ) : null}
                       <button
                         className="text-sm text-[var(--color-danger)]"
-                        onClick={() =>
+                        onClick={() => {
                           setAttachmentIds((current) =>
                             current.filter((item) => item !== fileId),
-                          )
-                        }
+                          );
+                          setDirty(true);
+                        }}
                         type="button"
                       >
                         移除
@@ -513,10 +508,10 @@ export function AnnouncementEditor({
               <button
                 className="min-h-11 border border-[var(--color-border-strong)] px-5 disabled:opacity-55"
                 disabled={pending}
-                onClick={sendUpdate}
+                onClick={sendEmailReminder}
                 type="button"
               >
-                保存并发送更新提醒
+                发送邮件提醒
               </button>
             ) : null}
             </>

@@ -41,7 +41,7 @@ export default async function AdminSubmissionPage({
         backLabel="返回原作业"
         eyebrow="ADMIN / SUBMISSIONS / REVIEW"
         title="审阅个人提交"
-        description="正式版本不可变；私密评语仅对个人提交者与管理员可见，优秀标记只属于对应作业。"
+        description="正式版本不可变；评语仅对个人提交者与管理员可见，优秀标记只属于对应作业。"
       />
       <SubmissionReview
         assignmentTitle={assignment.title}

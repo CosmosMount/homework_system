@@ -39,7 +39,7 @@ export default async function EditAssignmentPage({
         backLabel="返回作业管理"
         eyebrow="ADMIN / ASSIGNMENTS / EDIT"
         title="编辑作业"
-        description="修改使用 revision；受众快照、正式版本和私密评语均由后端最终授权。"
+        description="修改使用 revision；受众快照、正式版本和评语均由后端最终授权。"
       />
       <AssignmentEditor
         directions={directions}

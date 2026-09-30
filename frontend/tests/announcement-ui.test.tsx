@@ -245,11 +245,43 @@ describe("announcement UI", () => {
         initialAnnouncement={announcement("announcement-1", "已发布通知", "published")}
       />,
     );
+    expect(screen.getByRole("button", { name: "发送邮件提醒" })).toBeInTheDocument();
+    expect(screen.queryByText("首次发布时同时写入逐学生邮件任务")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存并发送更新提醒" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "删除通知" }));
 
     expect(confirm).toHaveBeenCalledOnce();
     expect(csrfFetchMock).not.toHaveBeenCalled();
     expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("sends reminders without saving unchanged content and saves edits before sending", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const current = announcement("announcement-1", "通知", "published");
+    csrfFetchMock.mockResolvedValue(current);
+    render(<AnnouncementEditor directions={[]} initialAnnouncement={current} />);
+
+    for (let count = 1; count <= 2; count += 1) {
+      fireEvent.click(screen.getByRole("button", { name: "发送邮件提醒" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "发送邮件提醒" })).toBeEnabled());
+      expect(csrfFetchMock).toHaveBeenCalledTimes(count);
+      expect(csrfFetchMock).toHaveBeenLastCalledWith(
+        "/admin/announcements/announcement-1/send-email",
+        expect.objectContaining({ method: "POST" }),
+      );
+    }
+
+    const updated = { ...current, title: "修改后的通知", revision: 2 };
+    csrfFetchMock.mockResolvedValue(updated);
+    fireEvent.change(screen.getByLabelText("标题"), { target: { value: updated.title } });
+    fireEvent.click(screen.getByRole("button", { name: "发送邮件提醒" }));
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledTimes(4));
+    expect(csrfFetchMock.mock.calls[2]).toEqual([
+      "/admin/announcements/announcement-1",
+      expect.objectContaining({ method: "PATCH" }),
+    ]);
+    expect(JSON.parse(csrfFetchMock.mock.calls[2][1].body)).toMatchObject({ title: updated.title, revision: 1 });
+    expect(csrfFetchMock.mock.calls[3][0]).toBe("/admin/announcements/announcement-1/send-email");
   });
 
   it("inserts a validated image attachment into Markdown", () => {

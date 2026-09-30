@@ -212,7 +212,7 @@ export type Dashboard = {
   unread_count: number;
   unread_counts: NotificationUnreadCounts;
   recent_announcements: AnnouncementSummary[];
-  assignments: { id: string; title: string; deadline: string }[];
+  assignments: { id: string; title: string }[];
   team: { id: string; name: string; member_count: number; max_members: number } | null;
 };
 
@@ -326,7 +326,6 @@ export type AssignmentAdmin = {
   max_total_bytes: number;
   publish_at: string;
   published_at: string | null;
-  deadline: string;
   closed_at: string | null;
   archived_at: string | null;
   estimated_recipient_count: number;
@@ -350,6 +349,8 @@ export type AssignmentSubmissionSummary = {
   latest_version_number: number;
   submitted_at: string;
   has_feedback: boolean;
+  is_completed: boolean;
+  completed_at: string | null;
 };
 
 export type ExcellentSubmissionSummary = {
@@ -363,9 +364,6 @@ export type AssignmentSummary = {
   id: string;
   title: string;
   status: "draft" | "published" | "closed" | "archived";
-  public_deadline: string;
-  effective_deadline: string;
-  has_personal_extension: boolean;
   can_submit: boolean;
   latest_submission: AssignmentSubmissionSummary | null;
 };
@@ -478,17 +476,6 @@ export type AssignmentSubmissionAdminPage = {
   page: number;
   page_size: number;
   total: number;
-};
-
-export type AssignmentExtension = {
-  assignment_id: string;
-  user_id: string;
-  extended_deadline: string;
-  reason: string;
-  granted_by: string | null;
-  created_at: string;
-  updated_at: string;
-  revision: number;
 };
 
 export type TeamStatus = "forming" | "dissolved";

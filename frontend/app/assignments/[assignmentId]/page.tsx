@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { assignmentSubmissionLabel } from "@/lib/assignment-status";
 import { notFound, redirect } from "next/navigation";
 
 import { AssignmentSubmissionForm } from "@/components/assignments/submission-form";
@@ -50,7 +51,7 @@ export default async function AssignmentDetailPage({
             <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
               {assignment.title}
             </h1>
-            <div className="mt-5 flex flex-wrap gap-2 font-mono text-xs">
+            <div className="mt-5 flex flex-wrap gap-2 whitespace-nowrap text-sm font-medium leading-5">
               <span
                 className={
                   assignment.can_submit
@@ -58,17 +59,16 @@ export default async function AssignmentDetailPage({
                     : "border border-[var(--color-border-strong)] px-2 py-1"
                 }
               >
-                {assignment.can_submit ? "当前可提交" : "当前只读"}
+                {assignmentSubmissionLabel(assignment)}
+              </span>
+              <span className={assignment.latest_submission?.is_completed
+                ? "border border-[var(--color-success)] px-2 py-1 text-[var(--color-success)]"
+                : "border border-[var(--color-border-strong)] px-2 py-1"}>
+                {assignment.latest_submission?.is_completed ? "已完成" : "未完成"}
               </span>
             </div>
           </div>
           <dl className="space-y-4 border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm">
-            <div>
-              <dt className="text-[var(--color-text-muted)]">公共截止</dt>
-              <dd className="mt-1 text-[var(--color-accent-hover)]">
-                {formatDateTime(assignment.public_deadline)}
-              </dd>
-            </div>
             <div>
               <dt className="text-[var(--color-text-muted)]">附件限制</dt>
               <dd className="mt-1">
@@ -95,6 +95,9 @@ export default async function AssignmentDetailPage({
           ) : null}
           <section className="mt-8 border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <h2 className="text-lg font-semibold">提交说明</h2>
+            <p className="mt-3 text-sm text-[var(--color-text-secondary)]">
+              作业开放期间可提交新版本；管理员关闭作业后仍可查看历史版本与评语。
+            </p>
             <p className="mt-3 whitespace-pre-wrap text-sm text-[var(--color-text-secondary)]">
               {assignment.submission_instructions}
             </p>
@@ -121,9 +124,18 @@ export default async function AssignmentDetailPage({
                 submission.id
               }
             >
-              查看版本与私密评语
+              查看版本与评语
             </Link>
           </div>
+          {assignment.latest_submission?.is_completed ? (
+            <p className="mt-4 text-sm text-[var(--color-success)]">
+              管理员已确认你当前最新版本完成
+              {assignment.latest_submission.completed_at
+                ? `（${formatDateTime(assignment.latest_submission.completed_at)}）`
+                : ""}
+              。
+            </p>
+          ) : null}
         </section>
       ) : null}
 
@@ -137,7 +149,7 @@ export default async function AssignmentDetailPage({
         </div>
       ) : (
         <p className="mx-auto mt-10 max-w-4xl border border-dashed border-[var(--color-border-strong)] p-6 text-[var(--color-text-muted)]">
-          当前已不能创建新版本；历史正式版本仍可查看和下载。
+          {assignmentSubmissionLabel(assignment)}；当前不能创建新版本，历史正式版本仍可查看和下载。
         </p>
       )}
 
@@ -145,7 +157,7 @@ export default async function AssignmentDetailPage({
         <section className="mx-auto mt-12 max-w-4xl border-t border-[var(--color-border)] pt-7">
           <h2 className="text-2xl font-semibold">本作业优秀提交</h2>
           <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
-            仅展示管理员标记的源版本，不含私密评语和其他历史版本。
+            仅展示管理员标记的源版本，不含评语和其他历史版本。
           </p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {assignment.excellent_submissions.map((item) => (

@@ -167,13 +167,8 @@ export function AssignmentEditor({
   const [publishAt, setPublishAt] = useState(
     localDateTime(initialAssignment?.publish_at ?? new Date().toISOString()),
   );
-  const [deadline, setDeadline] = useState(
-    localDateTime(
-      initialAssignment?.deadline ??
-        new Date(new Date(publishAt).getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-    ),
-  );
   const [pending, setPending] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -189,8 +184,8 @@ export function AssignmentEditor({
       setError("标题、作业说明和提交说明不能为空。");
       return false;
     }
-    if (!publishAt || !deadline || new Date(deadline) <= new Date(publishAt)) {
-      setError("截止时间必须晚于发布时间。");
+    if (!publishAt) {
+      setError("发布时间不能为空。");
       return false;
     }
     if (!allStudents && legacyCohortIds.length === 0 && directionIds.length === 0) {
@@ -237,7 +232,6 @@ export function AssignmentEditor({
       publish_at: lockedConfiguration
         ? assignment.publish_at
         : apiDateTime(publishAt),
-      deadline: apiDateTime(deadline),
     };
   }
 
@@ -254,6 +248,7 @@ export function AssignmentEditor({
       },
     );
     setAssignment(saved);
+    setDirty(false);
     if (current === null) {
       router.replace("/admin/assignments/" + saved.id + "/edit");
     }
@@ -330,6 +325,59 @@ export function AssignmentEditor({
     }
   }
 
+  async function reopen() {
+    if (assignment === null) return;
+    if (!window.confirm("确认重新打开？目标学生将可以继续提交作业。")) return;
+    setPending(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const result = await assignmentAdminFetch<AssignmentAdmin>(
+        "/admin/assignments/" + assignment.id + "/reopen",
+        { method: "POST" },
+      );
+      setAssignment(result);
+      setMessage("作业已重新打开。");
+      router.refresh();
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function sendEmailReminder() {
+    if (
+      assignment === null ||
+      !window.confirm("确认向当前作业受众发送邮件提醒？同一版本重复点击不会重复发送。")
+    ) {
+      return;
+    }
+    setPending(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const saved = dirty ? await persist() : assignment;
+      if (saved === null) return;
+      const reminded = await assignmentAdminFetch<AssignmentAdmin>(
+        "/admin/assignments/" + saved.id + "/send-email",
+        {
+          method: "POST",
+          headers: { "Idempotency-Key": createIdempotencyKey() },
+        },
+      );
+      setAssignment(reminded);
+      setMessage("邮件提醒已写入发送队列。相同版本重复操作不会重复发送。");
+      router.refresh();
+    } catch (nextError) {
+      if (!(nextError instanceof Error) || nextError.message !== "FORM_INVALID") {
+        setError(errorMessage(nextError));
+      }
+    } finally {
+      setPending(false);
+    }
+  }
+
   function insertKnowledgeDocument(snippet: string) {
     const input = descriptionInputRef.current;
     const next = insertMarkdownAtSelection(
@@ -339,6 +387,7 @@ export function AssignmentEditor({
       input?.selectionEnd ?? descriptionMarkdown.length,
     );
     setDescriptionMarkdown(next.value);
+    setDirty(true);
     requestAnimationFrame(() => {
       input?.focus();
       input?.setSelectionRange(next.cursor, next.cursor);
@@ -398,7 +447,7 @@ export function AssignmentEditor({
               className={inputClassName}
               disabled={!editable}
               maxLength={200}
-              onChange={(event) => setTitle(event.target.value)}
+              onChange={(event) => { setTitle(event.target.value); setDirty(true); }}
               required
               value={title}
             />
@@ -413,7 +462,7 @@ export function AssignmentEditor({
               className={inputClassName + " min-h-72 py-3 font-mono text-sm"}
               disabled={!editable}
               maxLength={200000}
-              onChange={(event) => setDescriptionMarkdown(event.target.value)}
+              onChange={(event) => { setDescriptionMarkdown(event.target.value); setDirty(true); }}
               required
               value={descriptionMarkdown}
             />
@@ -428,7 +477,7 @@ export function AssignmentEditor({
               className={inputClassName}
               disabled={!editable}
               maxLength={2000}
-              onChange={(event) => setTrainingUrl(event.target.value)}
+              onChange={(event) => { setTrainingUrl(event.target.value); setDirty(true); }}
               type="url"
               value={trainingUrl}
             />
@@ -439,7 +488,7 @@ export function AssignmentEditor({
               className={inputClassName + " min-h-32 py-3"}
               disabled={!editable}
               maxLength={50000}
-              onChange={(event) => setInstructions(event.target.value)}
+              onChange={(event) => { setInstructions(event.target.value); setDirty(true); }}
               required
               value={instructions}
             />
@@ -457,7 +506,7 @@ export function AssignmentEditor({
                 checked={allStudents}
                 disabled={!editable}
                 name="assignment-audience"
-                onChange={() => setAllStudents(true)}
+                onChange={() => { setAllStudents(true); setDirty(true); }}
                 type="radio"
               />
               全部激活学生
@@ -467,7 +516,7 @@ export function AssignmentEditor({
                 checked={!allStudents}
                 disabled={!editable}
                 name="assignment-audience"
-                onChange={() => setAllStudents(false)}
+                onChange={() => { setAllStudents(false); setDirty(true); }}
                 type="radio"
               />
               按技术方向
@@ -483,9 +532,7 @@ export function AssignmentEditor({
                       <input
                         checked={directionIds.includes(direction.id)}
                         disabled={!editable || !direction.is_active}
-                        onChange={() =>
-                          setDirectionIds(toggle(directionIds, direction.id))
-                        }
+                        onChange={() => { setDirectionIds(toggle(directionIds, direction.id)); setDirty(true); }}
                         type="checkbox"
                       />
                       {direction.name}
@@ -504,7 +551,7 @@ export function AssignmentEditor({
             <input
               className={inputClassName}
               disabled={!rulesEditable}
-              onChange={(event) => setAllowedExtensions(event.target.value)}
+              onChange={(event) => { setAllowedExtensions(event.target.value); setDirty(true); }}
               value={allowedExtensions}
             />
           </label>
@@ -515,7 +562,7 @@ export function AssignmentEditor({
               disabled={!rulesEditable}
               max={2147483648}
               min={1}
-              onChange={(event) => setMaxTotalBytes(event.target.value)}
+              onChange={(event) => { setMaxTotalBytes(event.target.value); setDirty(true); }}
               type="number"
               value={maxTotalBytes}
             />
@@ -525,21 +572,10 @@ export function AssignmentEditor({
             <input
               className={inputClassName}
               disabled={!rulesEditable}
-              onChange={(event) => setPublishAt(event.target.value)}
+              onChange={(event) => { setPublishAt(event.target.value); setDirty(true); }}
               required
               type="datetime-local"
               value={publishAt}
-            />
-          </label>
-          <label className="text-sm font-medium">
-            公共截止
-            <input
-              className={inputClassName}
-              disabled={!editable}
-              onChange={(event) => setDeadline(event.target.value)}
-              required
-              type="datetime-local"
-              value={deadline}
             />
           </label>
         </section>
@@ -565,7 +601,27 @@ export function AssignmentEditor({
               onClick={close}
               type="button"
             >
-              提前关闭
+              关闭作业
+            </button>
+          ) : null}
+          {assignment && (assignment.status === "published" || assignment.status === "closed") ? (
+            <button
+              className="min-h-11 border border-[var(--color-border-strong)] px-5"
+              disabled={pending}
+              onClick={sendEmailReminder}
+              type="button"
+            >
+              发送邮件提醒
+            </button>
+          ) : null}
+          {assignment?.status === "closed" ? (
+            <button
+              className="min-h-11 border border-[var(--color-accent)] px-5 text-[var(--color-accent-hover)]"
+              disabled={pending}
+              onClick={reopen}
+              type="button"
+            >
+              重新打开
             </button>
           ) : null}
           {assignment ? (
@@ -600,8 +656,7 @@ export function AssignmentEditor({
               ))}
             </div>
             <div className="mt-5 grid gap-2 border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4 text-sm text-[var(--color-text-secondary)] sm:grid-cols-3">
-              <p className="sm:col-span-3">发布后仍可修改标题、说明、资料链接、提交说明、受众和公共截止；扩展名、附件上限和发布时间冻结。</p>
-              <p>当前截止：{formatDateTime(assignment.deadline)}</p>
+              <p className="sm:col-span-3">发布后仍可修改标题、说明、资料链接、提交说明和受众；扩展名、附件上限和发布时间冻结。</p>
               <p>最后正式提交：{assignment.stats.last_submitted_at ? formatDateTime(assignment.stats.last_submitted_at) : "暂无"}</p>
               <p>附件上限：{formatFileSize(assignment.max_total_bytes)}</p>
             </div>

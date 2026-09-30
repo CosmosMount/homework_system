@@ -55,7 +55,7 @@ export default async function ExcellentSubmissionPage({
           </time>
         </div>
         <p className="mt-5 border-l-2 border-[var(--color-info)] px-4 text-sm text-[var(--color-text-muted)]">
-          此页面只展示被标记的源版本，不包含作者的私密评语或其他历史版本。
+          此页面只展示被标记的源版本，不包含作者的评语或其他历史版本。
         </p>
 
         {version.text_html ? (

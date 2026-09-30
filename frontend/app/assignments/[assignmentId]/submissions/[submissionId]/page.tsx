@@ -6,6 +6,7 @@ import { SafeHtml } from "@/components/announcements/safe-html";
 import { FeedbackImages } from "@/components/assignments/feedback-images";
 import { AppShell } from "@/components/layout/app-shell";
 import {
+  getAssignment,
   getDashboard,
   getSubmission,
   requireUser,
@@ -33,6 +34,8 @@ export default async function SubmissionPage({
     notFound();
   }
 
+  const assignment = await getAssignment(assignmentId);
+
   return (
     <AppShell unreadCounts={dashboard.unread_counts} user={user}>
       <Link
@@ -58,6 +61,11 @@ export default async function SubmissionPage({
         </span>
       </div>
 
+      {assignment?.can_submit ? (
+        <Link className="mt-6 inline-block min-h-11 border border-[var(--color-border-strong)] px-5 py-2" href={"/assignments/" + assignmentId}>
+          创建新版本
+        </Link>
+      ) : null}
       <div className="mt-8 space-y-6">
         {submission.versions.map((version) => (
           <article
@@ -136,7 +144,7 @@ export default async function SubmissionPage({
             {version.feedback ? (
               <section className="mt-7 border-l-2 border-[var(--color-info)] bg-[var(--color-bg)] p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-lg font-semibold">私密评语</h3>
+                  <h3 className="text-lg font-semibold">作业评语</h3>
                   <span className="font-mono text-xs text-[var(--color-text-muted)]">
                     revision {version.feedback.revision}
                   </span>
@@ -151,7 +159,7 @@ export default async function SubmissionPage({
               </section>
             ) : (
               <p className="mt-6 text-sm text-[var(--color-text-muted)]">
-                该版本尚无私密评语。
+                  该版本尚无评语。
               </p>
             )}
           </article>

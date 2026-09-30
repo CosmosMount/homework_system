@@ -4,7 +4,6 @@ import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AppShell } from "@/components/layout/app-shell";
 import { commandLinkClassName } from "@/components/ui/form-controls";
 import { getAdminAssignments, requireAdmin } from "@/lib/api/server";
-import { formatDateTime } from "@/lib/format";
 
 export default async function AdminAssignmentsPage() {
   const [admin, assignments] = await Promise.all([
@@ -17,7 +16,7 @@ export default async function AdminAssignmentsPage() {
       <AdminPageHeader
         eyebrow="ADMIN / ASSIGNMENTS"
         title="作业管理"
-        description="管理固定受众快照、公共截止、提交统计与优秀版本。"
+        description="管理固定受众快照、提交统计与优秀版本。"
         actions={
           <Link
             className={commandLinkClassName + " group"}
@@ -53,12 +52,6 @@ export default async function AdminAssignmentsPage() {
                 </div>
                 <h2 className="mt-3 text-xl font-medium">{assignment.title}</h2>
               </div>
-              <time
-                className="font-mono text-xs text-[var(--color-text-muted)]"
-                dateTime={assignment.deadline}
-              >
-                截止 {formatDateTime(assignment.deadline)}
-              </time>
             </div>
           </Link>
         ))}

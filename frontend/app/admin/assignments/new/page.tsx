@@ -16,7 +16,7 @@ export default async function NewAssignmentPage() {
         backLabel="返回作业管理"
         eyebrow="ADMIN / ASSIGNMENTS / NEW"
         title="新建作业"
-        description="发布事务会固化逐学生受众；发布后仅允许修正文案和延长截止。"
+        description="发布时确定学生受众；发布后可修正文案与受众，手动关闭前持续开放提交。"
       />
       <AssignmentEditor
         directions={directions}

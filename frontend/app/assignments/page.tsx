@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { assignmentSubmissionLabel } from "@/lib/assignment-status";
 import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/layout/app-shell";
@@ -9,7 +10,6 @@ import {
   requireUser,
 } from "@/lib/api/server";
 import { isAdminView } from "@/lib/api/types";
-import { formatDateTime } from "@/lib/format";
 
 type AssignmentsPageProps = Readonly<{
   searchParams: Promise<{
@@ -66,7 +66,7 @@ export default async function AssignmentsPage({
       </p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">培训作业</h1>
       <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
-        列表按作业公共截止时间排序，历史受众以发布快照为准。
+        已发布作业可随时提交和更新版本，管理员关闭后保留历史查看。
       </p>
 
       <form className="mt-8 grid gap-4 border border-[var(--color-border)] bg-[var(--color-surface)] p-5 md:grid-cols-[minmax(0,1fr)_14rem_auto] md:items-end">
@@ -87,7 +87,7 @@ export default async function AssignmentsPage({
             <option value="all">全部</option>
             <option value="pending">待提交</option>
             <option value="submitted">已提交</option>
-            <option value="closed">已截止</option>
+            <option value="closed">已关闭</option>
           </select>
         </label>
         <button
@@ -111,7 +111,7 @@ export default async function AssignmentsPage({
             >
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <div className="flex flex-wrap gap-2 font-mono text-xs">
+                  <div className="flex flex-wrap gap-2 whitespace-nowrap text-sm font-medium leading-5">
                     <span
                       className={
                         assignment.can_submit
@@ -119,7 +119,7 @@ export default async function AssignmentsPage({
                           : "border border-[var(--color-border-strong)] px-2 py-0.5"
                       }
                     >
-                      {assignment.can_submit ? "可提交" : "只读"}
+                      {assignmentSubmissionLabel(assignment)}
                     </span>
                     {assignment.latest_submission ? (
                       <span className="border border-[var(--color-accent)] px-2 py-0.5 text-[var(--color-accent-hover)]">
@@ -127,15 +127,14 @@ export default async function AssignmentsPage({
                         {assignment.latest_submission.latest_version_number}
                       </span>
                     ) : null}
+                    <span className={assignment.latest_submission?.is_completed
+                      ? "border border-[var(--color-success)] px-2 py-0.5 text-[var(--color-success)]"
+                      : "border border-[var(--color-border-strong)] px-2 py-0.5"}>
+                      {assignment.latest_submission?.is_completed ? "已完成" : "未完成"}
+                    </span>
                   </div>
                   <h2 className="mt-3 text-xl font-medium">{assignment.title}</h2>
                 </div>
-                <time
-                  className="font-mono text-xs text-[var(--color-text-muted)]"
-                  dateTime={assignment.public_deadline}
-                >
-                  截止 {formatDateTime(assignment.public_deadline)}
-                </time>
               </div>
             </Link>
           ))}

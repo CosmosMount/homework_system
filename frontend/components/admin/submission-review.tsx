@@ -117,7 +117,7 @@ export function SubmissionReview({
         [selected.id]: feedback.images,
       }));
       setFeedbackMarkdown("");
-      setMessage("私密评语已保存；站内提醒不包含正文。");
+      setMessage("评语已保存；站内提醒不包含正文。");
       router.refresh();
     } catch (nextError) {
       setError(errorMessage(nextError));
@@ -358,7 +358,7 @@ export function SubmissionReview({
         </article>
 
         <section className="border border-[var(--color-border)] bg-[var(--color-surface)] p-5 sm:p-6">
-          <h2 className="text-xl font-semibold">私密评语</h2>
+          <h2 className="text-xl font-semibold">作业评语</h2>
           <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
             创建或修订后只通知个人提交者“有新评语”，提醒和邮件不包含正文。
           </p>

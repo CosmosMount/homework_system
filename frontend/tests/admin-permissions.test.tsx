@@ -98,7 +98,6 @@ function assignment(): AssignmentAdmin {
     max_total_bytes: 1024,
     publish_at: "2026-08-25T10:00:00Z",
     published_at: null,
-    deadline: "2026-09-01T10:00:00Z",
     closed_at: null,
     archived_at: null,
     estimated_recipient_count: 0,
@@ -159,6 +158,35 @@ describe("admin permissions UI", () => {
         },
       ],
     });
+  });
+
+  it("sends assignment reminders directly until content is edited", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const current = { ...assignment(), status: "published" as const };
+    csrfFetchMock.mockResolvedValue(current);
+    render(<AssignmentEditor directions={[]} initialAssignment={current} initialSubmissions={[]} />);
+
+    for (let count = 1; count <= 2; count += 1) {
+      fireEvent.click(screen.getByRole("button", { name: "发送邮件提醒" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "发送邮件提醒" })).toBeEnabled());
+      expect(csrfFetchMock).toHaveBeenCalledTimes(count);
+      expect(csrfFetchMock).toHaveBeenLastCalledWith(
+        "/admin/assignments/assignment-1/send-email",
+        expect.objectContaining({ method: "POST" }),
+      );
+    }
+
+    const updated = { ...current, title: "修改后的作业", revision: current.revision + 1 };
+    csrfFetchMock.mockResolvedValue(updated);
+    fireEvent.change(screen.getByLabelText("标题"), { target: { value: updated.title } });
+    fireEvent.click(screen.getByRole("button", { name: "发送邮件提醒" }));
+    await waitFor(() => expect(csrfFetchMock).toHaveBeenCalledTimes(4));
+    expect(csrfFetchMock.mock.calls[2]).toEqual([
+      "/admin/assignments/assignment-1",
+      expect.objectContaining({ method: "PATCH" }),
+    ]);
+    expect(JSON.parse(csrfFetchMock.mock.calls[2][1].body)).toMatchObject({ title: updated.title, revision: current.revision });
+    expect(csrfFetchMock.mock.calls[3][0]).toBe("/admin/assignments/assignment-1/send-email");
   });
 
   it("returns from a personal submission to its original assignment", async () => {
@@ -373,7 +401,6 @@ describe("admin permissions UI", () => {
       status: "published",
       published_at: "2026-08-25T10:00:39.321Z",
       publish_at: "2026-08-25T10:00:37.321Z",
-      deadline: "2026-09-01T10:00:42.111Z",
       stats: {
         ...assignment().stats,
         submitted_count: 1,
@@ -389,7 +416,6 @@ describe("admin permissions UI", () => {
         direction_ids: ["direction-1"],
         match: "intersection" as const,
       },
-      deadline: new Date("2026-08-31T18:00").toISOString(),
       revision: published.revision + 1,
     };
     csrfFetchMock.mockResolvedValue(updated);
@@ -413,18 +439,16 @@ describe("admin permissions UI", () => {
 
     expect(screen.getByLabelText("标题")).toBeEnabled();
     expect(screen.getByLabelText("Markdown 作业说明")).toBeEnabled();
-    expect(screen.getByLabelText("公共截止")).toBeEnabled();
+    expect(screen.queryByLabelText("公共截止")).not.toBeInTheDocument();
     expect(screen.getByLabelText("全部激活学生")).toBeEnabled();
     expect(screen.getByLabelText("允许扩展名（逗号分隔）")).toBeDisabled();
     expect(screen.getByLabelText("单版本附件总上限（字节）")).toBeDisabled();
     expect(screen.getByLabelText("发布时间")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送邮件提醒" })).toBeInTheDocument();
     expect(screen.getByText(/最后正式提交/)).toHaveTextContent("2026年8月30日 17:30");
 
     fireEvent.change(screen.getByLabelText("标题"), {
       target: { value: "修正后的已发布作业" },
-    });
-    fireEvent.change(screen.getByLabelText("公共截止"), {
-      target: { value: "2026-08-31T18:00" },
     });
     fireEvent.click(screen.getByLabelText("按技术方向"));
     fireEvent.click(screen.getByLabelText("电控"));
@@ -446,7 +470,6 @@ describe("admin permissions UI", () => {
       allowed_extensions: published.allowed_extensions,
       max_total_bytes: published.max_total_bytes,
       publish_at: "2026-08-25T10:00:37.321Z",
-      deadline: new Date("2026-08-31T18:00").toISOString(),
     });
     expect(screen.getByText("作业已更新。")).toBeInTheDocument();
   });
@@ -700,6 +723,40 @@ describe("admin permissions UI", () => {
     expect(replaceMock).not.toHaveBeenCalled();
   });
 
+  it("reopens a closed assignment and restores the close action", async () => {
+    const closed: AssignmentAdmin = {
+      ...assignment(),
+      status: "closed",
+      published_at: "2026-08-25T10:00:00Z",
+      closed_at: "2026-08-25T11:00:00Z",
+    };
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    csrfFetchMock.mockResolvedValue({
+      ...closed,
+      status: "published",
+      closed_at: null,
+      revision: closed.revision + 1,
+    });
+
+    render(
+      <AssignmentEditor
+        directions={[]}
+        initialAssignment={closed}
+        initialSubmissions={[]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "重新打开" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("作业已重新打开。")).toBeInTheDocument();
+    });
+    expect(csrfFetchMock).toHaveBeenCalledWith(
+      "/admin/assignments/assignment-1/reopen",
+      { method: "POST" },
+    );
+    expect(screen.getByRole("button", { name: "关闭作业" })).toBeInTheDocument();
+  });
+
   it("confirms and deletes a published assignment before returning to the list", async () => {
     const published: AssignmentAdmin = {
       ...assignment(),
@@ -780,4 +837,12 @@ describe("admin permissions UI", () => {
     expect(screen.getByText("当前设备").querySelector("svg")).toBeTruthy();
     expect(screen.getByText("已记住登录")).toBeInTheDocument();
   });
+  it("does not expose deadline or personal extension controls", () => {
+    const draft = assignment();
+    render(<AssignmentEditor directions={[]} initialAssignment={draft} initialSubmissions={[]} />);
+    expect(screen.queryByLabelText("公共截止")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/修正截止时间/)).not.toBeInTheDocument();
+    expect(screen.queryByText("管理个人延期")).not.toBeInTheDocument();
+  });
+
 });

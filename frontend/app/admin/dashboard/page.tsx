@@ -39,17 +39,6 @@ export default async function AdminDashboardPage() {
     ["pending", "processing", "retry"].includes(item.status),
   ).length;
   const deadMail = outbox.items.filter((item) => item.status === "dead").length;
-  const now = new Date().getTime();
-  const seventyTwoHoursLater = now + 72 * 60 * 60 * 1000;
-  const upcomingDeadlines = assignments.items.filter((item) => {
-    const deadline = new Date(item.deadline).getTime();
-    return (
-      item.status === "published" &&
-      deadline >= now &&
-      deadline <= seventyTwoHoursLater
-    );
-  }).length;
-
   return (
     <AppShell user={admin}>
       <AdminPageHeader
@@ -68,7 +57,6 @@ export default async function AdminDashboardPage() {
           ],
           ["通知 / 已发布", announcements.total + " / " + published, "/admin/announcements"],
           ["作业", assignments.total, "/admin/assignments"],
-          ["72 小时内截止", upcomingDeadlines, "/admin/assignments"],
           ["邮件待处理", queuedMail, "/admin/mail"],
           ["邮件已停止", deadMail, "/admin/mail"],
         ].map(([label, value, href]) => (

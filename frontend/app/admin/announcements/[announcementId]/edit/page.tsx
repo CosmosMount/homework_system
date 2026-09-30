@@ -33,7 +33,7 @@ export default async function EditAnnouncementPage({
         backLabel="返回通知管理"
         eyebrow="ADMIN / ANNOUNCEMENTS / EDIT"
         title="编辑通知"
-        description="所有写入都携带 revision；发布、更新提醒和附件完成均使用幂等请求。"
+        description="保存通知后，可按需发送邮件提醒。"
       />
       <AnnouncementEditor
         directions={directions}
