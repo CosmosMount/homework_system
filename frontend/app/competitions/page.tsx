@@ -8,6 +8,8 @@ import { AppShell } from "@/components/layout/app-shell";
 import {
   getDashboard,
   getMyTeam,
+  getMyTeamApplications,
+  getCaptainTeamApplications,
   getTeams,
   getTeamSettings,
   requireUser,
@@ -40,6 +42,12 @@ export default async function CompetitionsPage({ searchParams }: CompetitionsPag
   const [team, teams] = teamSettings.is_team_open
     ? await Promise.all([getMyTeam(), getTeams(directorySearch)])
     : [null, null];
+  const [myApplications, captainApplications] = teamSettings.is_team_open
+    ? await Promise.all([
+        getMyTeamApplications(),
+        team?.can_manage ? getCaptainTeamApplications(team.id) : Promise.resolve([]),
+      ])
+    : [[], []];
 
   return (
     <AppShell unreadCounts={dashboard.unread_counts} user={user}>
@@ -48,7 +56,7 @@ export default async function CompetitionsPage({ searchParams }: CompetitionsPag
       </p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">校内赛队伍中心</h1>
       <p className="mt-3 text-sm text-[var(--color-text-secondary)]">
-        组队配置：机械 2 人 + 嵌入式控制/硬件合计 1～2 人 + 算法 1 人，共 4～5 人。
+        组队配置：机械 1～2 人 + 嵌入式控制 1 人 + 嵌入式硬件 1 人 + 算法 1 人，共 4～5 人。
         按当前技术组判定，可以先建队再逐步补齐；需改方向请前往<Link className="underline" href="/profile">个人资料</Link>。
       </p>
       <p className="mt-3 max-w-3xl text-[var(--color-text-secondary)]">
@@ -65,10 +73,10 @@ export default async function CompetitionsPage({ searchParams }: CompetitionsPag
 
       {teamSettings.is_team_open ? <TeamEntryPanel hasTeam={team !== null} /> : null}
       {teamSettings.is_team_open && team ? (
-        <TeamManagementPanel initialTeam={team} currentUserId={user.id} />
+        <TeamManagementPanel initialTeam={team} currentUserId={user.id} initialApplications={captainApplications} />
       ) : null}
       {teamSettings.is_team_open && teams ? (
-        <TeamDirectoryPanel initialTeams={teams} query={query} />
+        <TeamDirectoryPanel initialTeams={teams} query={query} currentTeamId={team?.id ?? null} initialApplications={myApplications} />
       ) : (
         <section className="mt-8 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-secondary)] shadow-[var(--shadow-card)] sm:p-6">
           组队开放后，本页将提供创建、邀请码加入、自动分配和队伍目录；目前可前往个人简介页填写简介并按技术组浏览同学。

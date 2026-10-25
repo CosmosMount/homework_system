@@ -169,11 +169,15 @@ export function AdminTeamCorrectionPanel({
                 {team.member_count} / {team.max_members} 人
                 {team.composition ? (
                   <span className="mt-2 block">
-                    机械 {team.composition.mechanical}/2 · 嵌入式控制/硬件 {team.composition.embedded_hardware}/1～2 · 算法 {team.composition.algorithm}/1
+                    机械 {team.composition.mechanical}/2（至少 1 人） · 嵌入式控制 {team.composition.embedded_control}/1 · 嵌入式硬件 {team.composition.embedded_hardware}/1 · 算法 {team.composition.algorithm}/1
                     {team.composition.unassigned > 0 ? ` · 未匹配方向 ${team.composition.unassigned} 人` : ""}
                     {team.composition.is_complete ? " · 配置已齐全" : " · 配置待补齐或调整"}
                   </span>
                 ) : null}
+                <span className="mt-2 block text-sm text-[var(--color-text-secondary)]">
+                  队长邮箱：{team.captain_email || "未提供"}
+                  {team.contact_wechat ? ` · 队伍微信：${team.contact_wechat}` : ""}
+                </span>
               </p>
             </div>
             <span className={"border px-2 py-1 font-mono text-xs " + statusTagClass(team.status)}>

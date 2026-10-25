@@ -502,8 +502,11 @@ export type Team = {
   revision: number;
   members: TeamMember[];
   can_manage: boolean;
+  captain_email?: string | null;
+  contact_wechat?: string | null;
   composition?: {
     mechanical: number;
+    embedded_control: number;
     embedded_hardware: number;
     algorithm: number;
     unassigned: number;
@@ -527,6 +530,7 @@ export type TeamDirectoryItem = {
   member_count: number;
   max_members: number;
   can_join: boolean;
+  can_apply: boolean;
 };
 
 export type TeamDirectoryPage = {
@@ -534,6 +538,17 @@ export type TeamDirectoryPage = {
   total: number;
   page: number;
   page_size: number;
+};
+
+export type TeamApplication = {
+  id: string;
+  team_id: string;
+  team_name: string;
+  applicant_user_id: string;
+  applicant_full_name: string;
+  status: "pending" | "accepted" | "declined" | "cancelled";
+  created_at: string;
+  responded_at: string | null;
 };
 
 export type InviteCodeRotated = {

@@ -34,7 +34,7 @@ function team(overrides: Partial<Team> = {}): Team {
     status: "forming",
     captain_user_id: "student-1",
     member_count: 1,
-    max_members: 4,
+    max_members: 5,
     dissolved_at: null,
     revision: 1,
     members: [
@@ -50,6 +50,8 @@ function team(overrides: Partial<Team> = {}): Team {
       },
     ],
     can_manage: true,
+    captain_email: "captain@connect.hkust-gz.edu.cn",
+    contact_wechat: null,
     ...overrides,
   };
 }
@@ -91,12 +93,15 @@ describe("independent team UI", () => {
     fireEvent.change(screen.getByLabelText("队伍名称"), {
       target: { value: " 第一队 " },
     });
+    fireEvent.change(screen.getByLabelText("队伍联系微信（可选）"), {
+      target: { value: " pnx_team " },
+    });
     fireEvent.click(screen.getByRole("button", { name: "创建队伍" }));
 
     expect(await screen.findByText("A1B2C3D4E5F6")).toBeInTheDocument();
     expect(csrfFetchMock).toHaveBeenCalledWith("/teams", {
       method: "POST",
-      body: JSON.stringify({ name: "第一队" }),
+      body: JSON.stringify({ name: "第一队", contact_wechat: "pnx_team" }),
     });
     expect(refreshMock).toHaveBeenCalledOnce();
     expect(screen.getByText(/邀请码只显示这一次/)).toBeInTheDocument();
@@ -164,6 +169,33 @@ describe("independent team UI", () => {
       { method: "DELETE" },
     );
     expect(pushMock).toHaveBeenCalledWith("/competitions");
+  });
+
+  it("shows control and hardware quotas separately in student and admin details", () => {
+    const withComposition = team({
+      member_count: 4,
+      contact_wechat: "pnx_team",
+      composition: {
+        mechanical: 1,
+        embedded_control: 1,
+        embedded_hardware: 1,
+        algorithm: 1,
+        unassigned: 0,
+        is_complete: true,
+      },
+    });
+    const studentView = render(
+      <TeamManagementPanel currentUserId="student-1" initialTeam={withComposition} />,
+    );
+    expect(screen.getByText(/嵌入式控制 1\/1 · 嵌入式硬件 1\/1/)).toBeInTheDocument();
+    expect(screen.getByText(/机械 1\/2（至少 1 人）/)).toBeInTheDocument();
+    expect(screen.getByText(/队长邮箱：captain@connect\.hkust-gz\.edu\.cn · 队伍微信：pnx_team/)).toBeInTheDocument();
+    expect(screen.getByText(/配置已齐全/)).toBeInTheDocument();
+    studentView.unmount();
+
+    render(<AdminTeamCorrectionPanel initialTeam={withComposition} users={[candidate]} />);
+    expect(screen.getByText(/嵌入式控制 1\/1 · 嵌入式硬件 1\/1/)).toBeInTheDocument();
+    expect(screen.getByText(/队长邮箱：captain@connect\.hkust-gz\.edu\.cn · 队伍微信：pnx_team/)).toBeInTheDocument();
   });
 
   it("requires a reason before deleting a team and permanently deletes it", async () => {

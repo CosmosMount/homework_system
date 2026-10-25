@@ -1,16 +1,28 @@
-import Link from "next/link";
+"use client";
 
-import { buttonClassName, inputClassName } from "@/components/ui/form-controls";
-import type { TeamDirectoryPage } from "@/lib/api/types";
+import Link from "next/link";
+import { useState } from "react";
+
+import { buttonClassName, FormMessage, inputClassName } from "@/components/ui/form-controls";
+import { ApiError, csrfFetch } from "@/lib/api/client";
+import type { TeamApplication, TeamDirectoryPage } from "@/lib/api/types";
 import { statusTagClass, teamStatusLabel } from "@/lib/competition-labels";
 
 export function TeamDirectoryPanel({
   initialTeams,
   query,
+  currentTeamId,
+  initialApplications,
 }: Readonly<{
   initialTeams: TeamDirectoryPage;
   query: string;
+  currentTeamId: string | null;
+  initialApplications: TeamApplication[];
 }>) {
+  const [pendingTeamIds, setPendingTeamIds] = useState<string[]>(initialApplications.map((item) => item.team_id));
+  const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const page = initialTeams.page;
   const hasNext = page * initialTeams.page_size < initialTeams.total;
 
@@ -20,6 +32,21 @@ export function TeamDirectoryPanel({
     if (nextPage > 1) params.set("page", String(nextPage));
     const suffix = params.toString();
     return "/competitions" + (suffix ? "?" + suffix : "");
+  }
+
+  async function apply(teamId: string) {
+    setSubmittingId(teamId);
+    setMessage(null);
+    setError(null);
+    try {
+      await csrfFetch<TeamApplication>(`/teams/${teamId}/applications`, { method: "POST" });
+      setPendingTeamIds((current) => [...new Set([...current, teamId])]);
+      setMessage("申请已提交，队长将收到邮件提醒。获批后会自动加入或更换队伍。");
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "提交申请失败，请稍后重试。");
+    } finally {
+      setSubmittingId(null);
+    }
   }
 
   return (
@@ -56,6 +83,9 @@ export function TeamDirectoryPanel({
         </button>
       </form>
 
+      {message ? <div className="mt-4"><FormMessage tone="success">{message}</FormMessage></div> : null}
+      {error ? <div className="mt-4"><FormMessage>{error}</FormMessage></div> : null}
+
       <div className="mt-5 grid gap-3 md:grid-cols-2">
         {initialTeams.items.map((team) => (
           <article
@@ -78,10 +108,18 @@ export function TeamDirectoryPanel({
               </span>
             </div>
             <p className="mt-3 text-xs text-[var(--color-text-muted)]">
-              {team.can_join
-                ? "可通过队长提供的邀请码加入"
-                : "队伍已满或当前不可加入"}
+              {team.id === currentTeamId ? "当前队伍" : team.can_apply ? "可向队长申请加入" : "当前不可申请（容量、技术方向或队长身份限制）"}
             </p>
+            {team.can_apply ? (
+              <button
+                className="mt-3 min-h-10 border border-[var(--color-info)] px-4 text-sm text-[var(--color-info)] disabled:opacity-60"
+                disabled={pendingTeamIds.includes(team.id) || submittingId !== null}
+                onClick={() => apply(team.id)}
+                type="button"
+              >
+                {pendingTeamIds.includes(team.id) ? "已申请" : submittingId === team.id ? "提交中…" : currentTeamId ? "申请更换到此队" : "申请加入"}
+              </button>
+            ) : null}
           </article>
         ))}
       </div>

@@ -43,6 +43,7 @@ import type {
   Session,
   Submission,
   Team,
+  TeamApplication,
   SelfDirectionOptions,
   TeamDirectoryPage,
   TeamInvitation,
@@ -395,6 +396,18 @@ export async function getTeams(search = ""): Promise<TeamDirectoryPage> {
 
 export async function getMyTeam(): Promise<Team | null> {
   return resolveProtectedResult(await serverApi<Team | null>("/teams/me"));
+}
+
+export async function getMyTeamApplications(): Promise<TeamApplication[]> {
+  const result = await serverApi<{ items: TeamApplication[] }>("/team-applications/me");
+  return resolveProtectedResult(result).items;
+}
+
+export async function getCaptainTeamApplications(teamId: string): Promise<TeamApplication[]> {
+  const result = await serverApi<{ items: TeamApplication[] }>(
+    "/teams/" + encodeURIComponent(teamId) + "/applications",
+  );
+  return resolveProtectedResult(result).items;
 }
 
 export async function getTeamProfiles(search = ""): Promise<TeamProfilePage> {

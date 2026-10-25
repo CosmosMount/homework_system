@@ -9,7 +9,7 @@ import {
   inputClassName,
 } from "@/components/ui/form-controls";
 import { ApiError, apiFetch, csrfFetch } from "@/lib/api/client";
-import type { InviteCodeRotated, Team } from "@/lib/api/types";
+import type { InviteCodeRotated, Team, TeamApplication } from "@/lib/api/types";
 import { teamStatusLabel, statusTagClass } from "@/lib/competition-labels";
 import { formatDateTime } from "@/lib/format";
 
@@ -20,10 +20,13 @@ function errorMessage(error: unknown): string {
 export function TeamManagementPanel({
   initialTeam,
   currentUserId,
-}: Readonly<{ initialTeam: Team; currentUserId: string }>) {
+  initialApplications = [],
+}: Readonly<{ initialTeam: Team; currentUserId: string; initialApplications?: TeamApplication[] }>) {
   const router = useRouter();
   const [team, setTeam] = useState(initialTeam);
   const [newCaptainId, setNewCaptainId] = useState("");
+  const [newName, setNewName] = useState(initialTeam.name);
+  const [applications, setApplications] = useState(initialApplications);
   const [oneTimeInviteCode, setOneTimeInviteCode] = useState<string | null>(
     null,
   );
@@ -37,6 +40,37 @@ export function TeamManagementPanel({
     setPending(true);
     setMessage(null);
     setError(null);
+  }
+
+  async function renameTeam() {
+    if (!newName.trim()) { setError("请输入队伍名称。"); return; }
+    begin();
+    try {
+      const updated = await csrfFetch<Team>(`/teams/${team.id}/name`, {
+        method: "PATCH", body: JSON.stringify({ name: newName.trim(), revision: team.revision }),
+      });
+      setTeam(updated);
+      setNewName(updated.name);
+      setMessage("队名已更新。");
+      router.refresh();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally { setPending(false); }
+  }
+
+  async function respondToApplication(applicationId: string, accept: boolean) {
+    if (!window.confirm(accept ? "同意申请？已有队伍的申请人会立即换到本队。" : "拒绝这条入队申请？")) return;
+    begin();
+    try {
+      await csrfFetch(`/teams/${team.id}/applications/${applicationId}/${accept ? "accept" : "decline"}`, { method: "POST" });
+      setApplications((current) => current.filter((item) => item.id !== applicationId));
+      const updated = await apiFetch<Team | null>("/teams/me");
+      if (updated) setTeam(updated);
+      setMessage(accept ? "已同意申请，申请人已加入队伍。" : "已拒绝申请。");
+      router.refresh();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally { setPending(false); }
   }
 
   async function rotateInvite() {
@@ -140,11 +174,15 @@ export function TeamManagementPanel({
               当前 {team.member_count} / {team.max_members} 人。
               {team.composition ? (
                 <span className="mt-2 block">
-                  机械 {team.composition.mechanical}/2 · 嵌入式控制/硬件 {team.composition.embedded_hardware}/1～2 · 算法 {team.composition.algorithm}/1
+                  机械 {team.composition.mechanical}/2（至少 1 人） · 嵌入式控制 {team.composition.embedded_control}/1 · 嵌入式硬件 {team.composition.embedded_hardware}/1 · 算法 {team.composition.algorithm}/1
                   {team.composition.unassigned > 0 ? ` · 未匹配方向 ${team.composition.unassigned} 人` : ""}
                   {team.composition.is_complete ? " · 配置已齐全" : " · 配置待补齐或调整"}
                 </span>
               ) : null}
+              <span className="mt-2 block text-sm text-[var(--color-text-secondary)]">
+                队长邮箱：{team.captain_email || "未提供"}
+                {team.contact_wechat ? ` · 队伍微信：${team.contact_wechat}` : ""}
+              </span>
             </p>
           </div>
           <span
@@ -236,6 +274,24 @@ export function TeamManagementPanel({
         {canManage ? (
           <section className="space-y-4 border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <h2 className="text-lg font-semibold">队长操作</h2>
+            <label className="block text-sm">队伍名称
+              <input className={inputClassName} disabled={pending} maxLength={120} onChange={(event) => setNewName(event.target.value)} value={newName} />
+            </label>
+            <button className={buttonClassName + " w-full"} disabled={pending || newName.trim() === team.name} onClick={renameTeam} type="button">更改队名</button>
+            <div className="border-t border-[var(--color-border)] pt-4">
+              <h3 className="font-medium">入队申请 {applications.length > 0 ? `(${applications.length})` : ""}</h3>
+              {applications.length === 0 ? <p className="mt-2 text-sm text-[var(--color-text-muted)]">暂无待处理申请。</p> : null}
+              {applications.map((application) => (
+                <div className="mt-3 border border-[var(--color-border)] p-3" key={application.id}>
+                  <p className="text-sm">{application.applicant_full_name}</p>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">申请于 {formatDateTime(application.created_at)}</p>
+                  <div className="mt-3 flex gap-2">
+                    <button className="min-h-10 border border-[var(--color-info)] px-3 text-sm text-[var(--color-info)]" disabled={pending} onClick={() => respondToApplication(application.id, true)} type="button">同意</button>
+                    <button className="min-h-10 border border-[var(--color-danger)] px-3 text-sm text-[var(--color-danger)]" disabled={pending} onClick={() => respondToApplication(application.id, false)} type="button">拒绝</button>
+                  </div>
+                </div>
+              ))}
+            </div>
             <button
               className={buttonClassName + " w-full"}
               disabled={pending}

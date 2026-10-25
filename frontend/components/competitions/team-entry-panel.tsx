@@ -18,6 +18,7 @@ function errorMessage(error: unknown): string {
 export function TeamEntryPanel({ hasTeam }: Readonly<{ hasTeam: boolean }>) {
   const router = useRouter();
   const [teamName, setTeamName] = useState("");
+  const [contactWechat, setContactWechat] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [enteredTeam, setEnteredTeam] = useState(false);
   const joined = hasTeam || enteredTeam;
@@ -49,9 +50,13 @@ export function TeamEntryPanel({ hasTeam }: Readonly<{ hasTeam: boolean }>) {
     try {
       const result = await csrfFetch<TeamCreated>("/teams", {
         method: "POST",
-        body: JSON.stringify({ name: normalizedName }),
+        body: JSON.stringify({
+          name: normalizedName,
+          contact_wechat: contactWechat.trim() || null,
+        }),
       });
       setTeamName("");
+      setContactWechat("");
       complete("队伍已创建。邀请码只显示这一次，请立即保存。", result.invite_code);
     } catch (nextError) {
       setError(errorMessage(nextError));
@@ -137,6 +142,20 @@ export function TeamEntryPanel({ hasTeam }: Readonly<{ hasTeam: boolean }>) {
                 value={teamName}
               />
             </label>
+            <label className="block text-sm font-medium">
+              队伍联系微信（可选）
+              <input
+                className={inputClassName}
+                disabled={pending}
+                maxLength={64}
+                onChange={(event) => setContactWechat(event.target.value)}
+                placeholder="填写后方便队员联系队长"
+                value={contactWechat}
+              />
+            </label>
+            <p className="text-xs leading-5 text-[var(--color-text-muted)]">
+              可选填写；仅当前队员和真实管理员可见。
+            </p>
             <button className={buttonClassName + " w-full"} disabled={pending} onClick={createTeam} type="button">
               创建队伍
             </button>
