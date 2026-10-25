@@ -46,6 +46,7 @@ function itemsForUser(
           { href: "/admin/assignments", label: "作业管理", icon: "assignment" },
           { href: "/admin/knowledge", label: "知识库同步", icon: "book" },
           { href: "/admin/competitions", label: "校内赛", icon: "competition" },
+          { href: "/materials", label: "物资管理", icon: "materials" },
           { href: "/admin/intentions", label: "问卷管理", icon: "layers" },
           {
             href: "/admin/help",
@@ -65,6 +66,7 @@ function itemsForUser(
           { href: "/assignments", label: "作业", icon: "assignment", badgeCount: unreadCounts.assignments },
           { href: "/knowledge", label: "培训文档", icon: "book" },
           { href: "/competitions", label: "校内赛", icon: "competition", badgeCount: unreadCounts.teams },
+          { href: "/materials", label: "物资管理", icon: "materials" },
           { href: "/intentions", label: "问卷", icon: "layers" },
           { href: "/help", label: "反馈答疑", icon: "help", badgeCount: unreadCounts.help_requests },
         ];

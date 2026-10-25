@@ -1,6 +1,57 @@
 export type Role = "student" | "admin";
 export type UserStatus = "pending_email" | "active" | "disabled";
 
+export type MaterialLoan = {
+  id: string;
+  borrower_user_id: string | null;
+  borrower_name: string;
+  checked_out_at: string;
+  returned_at: string | null;
+  has_return_photo: boolean;
+};
+
+export type MaterialItem = {
+  id: string;
+  qr_token: string;
+  name: string;
+  price: string;
+  tech_group: string;
+  created_at: string;
+  paired_material: { id: string; name: string; deleted_at: string | null } | null;
+  active_loan: MaterialLoan | null;
+};
+
+export type MaterialPage = {
+  items: MaterialItem[];
+  page: number;
+  page_size: number;
+  total_count: number;
+  in_use_count: number;
+  available_count: number;
+  has_more: boolean;
+};
+
+export type MaterialDetail = MaterialItem & {
+  deleted_at: string | null;
+  created_by_user_id: string | null;
+  created_by_name: string;
+  can_delete: boolean;
+  history: MaterialLoan[];
+};
+
+export type MaterialScanView = MaterialItem & {
+  can_return: boolean;
+  can_reclaim: boolean;
+};
+
+export type MaterialScanResult = {
+  material_id: string;
+  related_material_ids: string[];
+  material_name: string;
+  operation: "CHECKOUT" | "RETURN" | "RECLAIM";
+  occurred_at: string;
+};
+
 export type CategorySummary = {
   id: string;
   code: string;

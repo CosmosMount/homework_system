@@ -20,7 +20,8 @@
     "next": "16.3.5",
     "qrcode": "^1.5.4",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "@mmote/niimbluelib": "0.0.1-alpha.45"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",

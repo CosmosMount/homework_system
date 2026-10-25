@@ -40,7 +40,7 @@ export async function apiFetch<T>(
   init: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(init.headers);
-  if (init.body !== undefined && !headers.has("Content-Type")) {
+  if (init.body !== undefined && !(init.body instanceof FormData) && !(init.body instanceof Blob) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
   const response = await fetch("/api/v1" + path, {

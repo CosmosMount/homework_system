@@ -17,6 +17,7 @@ export type AppIconName =
   | "layers"
   | "log-out"
   | "mail"
+  | "materials"
   | "menu"
   | "monitor"
   | "profile"
@@ -75,6 +76,13 @@ function IconShape({ name }: Pick<AppIconProps, "name">): ReactNode {
         <>
           <path d="M8 4h8v4.5a4 4 0 0 1-8 0V4Z" />
           <path d="M8 6H4.5v1.5A3.5 3.5 0 0 0 8 11M16 6h3.5v1.5A3.5 3.5 0 0 1 16 11M12 13v4M8.5 20h7M9.5 17h5" />
+        </>
+      );
+    case "materials":
+      return (
+        <>
+          <path d="m3.5 7 8.5-4 8.5 4v10L12 21l-8.5-4V7Z" />
+          <path d="M3.5 7 12 11l8.5-4M12 11v10" />
         </>
       );
     case "users":
