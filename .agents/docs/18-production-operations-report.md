@@ -1,5 +1,41 @@
 # 生产运维与故障恢复验收报告
 
+## 2026-10-19 队长联系方式与配额展示修复部署
+
+- 生产项目 `pnx-training` 从 `team-composition-20261019` 切至固定标签 `team-contact-composition-20261019`。Backend/Worker 镜像为 `sha256:65ee0b8cb74c53f5191f0fd46a615784de68e57f1780044e20ae303c85982103`，Frontend 为 `sha256:acd1f334247c43024c3e29fafae399dfb36066b1f301acee1cb4e901ba883e00`；旧镜像分别保留为 `team-contact-composition-rollback-20261019`。
+- 候选源码已通过队伍/迁移定向回归、前端完整 30 文件/187 项、Ruff/格式/严格 Mypy、ESLint/TypeScript 和 Docker 内 Frontend 正式构建；隔离 PostgreSQL 完成 `0031↔0032` 迁移往返及 `alembic check`。完整后端套件在既有 ASGI 等待点停滞后中止，未宣称全量通过。
+- 发布窗口先停止 Nginx、Frontend、Backend、Worker，仅保持 PostgreSQL/MinIO healthy，生成 OpenPGP 每日同点备份 `pnx-backup-20261019T083735Z-daily`。归档 9,017,463,829 字节、数据库 dump 101,562,109 字节、对象清单 2,451 个/14,385,771,344 字节，依赖周基线 `pnx-backup-20260905T163853Z-weekly`；归档权限 0600，外层 SHA-256 为 `37104214d7fec7d03737a7c4d5ea542ddc294e17cf1c3d82f0fbfce66adda6f5`。该归档未在本轮再次做空卷恢复，候选仍沿用此前已完成的隔离恢复验证。
+- 生产一次执行 `20261013_0031→20261019_0032`，新增 `teams.contact_wechat` 可空 `varchar(64)` 与 `ck_teams_contact_wechat_present` 检查约束；随后先替换 Backend/Worker，再替换 Frontend/Nginx。PostgreSQL/MinIO 容器与数据卷未重建，`alembic current` 为 `20261019_0032 (head)`，`alembic check` 无漂移。
+- 当前六服务均 healthy、重启计数为 0；`/login`、`/health/live`、`/health/ready`、`/health/worker` 为 200，匿名 `/api/v1/teams`、`/api/v1/team-profiles`、`/api/v1/admin/teams` 为 401，`/competitions` 为 307。运行 OpenAPI 125 条路径并含 `contact_wechat`；发布后用户/队伍/当前成员/作业/提交/Outbox 为 `118/34/65/22/409/1674`。
+- 近期 Backend、Worker、Frontend、Nginx 日志未见 `ERROR`、`CRITICAL`、`FATAL`、Traceback 或 5xx。验收未携带真实学生/管理员 Session、Cookie、CSRF，未调用组队写接口、发送邮件、触发飞书同步或写入对象。旧应用回滚优先只切镜像并保留 `0032`，不自动降级数据库；当前 HTTP 5000、同机备份/GPG 私钥及真实学生浏览器流程仍是既有遗留事项。
+
+## 2026-10-19 组队方向配额部署
+
+- 生产 `pnx-training` 从 `materials-20261016` 切至 `team-composition-20261019`：Backend/Worker 镜像 `sha256:6c20c73ca5d39deb49e5f5cf09d501480dfd41e798555b321825ccf22b544604`，Frontend 镜像 `sha256:74ebfe24756e94fb733f6f8308382b952b9af37036a263dfdb3d86e77eaf2775`。旧镜像分别保留为 `team-composition-rollback-20261019`。后端对旧运行镜像仅覆盖 `teams/composition.py`、`schemas.py`、`service.py`；前端从当前工作区正式构建，编译、TypeScript 和页面生成通过，线上产物含新规则文案及独立控制字段。
+- 候选镜像内机械 1 人和 2 人完整状态、控制/硬件独立上限、有效容量 5 和 OpenAPI 字段检查通过。隔离 `pnx_test_team_direction` PostgreSQL 17 应用至 `20261013_0031`，使用候选镜像执行真实并发抢方向名额、改方向与加入竞争及开关校验，通过后清理测试容器与卷。源码阶段后端相关 195 项、前端 187 项及静态检查通过；完整后端套件仍有既有 ASGI 等待点，未宣称全量通过。
+- 暂停应用写入后生成新的 OpenPGP 同点每日备份 `pnx-backup-20261019T055037Z-daily`：归档 9,017,441,948 字节、数据库 dump 101,537,387 字节、对象清单 2,451 个/14,385,771,344 字节，依赖周基线 `pnx-backup-20260905T163853Z-weekly`，外层校验通过。旧应用恢复时陈旧的 `migrate` 一次性容器先退出 255；将其重建为旧生产固定镜像并幂等执行后，六服务恢复健康。
+- 独立空卷项目 `pnx-restore-team-composition-20261019` 完成链式恢复，RPO 381 秒、RTO 302 秒；2,451 个对象全部恢复，数据库引用缺失、大小和 SHA-256 差异均为 0，2 个历史未关联对象保留。恢复库与生产备份时的用户/成形队伍/当前成员/作业/提交/Outbox 计数一致，均为 `117/4/9/22/409/1663`；候选 `alembic check` 无漂移。恢复项目容器、网络和卷已精确清理。
+- 生产 `migrate` 以新镜像幂等执行后，依次替换 Backend/Worker、Frontend 并检查、重载 Nginx；PostgreSQL/MinIO 容器 ID 保持 `bfa750f66ab0…`、`331150f34f37…`，卷未重建，数据库仍为 `20261013_0031 (head)`，无结构或数据迁移。六服务 healthy、重启 0；`/login` 和三个健康入口 200，匿名 `/competitions` 307、队伍本人和管理员 API 401；稳定期应用严重错误与 Nginx 5xx 为 0。
+- 发布后计数为 `117/5/11/22/409/1663`；只读时间核对显示备份时间后新增 1 支队伍和 2 条当前成员记录，属于入口恢复后的用户组队活动。本次未以真实学生身份调用生产组队写接口。回滚只需应用镜像回到 `team-composition-rollback-20261019`，不恢复旧数据库；新规则下不合规的历史队伍不自动拆分。加密备份、周基线及 GPG 解密私钥仍同机 `/tmp`，必须异机分离保存；真实学生浏览器组队操作尚待现场验收。
+
+## 2026-10-16 物资管理部署
+
+- 生产项目 `pnx-training` 从 `team-applications-20261003` 发布到固定标签 `materials-20261016`：Backend/Worker `sha256:c179cd22d00981c20a5cef8a89a5bc228c634b5668a6743433c43ba43a63294d`，Frontend `sha256:ee33a36a871049575ca00a6075eccaca8c4b6dfa31e021170f8db61c86254d3b`。旧镜像分别保留为 `materials-rollback-20261016`。候选基于逐文件核对过的工作区源码快照构建；运行 Backend 相对旧镜像仅物资模块、路由、迁移、照片清理和备份对账差异，前端其他队伍源码为已上线基线。
+- 发布前暂停 Nginx、Frontend、Backend、Worker，保持 PostgreSQL/MinIO 健康，创建 OpenPGP 每日同点备份 `pnx-backup-20261016T050135Z-daily`。归档 8,199,829,375 字节、数据库 dump 101,390,496 字节、0600，外层 SHA-256 校验通过；目标对象 2,406 个/13,569,148,041 字节，依赖 `pnx-backup-20260905T163853Z-weekly`，本次累计增量 1,065 个对象、删除标记 1,950 个。备份完成后先恢复旧应用以缩短维护时间；历史 migrate 容器使用 9 月镜像，重新创建为当前旧固定镜像并幂等运行后六服务恢复健康。
+- 独立空卷 `pnx-restore-material-20261016` 恢复成功，RPO 356 秒、RTO 322 秒；2,406 个对象全部恢复，数据库引用缺失、大小与 SHA-256 差异均为 0，2 个历史未关联对象仅计数保留。候选镜像在副本上完成 `0030→0031→0030→0031`、`alembic check` 无漂移，升级后 `materials/material_loans=0/0`。隔离容器、网络、数据卷已精确清理。
+- 生产一次执行 `20261003_0030→20261013_0031`，随后定向替换 Backend/Worker、Frontend 并刷新 Nginx；PostgreSQL 与 MinIO 容器 ID 仍为 `bfa750f66ab0…`、`331150f34f37…`，未重建数据卷。发布前后用户/作业/提交/Outbox 粗粒度计数均为 `120/21/378/1591`；新物资/借用表为 `0/0`。六服务 healthy、重启 0，`/health/live`、`ready`、`worker` 和 `/login` 均 200，匿名 `/materials` 307，物资 API 401；近期 Backend/Worker/Frontend 错误和 Nginx 5xx 行数均为 0。
+- 运行 OpenAPI 包含全部物资接口；Nginx 运行配置包含归还精确路径 9 MiB 限额。无登录态的 3 MiB 归还请求为后端 401，10 MiB 为代理 413，普通 API 的 3 MiB 为 413；两份 Nginx 配置用同版镜像验证语法。发布后生产只读对象对账为 2,404 个可用引用、2,406 个对象，缺失/大小/SHA-256 差异均为 0、同样 2 个历史未关联对象。后端存储/物资/备份 21 项、Ruff/格式/Mypy、前端完整 30 文件/186 项、ESLint、镜像内 `npm ci` 与 Next.js 生产编译通过。未对生产真实物资执行登记或领还，未上传照片或连接 D110 实物。
+- 浏览器 Web Serial 需要受信安全上下文，现有 `http://10.4.150.222:5000` 入口无法验收 D110 打印；需先配置受信 HTTPS，再现场测试打印和在校实物扫码。加密归档、校验文件和 GPG 私钥仍同宿主机 `/tmp`，仅适合短期恢复，须迁往受控异机并与私钥分离。当前 `npm audit --omit=dev` 报 4 项生产依赖公告：Next.js critical、Sharp 与 source-map-js high、KaTeX low；本次新增打印依赖未在该列表，后续需独立评估升级。若回退旧 Worker，先处理 `delete_material_photo` 待办任务或继续使用新 Worker；有物资数据后不得直接降级删除新表。
+
+## 2026-10-03 校内赛队伍改名、申请与换队部署
+
+- 生产 Compose 项目为 `pnx-training`，原运行数据库为 `20260927_0029`。发布镜像固定为 `team-applications-20261003`：Backend/Worker `sha256:09c5a293478a670399e8b604793d4072d90aad91ea214595abb6ec7b1e1d1caf`，Frontend `sha256:c406f916676f95233cb7d19fecdc36347419df58d334a2d2ea3ca0b060f698e8`；原运行镜像已固定为 `team-applications-rollback-20261003`。两张候选镜像在 Docker 中构建，前端正式 Next.js 编译、TypeScript 与页面生成通过。
+- 发布前每日 OpenPGP 增量备份 `pnx-backup-20261003T112306Z-daily`，归档 7,027,335,985 字节，数据库快照 99,497,246 字节；目标 2,291 个对象、12,394,274,949 字节，依赖周基线 `pnx-backup-20260905T163853Z-weekly`。归档外层 SHA-256 校验通过。隔离项目 `pnx-restore-team-applications-20261003` 从全新 PostgreSQL/MinIO 卷恢复，RPO 229 秒、RTO 298 秒，缺失/大小/哈希差异为 0；2 个未关联对象按规范保留。恢复项目完成后精确清理，生产数据卷未触碰。
+- 恢复副本运行候选镜像完成 `0029→0030→0029→0030` 往返与 `alembic check` 无漂移。隔离外层回滚事务实际创建虚构队伍和申请，完成队长改名、重复申请只入队 1 个邮件任务、队长同意后的原子换队；没有启动隔离 Worker 或发送 SMTP。
+- 生产一次执行 `0029→0030` 后先切换 Backend/Worker，再切换 Frontend 并重载 Nginx；PostgreSQL/MinIO 容器与数据卷未替换。六服务 healthy、重启 0，运行 OpenAPI 含新端点；登录及 live/ready/worker 为 200，匿名队伍中心 307，申请读取、创建、审批和改名接口为 401。
+- 切换前后粗粒度计数保持：用户 138、成形队伍 22、当前成员 95、作业 19、个人提交 273、版本 346、Outbox 1469；新申请表为 0，组队及自助方向开关继续为 `true/true`。近期 Backend/Worker/Frontend/Nginx 日志未见错误或 5xx。未携带真实学生 Session 调用业务写接口、未发送真实申请邮件。
+- 本次应用回滚优先只切换镜像并保留新增表；旧 Worker 不认识 `team_application_email`，回滚前必须处理该类待投递任务或继续运行新 Worker。备份归档与 GPG 密钥材料仍保存在同机 `/tmp`，须异机转移并分离保存；现有 HTTP 5000 部署入口的 HTTPS 改造仍按既有运维要求推进。
+
 ## 2026-09-30 作业与通知统一邮件提醒部署
 
 - 固定标签 `email-reminder-20260930` 已上线，Backend/Worker 镜像 `sha256:030348c9613558104d18205e0b655f07c292c4900b56215e413894b73a80a50e`，Frontend 镜像 `sha256:323fa7fed16a96263026ebfe06c41c37cd154242a83c2bef51cc60ca06c69f9c`，均以 `appuser` 运行。2026-09-30 17:50:24（北京时间）完成两阶段切换与 Nginx 重载。旧镜像固定为 `email-reminder-rollback-20260930`。
@@ -1207,3 +1243,21 @@
 - 容器内 Next.js 生产构建编译、TypeScript、页面数据收集和静态页面生成通过；Frontend 与 Nginx 均 healthy。
 - 通过开发入口验收 `/login`、`/health/live`、`/health/ready`、`/health/worker` 均返回 200；部署后日志未发现 5xx、fatal、panic 或启动异常。
 - 本轮只涉及置顶图钉图标、当前设备显示器图标和 PNX / TRAINING HUB 字标样式，无 API、权限、数据库、MinIO 对象或业务数据变化。
+
+## 2026-10-25 物资排序与二维码优先排版部署
+
+生产固定标签 `materials-order-label-20261025`，Backend/Worker `sha256:0025b188704572bc25f348e59af4ca337c017db4324c3846733dd9fed0f3e0c0`，Frontend `sha256:3806bea93a760a1fba90af2e05733972fcbe53e4d28f841ef22334da5af0cbd8`。北京时间 21:26 完成切换。后端相对上一运行镜像仅替换物资 Repository；前端完整 190 项通过，正式镜像编译、TypeScript、范围 ESLint 与二维码编译产物检查通过。
+
+发布前暂停写入取得同点快照，进入离线加密后恢复原服务。新备份 `pnx-backup-20261025T131550Z-daily` 为 9,035,835,758 字节，包含 2,474 个对象；独立空卷恢复 RPO 256 秒、RTO 320 秒，数据库引用无缺失、大小/哈希差异为 0，2 个历史未关联对象保留。在副本上用候选确认全部 80 件物资顺序正确，`alembic check` 无漂移。临时恢复项目、网络、卷已清理。
+
+数据库仍为 `20261019_0032`，无新增迁移；恢复原服务时 Compose 启动了既有 migrate 服务，执行到已有 head，无结构变化。生产 PostgreSQL/MinIO 容器和卷未重建。六服务 healthy、重启 0；登录、live/ready/worker/nginx-health 返回 200，匿名物资页/API 为 307/401。稳定期 Backend/Worker/Frontend/Nginx 严重错误与 5xx 计数为 0。发布前后用户/物资/借用/提交/Outbox 为 `116/80/0/411/1688 → 116/80/0/412/1688`，新增 1 份提交的创建时间在备份后，符合恢复服务后的正常业务活动。
+
+回滚标签 `materials-order-label-rollback-20261025` 已保留，只需应用镜像回滚，无数据库降级。未使用真实 Session 写业务数据或连接实物 D110；实体走纸对位与扫码仍待现场验收。原有 HTTP 5000 主入口的 Web Serial 安全上下文限制不变。加密备份与 GPG 解密材料仍在同机 `/tmp`，须按既有运维要求异机分离保管。
+
+## 2026-10-25 真实扫码链接密度与重复配对热修已部署
+
+用户确认入口为 `https://pnx-tutorial.demonmaster.cn/materials`。真实含字母 UUID 在原 M 纠错码中达到 41 模块，上一版重复数字示例测试漏报；URL 协议/主机和 UUID 改为等价大写后利用字母数字编码，保持原路径、身份、M 纠错、双点模块和四模块静区。详情与台账共用生成函数。打印前验证标签，同一页面成功后保持串口连接，显式断开、错误与卸载释放，首次/换页/刷新仍需选择设备。
+
+Frontend 固定 `materials-print-session-20261025`，摘要 `sha256:ba5b751bd9d6233b0bd85024803c7440987af7ae547501155da6e6a97e141917`，北京时间 21:53 热更新并重载 Nginx。Backend/Worker 只添加同名镜像别名，实际镜像仍为 `sha256:0025b188704572bc25f348e59af4ca337c017db4324c3846733dd9fed0f3e0c0`；后端、Worker、PostgreSQL、MinIO 容器 ID 均未变，无迁移。沿用本日 `pnx-backup-20261025T131550Z-daily` 已从空卷恢复验证的加密备份，前端回滚镜像为 `materials-order-label-20261025`。
+
+全量前端 32 文件/194 项、TypeScript、范围 ESLint 和 Docker 生产构建通过。用户实际 HTTPS 域名物资页及等价大写扫码地址匿名均为 307；物资 API 匿名 401，登录与四健康入口 200，六服务 healthy。未连接实物串口，实体打印仍需用户验证。实物偏移与浏览器授权无法由 Mock 测试代替。

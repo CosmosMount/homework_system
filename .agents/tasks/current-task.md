@@ -1,5 +1,37 @@
 # 当前任务
 
+## 2026-10-25 分步提交与推送
+
+当前修改已按后端、队伍前端、物资前端与文档四组整理，验证结果移入 `completed.md`，唯一计划为 `.agents/plans/plan_commit_push_20261025.md`。推送目标为 `origin/main`，本次不涉及部署或新增迁移。
+
+## 物资标签二维码优先（2026-10-25）
+
+源码、验证与生产部署已完成，详情移入 `completed.md`，唯一计划为 `.agents/plans/plan_material_label_layout.md`。Frontend 热修标签 `materials-print-session-20261025`，已修复真实 UUID 密度与同页重复配对；六服务健康，待 D110 实物定位与扫码验收，无新增数据库迁移。
+
+## 物资批量排序修复（2026-10-25）
+
+源码、隔离验证与生产部署完成，结果移入 `completed.md`；唯一计划为 `.agents/plans/plan_material_ordering.md`。固定标签 `materials-order-label-20261025`，现有 80 件物资排序已在恢复副本验证；无新增数据库迁移。
+
+## 队长联系方式与配额显示修复（2026-10-19）
+
+源码、隔离 PostgreSQL 验证和生产部署均已完成，详细结果已移入 `completed.md`；唯一正式计划为 `.agents/plans/plan_team_contact_and_quota_display.md`。生产固定标签 `team-contact-composition-20261019`，数据库为 `20261019_0032`，六服务健康。待现场确认真实学生浏览器填写微信及查看队长联系方式；备份与解密私钥仍需异机分离保存。
+
+## 组队方向配额调整（2026-10-19）
+
+源码、隔离 PostgreSQL 并发验证及生产部署均已完成，结果移入 `completed.md`；唯一正式计划为 `.agents/plans/plan_team_composition_update.md`。生产固定标签 `team-composition-20261019`，数据库保持 `20261013_0031`，无迁移，六服务健康；真实学生浏览器组队操作仍待现场验收。
+
+## 物资管理（2026-10-16）
+
+源码与生产部署均已完成，详细结果移入 `completed.md`；唯一正式计划为 `.agents/plans/plan_material_management.md`。生产固定标签 `materials-20261016`、数据库 `20261013_0031`，六服务健康。待现场验证事项：受信 HTTPS 入口下的 D110 实物打印与在校实物扫码；当前 HTTP 入口不提供 Web Serial 安全上下文。
+
+## 飞书培训综述图表与双语润色（2026-10-07）
+
+已在原中英文独立 LaTeX 源文件中加入系统闭环图、视觉处理链图和培训阶段表，并润色各方向的课程说明与实践建议。两版各保留五个显式分页和相同的 37 个飞书来源链接；结构静态检查通过。内置编译器因平台标准目录错误无法编译，隔离容器的软件源也不可用；新版 PDF 与实测六页排版仍待验证，旧 PDF 仅对应 2026-09-25 版本。正式计划继续使用 `.agents/plans/plan_training_illustration.md`；无业务代码、数据迁移或飞书同步。
+
+## 校内赛队伍改名、申请与换队（2026-10-03）
+
+源码与生产部署均已完成，详细结果移入 `completed.md`；唯一正式计划为 `.agents/plans/plan_team_change_and_applications.md`。固定标签 `team-applications-20261003`，生产数据库为 `20261003_0030`，六服务健康。加密备份已从空卷恢复并对账 2,291 个对象；未发送真实申请邮件。现有组队开放开关保持开启。
+
 ## 备用域名登录来源修复（2026-09-30）
 
 已将 `pnx-tutorial.demonmaster.cn` 加入当前 Docker Compose 的 `TRUSTED_HOSTS` 与 `CSRF_TRUSTED_ORIGINS`，保持 `APP_BASE_URL=http://10.4.150.222:5000` 主链接不变。后端新增显式备用 Origin 白名单并完成镜像重建；Backend、Worker healthy。备用域名登录携带正确 Origin 时已通过来源校验，错误账号返回正常 `INVALID_CREDENTIALS`，不再返回 `CSRF_FAILED`。正式计划为 `.agents/plans/plan_trusted_csrf_origins.md`。

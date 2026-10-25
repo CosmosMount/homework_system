@@ -1,5 +1,13 @@
 # 部署与网络
 
+## 当前组队方向配额发布状态（2026-10-19）
+
+`pnx-training` 的 Backend/Worker 与 Frontend 当前运行固定标签 `team-contact-composition-20261019`，数据库为 `20261019_0032`；队伍联系方式受保护返回，配额为机械 1～2 + 控制 1 + 硬件 1 + 算法 1。新加密备份 `pnx-backup-20261019T083735Z-daily` 外层校验通过；六服务健康。镜像摘要、迁移与回滚证据见 `18-production-operations-report.md`。当前入口仍为 HTTP 5000，HTTPS 改造和备份异机分离保存仍待运维完成。
+
+## 历史校内赛队伍发布状态（2026-10-03）
+
+当时 `pnx-training` Compose 运行 Backend/Worker 与 Frontend 固定标签 `team-applications-20261003`，数据库为 `20261003_0030`。备份 `pnx-backup-20261003T112306Z-daily` 已从空卷恢复并完成对象对账；六服务健康。详细镜像摘要、迁移往返、回滚与运行验收见 `18-production-operations-report.md`。本环境沿用既有 HTTP 5000 入口；HTTPS 仍是待完成的现有生产网络要求。
+
 ## 当前隔离发布范围（2026-09-16）
 
 当前线上标签为 `assignment-feedback-images-20260916`，完整包含已部署的十五天账号自动清理、管理员人员技术组分布、知识库视频与正文完整性修复，以及作业私密评语图片。数据库为 `20260916_0026`；评语图片最多 10 张、单张 10 MiB、合计 50 MiB。Backend/Worker 与 Frontend 的部署前镜像已另加 `assignment-feedback-images-rollback-20260916` 标签；因为旧应用不识别新上传目的和关联表，正常故障处置优先前滚，受控回滚必须先停止新写入并评估是否降级 `0026 → 0025`，不得直接恢复旧数据库备份。
@@ -93,7 +101,7 @@ PostgreSQL 不加入 `app_net`。`data_net` 的 internal 属性不会阻断 Work
 - `X-Forwarded-Proto`、`Host` 和真实 IP 只信任受控代理链。
 - 开发与生产 Nginx 都必须用 `proxy_set_header X-Forwarded-For $remote_addr` 覆盖客户端自带转发头，Backend 不得直接暴露；持久 Session 的精确 IP HMAC 只能使用该可信值。若增加上游负载均衡，必须先明确可信代理链并重新验证伪造转发头不能改变绑定来源。
 - Next.js Server Component 直连内部 Backend 时必须继续透传上述 Nginx 已覆盖的单值 `X-Forwarded-For` 与当前请求 Cookie；Frontend 不得发布宿主端口，缺失可信来源头时不得用容器地址或其他值补造。
-- `/api/v1` 默认请求体限制 2 MiB；文件数据只走 `/storage/`。
+- `/api/v1` 默认请求体限制 2 MiB；普通文件数据只走 `/storage/`。物资归还接口 `/api/v1/materials/scan/return` 接受最大 8 MiB 图片，Nginx 对该精确路径设置 9 MiB 请求体上限，服务端仍校验实际图片内容和 8 MiB 业务限额。
 - `/storage/` 单请求限制为 17 MiB，覆盖 16 MiB 分片及协议开销。
 - MinIO 预签名基于内部 `minio:9000` 生成；Nginx 去除 `/storage` 前缀时必须把上游 `Host` 固定恢复为 `minio:9000`，否则 SigV4 返回 `SignatureDoesNotMatch`。
 - 安全头以 `08-auth-security-email.md` 为准。
@@ -217,7 +225,7 @@ minio
 
 1. 在隔离网络和全新 `pnx-restore-*` Compose 项目中启动相同或兼容版本的 PostgreSQL 与 MinIO，显式确认项目名；恢复脚本拒绝普通生产/开发项目名。
 2. 验证目标归档外部校验和、OpenPGP 解密、内部逐文件校验和与安全路径；若目标为每日增量，再解析并验证其唯一周基线归档。
-   对账必须同时覆盖普通 `files` 与 `knowledge_assets`；恢复脚本只在数据库引用无缺失、大小和 SHA-256 无差异时继续。未追踪对象以计数警告保留，不能自动删除，也不能把对象键写入部署摘要或普通日志。
+   对账必须同时覆盖普通 `files`、`knowledge_assets` 与仍被 `material_loans` 引用的归还照片；配套借用共用照片只计一个对象。恢复脚本只在数据库引用无缺失、大小和 SHA-256 无差异时继续。下一次领用后等待 Worker 清理的旧照片可能短暂显示为未追踪对象；以计数警告保留，不能自动删除，也不能把对象键写入部署摘要或普通日志。
 3. 恢复目标日 PostgreSQL 快照；MinIO 先导入空桶周基线，再校验基线对象集合、应用新增/变化对象和删除集合，最后核对目标完整清单。周完整备份直接导入空桶。
 4. 检查 Alembic head，运行只读引用对账，确认每个 `available` 文件存在且大小/哈希匹配，并报告未追踪对象而不自动删除。
 5. 使用测试管理员验证登录、通知、提交版本、评语、作业内优秀作业和下载，记录实际 RPO/RTO；目标为 RPO 24 小时、RTO 4 小时。
@@ -262,3 +270,11 @@ minio
 首次上线需要加速时，可先停止常驻 Worker，使用内部前台初始化命令接管数据库中唯一活动运行并复用同一同步器；不得创建第二条运行或第二套 API。命令按参考提交 `c28f8a0` 完整同步目录、全部正文和媒体，成功后再恢复 Worker，使原 Outbox 幂等收敛。后续所有更新仍由真实管理员通过 `POST /admin/knowledge/sync` 创建并由 Worker 执行。
 
 2026-08-27 的首次完整运行已以 `succeeded` 完成 228 个目录节点、212 篇文档和 977 个成功媒体引用，耗时 `00:33:28.757715`；13 次允许的资源回退未阻断快照，旧 48 篇阶段快照已被自然替代。恢复 Worker 后最新 `sync_knowledge` Outbox 为 `sent`、`attempt_count=1` 且无错误；本轮未新增数据库迁移，Alembic 保持 `20260827_0011`。
+
+## 2026-10-25 物资排序与标签修复已部署
+
+固定标签 `materials-order-label-20261025`，数据库保持 `20261019_0032`，无新增迁移。新加密备份已隔离空卷恢复并对账 2,474 个对象无引用差异；六服务健康、匿名保护正确。全量前端 190 项和生产构建通过，实物打印仍待现场验收。详细证据见生产运维报告。
+
+### 2026-10-25 打印热修部署结果
+
+Frontend 已更新为 `materials-print-session-20261025`，全量 194 项与生产构建通过；真实入口域名及等价扫码地址登录保护正常，六服务健康，无迁移。Backend/Worker 与数据容器保持。真实 UUID 编码与同页串口复用修复已上线，实体打印待验收。

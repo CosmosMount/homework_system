@@ -259,8 +259,8 @@ AUTH-012 新增 Worker 内部十五天自动清理，无新增 HTTP API、请求
 | GET /admin/team-settings | 真实管理员读取学生组队与自助方向两个独立开关 | TEAM-014、AUTH-014 |
 | PATCH /admin/team-settings | revision 必填，is_team_open 与 is_direction_change_open 至少指定一个且不为 null；未指定值保持；同源、CSRF、乐观锁与脱敏审计 | TEAM-014、AUTH-014 |
 
-| GET /teams | query、page、page_size；返回 forming 队伍的名称、状态、当前/最大人数和 can_join，不返回成员或邀请码 | TEAM-006 |
-| GET /teams/me | 返回本人当前队伍、成员、成员技术方向/已提交简介和 can_manage；无队伍返回 null | TEAM-003、TEAM-006、TEAM-010、TEAM-013 |
+| GET /teams | query、page、page_size；返回 forming 队伍的名称、状态、当前/最大人数、can_join 和 can_apply，不返回成员或邀请码 | TEAM-006、TEAM-016 |
+| GET /teams/me | 返回本人当前队伍、成员、成员技术方向/已提交简介、队长邮箱、队伍联系微信和 can_manage；无队伍返回 null | TEAM-003、TEAM-006、TEAM-010、TEAM-013、TEAM-018 |
 | GET /team-profiles | query、page、page_size；返回 active student 自愿发布的姓名、技术方向、纯文本简介、更新时间和当前账号邀请状态 | TEAM-010～TEAM-011 |
 | GET /team-profiles/me | 返回本人已发布简介或 null | TEAM-010 |
 | PUT /team-profiles/me | introduction、revision；创建时 revision 为 null，更新时必须匹配当前版本 | TEAM-010、TEAM-013 |
@@ -268,17 +268,25 @@ AUTH-012 新增 Worker 内部十五天自动清理，无新增 HTTP API、请求
 | POST /team-invitations | invitee_user_id；未满队伍的任一当前成员发出邀请，同队同目标重复 pending 幂等返回现有邀请 | TEAM-011、TEAM-013 |
 | POST /team-invitations/{invitation_id}/accept | 受邀者接受后加入队伍并取消本人其他 pending 邀请，返回本人队伍 | TEAM-012 |
 | POST /team-invitations/{invitation_id}/decline | 受邀者拒绝邀请，返回统一成功响应 | TEAM-012 |
-| POST /teams | name；直接创建队伍并成为队长，201 响应中的 invite_code 只出现一次 | TEAM-001～TEAM-002 |
+| POST /teams | name、可选 `contact_wechat`（去首尾空白后 1～64 字符）；直接创建队伍并成为队长，201 响应中的 invite_code 只出现一次 | TEAM-001～TEAM-002、TEAM-018 |
 | POST /teams/join | invite_code；加入未满 forming 队伍 | TEAM-001～TEAM-004 |
 | POST /teams/auto-assign | 无正文；优先加入当前方向有名额且人数最少的未满 forming 队伍，否则自动建队 | TEAM-002、TEAM-004～TEAM-005 |
 | POST /teams/{team_id}/invite-code/rotate | 队长轮换邀请码，明文只返回一次 | TEAM-003 |
 | DELETE /teams/{team_id}/members/{user_id} | 队长移除非队长成员，或非队长退出本人 | TEAM-003 |
 | POST /teams/{team_id}/captain-transfer | new_captain_user_id | TEAM-003 |
 | POST /teams/{team_id}/dissolve | 仅剩队长一人时解散 | TEAM-003、TEAM-007 |
+| PATCH /teams/{team_id}/name | name、revision；仅当前队长改名，校验长度、唯一性与版本 | TEAM-015 |
+| GET /team-applications/me | 本人待处理入队申请；组队关闭时返回空列表 | TEAM-016 |
+| POST /teams/{team_id}/applications | 向其他队伍申请加入；重复 pending 幂等返回现有申请；首次申请同事务入队队长邮件 | TEAM-016～TEAM-017 |
+| GET /teams/{team_id}/applications | 仅当前队长读取本队待处理申请 | TEAM-016 |
+| POST /teams/{team_id}/applications/{application_id}/accept | 当前队长同意；申请人无队则加入，原队普通成员同事务换队 | TEAM-016 |
+| POST /teams/{team_id}/applications/{application_id}/decline | 当前队长拒绝，原队成员关系不变 | TEAM-016 |
 
-创建、加入和自动分配只允许有效角色为 student 的 active 账号。已有当前队伍返回 409 ALREADY_IN_TEAM；队伍已满返回 409 TEAM_FULL；并发分配冲突返回 409 TEAM_MEMBERSHIP_CONFLICT；无效邀请码返回 400 INVITE_CODE_INVALID。邀请码尝试按账号和来源网段限流，超限返回 429 RATE_LIMITED 和 Retry-After。非队长管理返回 403 TEAM_CAPTAIN_REQUIRED，队长直接退出返回 409 CAPTAIN_TRANSFER_REQUIRED，非单人队伍解散返回 409 TEAM_NOT_EMPTY。
+创建、加入和自动分配只允许有效角色为 student 的 active 账号。已有当前队伍返回 409 ALREADY_IN_TEAM；队伍已满返回 409 TEAM_FULL；并发分配冲突返回 409 TEAM_MEMBERSHIP_CONFLICT；无效邀请码返回 400 INVITE_CODE_INVALID。邀请码尝试按账号和来源网段限流，超限返回 429 RATE_LIMITED 和 Retry-After。非队长管理返回 403 TEAM_CAPTAIN_REQUIRED，队长直接退出返回 409 CAPTAIN_TRANSFER_REQUIRED，非单人队伍解散返回 409 TEAM_NOT_EMPTY。`contact_wechat` 为空白时保存为 null，超过 64 个字符由请求校验拒绝；队长邮箱和队伍联系微信只出现在当前成员或真实管理员可读取的队伍详情中。
 
-组队简介 `introduction` 去空白后为 1～2,000 字符纯文本，不接收 HTML 字段；目录不返回邮箱、学号、邀请码或 Session 信息。发出邀请时目标必须是另一名已提交简介、当前无队伍的 active student，发送者只需是关联队伍当前成员而不要求为队长。接受时重新锁定并校验邀请仍为 pending、队伍仍 `forming` 且未满、本人仍无队伍；已处理邀请返回 `409 INVITATION_NOT_PENDING`，队伍不可用、已在队伍、队伍已满和并发成员冲突分别返回稳定 409。邀请不发送邮件、不自动加入，也不包含邀请码。
+组队简介 `introduction` 去空白后为 1～2,000 字符纯文本，不接收 HTML 字段；目录不返回邮箱、学号、队伍联系方式、邀请码或 Session 信息。发出邀请时目标必须是另一名已提交简介、当前无队伍的 active student，发送者只需是关联队伍当前成员而不要求为队长。接受时重新锁定并校验邀请仍为 pending、队伍仍 `forming` 且未满、本人仍无队伍；已处理邀请返回 `409 INVITATION_NOT_PENDING`，队伍不可用、已在队伍、队伍已满和并发成员冲突分别返回稳定 409。邀请不发送邮件、不自动加入，也不包含邀请码。
+
+入队申请与站内邀请是两条独立路径。申请由学生发起，只由目标队当前队长审批；同意时重新检查申请人 active student、目标容量与方向、旧队队长身份及一人一队唯一约束。已处理申请返回 `409 APPLICATION_NOT_PENDING`；原队队长未转让返回 `409 CAPTAIN_TRANSFER_REQUIRED`，队名重复返回 `409 TEAM_NAME_CONFLICT`，过期版本返回 `409 REVISION_CONFLICT`。邮件使用每申请唯一 Outbox 事件键，收件人从当前队长账号获取。
 
 ### 管理员队伍接口
 
@@ -512,7 +520,7 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 - `GET /users/me/direction-options`：真实 active student 读取 `is_direction_change_open` 和启用方向 `directions: [{id,code,name}]`。
 - `PATCH /users/me/direction`：真实 active student、CSRF，正文 `{direction_id,revision}`，仅非空启用方向；成功返回 `UserResponse`，实际改组同事务追加历史作业受众。关闭为 403 `DIRECTION_CHANGE_CLOSED`，陈旧版本为 409 `REVISION_CONFLICT`，无效方向为 400 `INVALID_DIRECTION`。
 - `GET /team-settings` 与 `GET/PATCH /admin/team-settings` 增加 `is_direction_change_open`；PATCH 两个开关可分别省略但不可为 null，必须携带 revision 并至少指定一个开关，未指定的开关保持。
-- 队伍详情新增 `composition: {mechanical,embedded_hardware,algorithm,unassigned,is_complete}`，完整为 2 + 1～2 + 1；目录加入与简介邀请能力同步检查当前方向名额。
+- 队伍详情的 `composition` 为 `{mechanical,embedded_control,embedded_hardware,algorithm,unassigned,is_complete}`，其中 `embedded_control` 与 `embedded_hardware` 分别计数，完整为机械 1～2 + 控制 1 + 硬件 1 + 算法 1；原 `embedded_hardware` 共享计数语义被替代。目录加入/申请与简介邀请能力同步检查各自方向名额，详情和目录返回的 `max_members` 为 `min(teams.max_members, 5)`。
 - 未设置/未知方向建队或加入返回 409 `TEAM_DIRECTION_REQUIRED`；名额冲突为 409 `TEAM_COMPOSITION_CONFLICT`。管理员补录、自助/管理员/问卷改组和方向改名也复核；允许人数不足的组建中队伍，批量修改按最终状态校验。
 
 ## 2026-09-21 知识库引用契约
@@ -528,3 +536,24 @@ COMP-001～COMP-006 已退出当前产品。后端不注册 /competitions*、/ad
 - `review_deadline >= deadline`；显式非法时间走统一验证错误。PATCH 解析默认值后若违反时间关系、修正截止前移早于历史提交/个人延期，返回 `409 STATE_CONFLICT`。延期必须 `deadline < extended_deadline <= review_deadline`，越界返回 `422 BUSINESS_RULE_VIOLATION`。
 - 正式提交和作业上传初始化统一使用 SUB-004：正常截止/个人延期前无需评语，之后必须存在本人该作业任一版本评语，且始终 `now < review_deadline`。不满足返回 `409 ASSIGNMENT_CLOSED`；受众和角色校验保持原错误。成功请求的幂等重放不创建版本，最终截止后仍返回原结果。
 - 自动关闭仍按正常截止执行，修正资格实时判断；上传完成不代表正式提交，跨最终截止提交仍拒绝。无新增接口或后台任务。
+
+## 物资管理接口（MAT-001～MAT-008，2026-10-13）
+
+均位于 `/api/v1`，要求有效 Session；所有写入还要求同源 CSRF。学生与管理员可读取，激活账号可登记和领用；管理员学生视图按普通登记人的删除权限处理。
+
+| 方法与路径 | 请求与响应 | 授权与状态 |
+| --- | --- | --- |
+| `GET /materials` | `query` 最长 200、`tech_group` 枚举、`status=AVAILABLE/IN_USE`、`page=1..100000`；返回至多 100 个 `items`、`page/page_size/has_more` 及全库未删除数量统计 | 登录态，数据库先筛选后分页 |
+| `POST /materials` | 名称、价格、技术组、`quantity=1..100`、可选配套三字段及 `idempotency_key` UUID；返回首件 `material_id`、真实 `created_count` | 激活账号；同键同内容幂等，异内容 `409 IDEMPOTENCY_CONFLICT` |
+| `GET /materials/{id}` | 物资、配套、登记人、状态、最近 20 条领用历史及 `can_delete`；软删除详情仍可读 | 登录态 |
+| `DELETE /materials/{id}` | 204，整套软删除 | 登记人或真实管理员；使用中 `409 STATE_CONFLICT` |
+| `GET /materials/scan/{qr_token}` | 当前整套状态、当前领用及 `can_return/can_reclaim` | 登录态只读，停用二维码 404 |
+| `POST /materials/scan` | JSON：`qr_token`、`operation=CHECKOUT`、空 `expected_active_loan_id`、`idempotency_key`；返回整套 ID、名称、操作与时间 | 激活账号；已占用或陈旧状态 409 |
+| `POST /materials/scan/return` | 原始图片请求体；`Content-Type` 及 `X-Material-Qr-Token`、`X-Material-Operation=RETURN/RECLAIM`、`X-Material-Loan-Id`、`Idempotency-Key` 请求头；返回整套操作结果 | 本人归还；`RECLAIM` 仅真实管理员处理匿名占用；必填图片、8 MiB 上限、文件头校验；Nginx 仅此精确路径允许 9 MiB 请求体 |
+| `GET /materials/loans/{loan_id}/photo` | 307 到 5 分钟 inline 预签名地址，`Cache-Control: private, no-store` | 登录态且照片仍关联历史，否则 404 |
+
+共享错误采用 `RESOURCE_NOT_FOUND`、`FORBIDDEN`、`STATE_CONFLICT`、`IDEMPOTENCY_CONFLICT`、`FILE_TYPE_NOT_ALLOWED`、`SUBMISSION_SIZE_EXCEEDED` 与通用验证错误。永久二维码只包含随机 `qr_token`，扫码 GET 不触发领用或归还。
+
+### GET /materials 排序补充（2026-10-25）
+
+分页前使用 `created_at DESC`、去除末尾 `-[0-9]+` 的名称、末尾编号数值（无编号为 0）、完整名称、UUID 升序确定唯一顺序。替换原更新时间/UUID 排序，无请求或响应字段变更；现有数据无需回填。

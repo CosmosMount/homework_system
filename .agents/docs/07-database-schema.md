@@ -212,11 +212,12 @@ erDiagram
 
 ### `teams`
 
-当前产品表字段：`id`、`name`、`status`、`captain_user_id`、`invite_code_hash`、`invite_code_rotated_at`、`max_members`、`dissolved_at`、`created_at`、`updated_at`、`revision`。
+当前产品表字段：`id`、`name`、`contact_wechat`、`status`、`captain_user_id`、`invite_code_hash`、`invite_code_rotated_at`、`max_members`、`dissolved_at`、`created_at`、`updated_at`、`revision`。
 
 - `status` 只允许 `forming/dissolved`；`forming` 必须有当前队长且 `dissolved_at` 为空，`dissolved` 必须无队长且 `dissolved_at` 非空。
-- `lower(name)` 对 `forming` 队伍全局唯一；`max_members` 为 1～20，当前默认 5。
+- `lower(name)` 对 `forming` 队伍全局唯一；`max_members` 为 1～20，当前默认 5。运行时有效容量为 `min(max_members, 5)`；四类方向计数由当前成员的方向名称实时派生，不另存配额或完整标志。
 - `captain_user_id` 使用 `users.id RESTRICT` 外键，并由延迟约束触发器保证队长是本队当前成员。
+- `contact_wechat` 可空，非空时去首尾空白后为 1～64 字符；只由队伍创建请求写入，详情服务向当前队员和真实管理员返回，公开目录和简介目录不连接该字段。
 - 邀请码只保存带服务端 pepper 的 HMAC，不保存明文。公开目录只从队伍和有效成员计数生成，不连接用户身份字段。
 - 自动分配锁定 forming 候选队伍，按成员数、created_at 和 id 选择；无候选时创建新队伍。
 - 管理员删除独立队伍时物理删除本行并级联当前/历史成员关系与邀请；学生解散先取消 pending 邀请。该表不被任何当前提交引用。
@@ -251,6 +252,16 @@ erDiagram
 - `status` 只允许 `pending/accepted/declined/cancelled`；pending 必须没有 `responded_at`，其他状态必须有处理时间，且发送者不能等于受邀者。
 - 部分唯一索引 `(team_id, invitee_user_id) WHERE status='pending'` 保证同队同目标最多一条待处理邀请；受邀者+状态+创建时间和队伍+状态索引支持本人列表与取消。
 - 接受邀请仍以 `team_members.user_id WHERE left_at IS NULL` 为一人一队最终约束；成功后当前邀请为 accepted，本人其他 pending 邀请为 cancelled。
+
+### `team_applications`
+
+字段：`id`、`team_id`、`applicant_user_id`、`status`、`responded_at`、`created_at`、`updated_at`、`revision`。目标队和申请人分别使用 `ON DELETE CASCADE`，不复制邮箱、姓名、邀请码或旧队 ID。
+
+- 状态限定为 `pending/accepted/declined/cancelled`，pending 无处理时间，其他状态必须有处理时间。
+- 部分唯一索引 `(team_id, applicant_user_id) WHERE status='pending'` 保证同队同申请人最多一条待处理申请；目标队/申请人状态索引支持队长和本人列表。
+- 同意换队先把旧 `team_members.left_at` 写入并 flush，再插入目标队当前成员；整笔事务与申请状态、审计一起提交，一人一队部分唯一索引为最终约束。
+- `20261003_0030` 从 `20260927_0029` 升级只创建本表与索引，不回填成员或发送邮件；downgrade 删除本表，生产执行前须完成可恢复备份。
+- 2026-10-03 生产已在新备份空卷恢复、隔离迁移往返和模型检查通过后升级到 `20261003_0030`；新表上线时为 0 行。
 
 ### legacy 赛事与原队伍
 
@@ -541,3 +552,13 @@ CHECK (
 `20260927_0029` 将两列改为可空、删除两项时间约束及状态/截止索引；仅依据最近一次关闭审计为 `assignment.close_automatic` 的未归档、未删除作业重新开放，并写迁移审计。待执行的自动关闭与延期邮件任务标记为取消。降级回填新作业的兼容截止值、恢复约束，并把迁移开放且尚为 `published` 的作业恢复为 `closed`；已取消任务不重新投递。
 
 从 `20260921_0027` 升级：先添加可空列，按 `GREATEST(deadline, MAX(assignment_extensions.extended_deadline))` 回填，再设非空和检查约束。无延期时等于正常截止。downgrade 仅移除新约束与列；提交、版本、评语、延期与对象均保留。应用回退恢复旧截止逻辑；部署时须协调 Backend/Worker 切换，不能让旧 Backend 在非空列迁移后继续创建作业。
+
+## 物资管理迁移 `20261013_0031`（MAT-001～MAT-008）
+
+前序为 `20261003_0030`，新增 `materials` 和 `material_loans`。`materials` 保存 UUID、不可变随机 `qr_token`、唯一 `registration_key`、登记请求 SHA-256、整批首次创建数量、名称、`numeric(12,2)` 单价、技术组、可空配套键/登记人、软删除时间、时间戳与 revision；配套恰好两件由 Service 锁定后校验，身份触发器阻止二维码、配套、登记批次和创建时间变更。
+
+`material_loans` 按件保存不可变领用记录、借用人、领用/归还幂等键与时间、可空照片对象键/MIME/大小/SHA-256/清理时间。唯一部分索引保证同件同时最多一条未归还记录；检查约束限制归还必须有照片，触发器只允许首次归还、下一次领用清理照片或受控账号擦除。配套共用照片对象键，但各件保留独立历史。照片二进制仅在 MinIO；旧照片无引用后由唯一 Outbox 事件异步删除。
+
+对象备份仅接受 `materials/returns/<UUID>` 照片键。存储对账只统计仍有 `photo_object_key` 的照片；配套两条历史共用键去重后校验大小及 SHA-256。照片列清空到 Worker 删除对象之间，旧对象可能短暂作为未追踪对象出现，恢复时保留并计数告警。
+
+两表的用户外键为 `ON DELETE SET NULL`。账号擦除事务设置 `pnx.account_erasure=on` 后只去身份化，不自动归还物资；真实管理员可处理匿名占用。downgrade 删除触发器、函数及两表，保留 MinIO 对象以避免迁移降级误删文件；生产降级前须先评估已产生的物资历史和对象。
