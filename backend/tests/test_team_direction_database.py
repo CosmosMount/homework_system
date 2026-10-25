@@ -56,14 +56,15 @@ async def test_real_database_serializes_join_direction_change_and_permission_swi
                 for name, label in (
                     ("mechanical", "机械"),
                     ("algorithm", "算法"),
-                    ("hardware", "硬件"),
+                    ("control", "嵌入式-控制"),
+                    ("hardware", "嵌入式-硬件"),
                 )
             ]
             session.add_all(directions)
             await session.flush()
             users = []
             for index, direction in enumerate(
-                [directions[0]] * 3 + [directions[1], directions[2], directions[0]]
+                [directions[0]] * 3 + [directions[1], directions[2], directions[0], directions[3]]
             ):
                 email = f"team-{suffix}-{index}@connect.hkust-gz.edu.cn"
                 users.append(
@@ -101,6 +102,7 @@ async def test_real_database_serializes_join_direction_change_and_permission_swi
             )
             assert created.composition.mechanical == 1
             assert created.composition.is_complete is False
+            assert created.max_members == 5
             invite_code, team_id = created.invite_code, created.id
 
         async def join(user_id: UUID) -> str:
@@ -119,6 +121,7 @@ async def test_real_database_serializes_join_direction_change_and_permission_swi
         )
         assert sorted(results) == ["TEAM_COMPOSITION_CONFLICT", "joined"]
         assert await join(user_ids[4]) == "joined"
+        assert await join(user_ids[6]) == "joined"
 
         async def change_captain_direction() -> str:
             async with factory() as session:
@@ -148,7 +151,9 @@ async def test_real_database_serializes_join_direction_change_and_permission_swi
             assert team is not None and team.id == team_id
             assert team.composition.algorithm == 1
             assert team.composition.mechanical <= 2
+            assert team.composition.embedded_control == 1
             assert team.composition.embedded_hardware == 1
+            assert team.composition.is_complete is True
 
         async with factory() as session:
             admin = await load_user(session, user_ids[5])

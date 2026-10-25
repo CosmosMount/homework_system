@@ -180,7 +180,7 @@ class OutboxProcessor:
             job.locked_at = None
             job.last_error_code = None
             job.last_error_summary = None
-            if job.job_type == "delete_account_object":
+            if job.job_type in {"delete_account_object", "delete_material_photo"}:
                 job.payload = {}
                 job.secret_payload_ciphertext = None
 
@@ -198,8 +198,8 @@ class OutboxProcessor:
                 return
             if job.job_type == "sync_knowledge":
                 summary = "知识库同步任务失败，未记录飞书凭证或服务响应正文。"
-            elif job.job_type == "delete_account_object":
-                summary = "账号对象清理失败，未记录对象键或上传标识。"
+            elif job.job_type in {"delete_account_object", "delete_material_photo"}:
+                summary = "对象清理失败，未记录对象键或上传标识。"
             else:
                 summary = None
             apply_delivery_failure(
@@ -248,10 +248,10 @@ class OutboxProcessor:
             active_job.last_error_summary = None
             return True
 
-    async def _delete_account_object(self, job: OutboxJob) -> None:
+    async def _delete_queued_object(self, job: OutboxJob) -> None:
         object_key = job.payload.get("object_key")
         if not isinstance(object_key, str) or not object_key:
-            raise ValueError("invalid account object key")
+            raise ValueError("invalid object key")
         secret_payload = self._secret_payload(job)
         minio_upload_id = secret_payload.get("minio_upload_id")
         if minio_upload_id is not None:
@@ -348,8 +348,8 @@ class OutboxProcessor:
                 elif job.job_type == "sync_knowledge":
                     run_id = UUID(str(job.payload["run_id"]))
                     await self._knowledge_sync.synchronize(run_id)
-                elif job.job_type == "delete_account_object":
-                    await self._delete_account_object(job)
+                elif job.job_type in {"delete_account_object", "delete_material_photo"}:
+                    await self._delete_queued_object(job)
                 elif job.job_type == "intention_open_email":
                     secret_payload = self._secret_payload(job)
                     if not await self._deliver_intention_email_if_active(

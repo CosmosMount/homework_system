@@ -14,6 +14,7 @@ from app.teams.composition import (
     TeamCompositionService,
     composition_for,
     direction_category,
+    effective_team_capacity,
     fits_composition,
 )
 from app.teams.schemas import TeamSettingsUpdateRequest
@@ -26,12 +27,15 @@ from app.users.service import AuditContext
     ("names", "fits", "complete"),
     [
         (["机械"], True, False),
-        (["机械", "机械组", "嵌入式控制", "算法"], True, True),
-        (["机械", "机械", "硬件", "算法组"], True, True),
-        (["机械", "机械", "嵌入式控制", "硬件", "算法"], True, True),
+        (["机械", "嵌入式控制", "嵌入式-硬件", "算法"], True, True),
+        (["机械", "机械组", "嵌入式控制", "硬件", "算法"], True, True),
+        (["机械", "机械", "嵌入式-控制", "嵌入式硬件组", "算法组"], True, True),
+        (["机械", "机械", "硬件", "算法组"], True, False),
+        (["机械", "机械", "嵌入式控制", "硬件", "硬件组", "算法"], False, False),
         (["机械", "机械", "机械"], False, False),
         (["算法", "算法"], False, False),
-        (["硬件", "嵌入式控制", "硬件"], False, False),
+        (["嵌入式控制", "嵌入式-控制"], False, False),
+        (["嵌入式硬件", "嵌入式-硬件"], False, False),
         (["机械", "硬件", "算法"], True, False),
         ([None], False, False),
         (["不明技术组"], False, False),
@@ -45,18 +49,35 @@ def test_composition_limits_and_completion(
     assert composition_for(names).is_complete is complete
 
 
+@pytest.mark.parametrize("name", ["嵌入式控制", "嵌入式控制组", "嵌入式-控制", "嵌入式-控制组"])
+def test_embedded_control_names_share_quota(name: str) -> None:
+    assert direction_category(name) == "embedded_control"
+
+
 @pytest.mark.parametrize(
-    "name", ["嵌入式", "嵌入式组", "嵌入式控制组", "硬件组", "嵌入式控制/硬件"]
+    "name", ["嵌入式硬件", "嵌入式硬件组", "嵌入式-硬件", "嵌入式-硬件组", "硬件", "硬件组"]
 )
-def test_embedded_and_hardware_share_quota(name: str) -> None:
+def test_embedded_hardware_names_share_quota(name: str) -> None:
     assert direction_category(name) == "embedded_hardware"
 
 
-@pytest.mark.parametrize("name", ["嵌入式-控制", "嵌入式-硬件"])
-def test_deployed_embedded_direction_names_share_quota(name: str) -> None:
-    assert direction_category(name) == "embedded_hardware"
-    assert composition_for(["机械", "机械", name, "算法"]).is_complete
-    assert not fits_composition(["嵌入式-控制", "嵌入式-硬件", name])
+@pytest.mark.parametrize("name", ["嵌入式", "嵌入式组", "嵌入式控制/硬件"])
+def test_unspecified_embedded_directions_are_not_assigned_a_slot(name: str) -> None:
+    assert direction_category(name) == "unassigned"
+    assert not fits_composition(["机械", name, "算法"])
+
+
+def test_composition_response_separates_control_and_hardware() -> None:
+    result = composition_for(["机械", "嵌入式-控制", "嵌入式-硬件", "算法"])
+    assert result.embedded_control == 1
+    assert result.embedded_hardware == 1
+    assert result.is_complete
+
+
+def test_effective_capacity_preserves_five_member_team_and_lower_legacy_limits() -> None:
+    assert effective_team_capacity(20) == 5
+    assert effective_team_capacity(5) == 5
+    assert effective_team_capacity(4) == 4
 
 
 def composition_service(
@@ -94,7 +115,8 @@ def composition_service(
     [
         (["机械", "机械"], "机械", "TEAM_COMPOSITION_CONFLICT"),
         (["算法"], "算法", "TEAM_COMPOSITION_CONFLICT"),
-        (["硬件", "嵌入式控制"], "嵌入式控制", "TEAM_COMPOSITION_CONFLICT"),
+        (["嵌入式控制"], "嵌入式-控制", "TEAM_COMPOSITION_CONFLICT"),
+        (["嵌入式硬件"], "嵌入式-硬件", "TEAM_COMPOSITION_CONFLICT"),
         ([], None, "TEAM_DIRECTION_REQUIRED"),
         ([], "其他", "TEAM_DIRECTION_REQUIRED"),
     ],
@@ -110,8 +132,10 @@ async def test_add_rejects_over_quota_or_unknown_direction(
 
 
 @pytest.mark.asyncio
-async def test_add_accepts_available_shared_hardware_slot() -> None:
-    service, session, user = composition_service(["机械", "机械", "嵌入式控制", "算法"], "硬件")
+async def test_add_accepts_second_mechanical_member() -> None:
+    service, session, user = composition_service(
+        ["机械", "嵌入式控制", "嵌入式-硬件", "算法"], "机械"
+    )
     await service.require_add(uuid4(), user.id)
     session.rollback.assert_not_awaited()
     cast(AsyncMock, service._users.get_by_id).assert_any_await(user.id, for_update=True)
@@ -119,9 +143,11 @@ async def test_add_accepts_available_shared_hardware_slot() -> None:
 
 @pytest.mark.asyncio
 async def test_batch_direction_swap_uses_final_state() -> None:
-    service, session, _user = composition_service(["机械", "机械", "嵌入式控制", "算法"], "机械")
+    service, session, _user = composition_service(
+        ["机械", "机械", "嵌入式控制", "嵌入式-硬件", "算法"], "机械"
+    )
     records = await service._teams.current_members(uuid4())
-    mechanical, algorithm = records[0].user.id, records[3].user.id
+    mechanical, algorithm = records[0].user.id, records[4].user.id
     mechanical_direction, algorithm_direction = uuid4(), uuid4()
     directions = {mechanical_direction: "机械", algorithm_direction: "算法"}
     cast(Any, service._users).get_direction = AsyncMock(
@@ -147,6 +173,22 @@ async def test_direction_rename_cannot_bypass_composition() -> None:
     assert direction_id is not None
     with pytest.raises(ApplicationError) as caught:
         await service.validate_direction_rename(direction_id, "算法")
+    assert caught.value.code == "TEAM_COMPOSITION_CONFLICT"
+
+
+@pytest.mark.asyncio
+async def test_direction_rename_cannot_replace_control_with_second_hardware() -> None:
+    service, _session, _user = composition_service(
+        ["机械", "嵌入式-控制", "嵌入式-硬件", "算法"], "机械"
+    )
+    members = await service._teams.current_members(uuid4())
+    cast(Any, service._teams).forming_teams_for_update = AsyncMock(
+        return_value=[SimpleNamespace(id=uuid4())]
+    )
+    direction_id = members[1].user.direction_id
+    assert direction_id is not None
+    with pytest.raises(ApplicationError) as caught:
+        await service.validate_direction_rename(direction_id, "嵌入式硬件")
     assert caught.value.code == "TEAM_COMPOSITION_CONFLICT"
 
 

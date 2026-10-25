@@ -197,6 +197,25 @@ def render_mail(
         )
         return RenderedMail(recipient=recipient, subject=subject, text=text, html=html)
 
+    if job.job_type == "team_application_email":
+        team_name = str(job.payload["team_name"])
+        applicant_name = str(job.payload["applicant_name"])
+        target_url = str(job.payload["target_url"])
+        if target_url != "/competitions" or not team_name.strip() or not applicant_name.strip():
+            raise PermanentMailError("INVALID_TEAM_APPLICATION_MAIL")
+        link = f"{base_url}{target_url}"
+        subject = "PNX Training Hub 入队申请提醒"
+        text = (
+            f"{full_name}，你好：\n\n{applicant_name} 申请加入队伍《{team_name}》。"
+            f"\n请登录平台处理：\n{link}"
+        )
+        html = (
+            f"<p>{safe_name}，你好：</p>"
+            f"<p>{escape(applicant_name)} 申请加入队伍《{escape(team_name)}》。</p>"
+            f'<p><a href="{escape(link)}">登录平台处理申请</a></p>'
+        )
+        return RenderedMail(recipient=recipient, subject=subject, text=text, html=html)
+
     if job.job_type == "intention_open_email":
         title = str(job.payload["title"])
         target_url = str(job.payload["target_url"])

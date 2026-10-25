@@ -10,6 +10,7 @@ import app.assignments.models  # noqa: F401
 import app.help_requests.models  # noqa: F401
 import app.intentions.models  # noqa: F401
 import app.knowledge.models  # noqa: F401
+import app.materials.models  # noqa: F401
 import app.submissions.models  # noqa: F401
 import app.teams.models  # noqa: F401
 from app.audit.models import AuditLog  # noqa: F401

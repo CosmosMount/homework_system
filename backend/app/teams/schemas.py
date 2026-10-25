@@ -8,7 +8,7 @@ TeamStatus = Literal["forming", "dissolved"]
 TeamInvitationStatus = Literal["pending", "accepted", "declined", "cancelled"]
 
 
-class TeamCreateRequest(BaseModel):
+class TeamNameRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 
     @field_validator("name")
@@ -20,8 +20,26 @@ class TeamCreateRequest(BaseModel):
         return normalized
 
 
+class TeamCreateRequest(TeamNameRequest):
+    contact_wechat: str | None = Field(default=None, max_length=64)
+
+    @field_validator("contact_wechat", mode="before")
+    @classmethod
+    def normalize_contact_wechat(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return value
+
+
 class TeamJoinRequest(BaseModel):
     invite_code: str = Field(min_length=6, max_length=64)
+
+
+class TeamRenameRequest(TeamNameRequest):
+    revision: int = Field(ge=1)
 
 
 class CaptainTransferRequest(BaseModel):
@@ -94,6 +112,7 @@ class TeamMemberResponse(BaseModel):
 
 class TeamCompositionResponse(BaseModel):
     mechanical: int = 0
+    embedded_control: int = 0
     embedded_hardware: int = 0
     algorithm: int = 0
     unassigned: int = 0
@@ -112,6 +131,8 @@ class TeamResponse(BaseModel):
     members: list[TeamMemberResponse]
     can_manage: bool
     composition: TeamCompositionResponse = Field(default_factory=TeamCompositionResponse)
+    captain_email: str | None = None
+    contact_wechat: str | None = None
 
 
 class TeamCreatedResponse(TeamResponse):
@@ -137,6 +158,7 @@ class TeamDirectoryItem(BaseModel):
     member_count: int
     max_members: int
     can_join: bool
+    can_apply: bool = False
 
 
 class TeamProfileResponse(BaseModel):
@@ -184,6 +206,21 @@ class TeamInvitationResponse(BaseModel):
 
 class TeamInvitationListResponse(BaseModel):
     items: list[TeamInvitationResponse]
+
+
+class TeamApplicationResponse(BaseModel):
+    id: UUID
+    team_id: UUID
+    team_name: str
+    applicant_user_id: UUID
+    applicant_full_name: str
+    status: TeamInvitationStatus
+    created_at: datetime
+    responded_at: datetime | None
+
+
+class TeamApplicationListResponse(BaseModel):
+    items: list[TeamApplicationResponse]
 
 
 class TeamDirectoryResponse(BaseModel):

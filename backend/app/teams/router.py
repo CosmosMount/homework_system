@@ -21,6 +21,8 @@ from app.teams.schemas import (
     CaptainTransferRequest,
     InviteCodeRotatedResponse,
     OperationResponse,
+    TeamApplicationListResponse,
+    TeamApplicationResponse,
     TeamCreatedResponse,
     TeamCreateRequest,
     TeamDirectoryResponse,
@@ -31,6 +33,7 @@ from app.teams.schemas import (
     TeamProfilePage,
     TeamProfileResponse,
     TeamProfileUpsertRequest,
+    TeamRenameRequest,
     TeamResponse,
     TeamSettingsResponse,
     TeamSettingsUpdateRequest,
@@ -181,6 +184,83 @@ async def get_my_team(
     return await service.my_team(context=context)
 
 
+@router.get("/team-applications/me", response_model=TeamApplicationListResponse)
+async def list_my_team_applications(
+    service: TeamServiceDependency, context: AuthenticatedContextDependency
+) -> TeamApplicationListResponse:
+    return await service.my_applications(context=context)
+
+
+@router.get("/teams/{team_id}/applications", response_model=TeamApplicationListResponse)
+async def list_team_applications(
+    team_id: UUID, service: TeamServiceDependency, context: AuthenticatedContextDependency
+) -> TeamApplicationListResponse:
+    return await service.captain_applications(team_id, context=context)
+
+
+@router.post(
+    "/teams/{team_id}/applications",
+    response_model=TeamApplicationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_team_application(
+    team_id: UUID,
+    request: Request,
+    service: TeamServiceDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> TeamApplicationResponse:
+    return await service.apply_to_team(team_id, audit_context=_audit_context(request, context))
+
+
+@router.post("/teams/{team_id}/applications/{application_id}/accept", response_model=TeamResponse)
+async def accept_team_application(
+    team_id: UUID,
+    application_id: UUID,
+    request: Request,
+    service: TeamServiceDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> TeamResponse:
+    response = await service.respond_to_application(
+        team_id, application_id, accept=True, audit_context=_audit_context(request, context)
+    )
+    assert isinstance(response, TeamResponse)
+    return response
+
+
+@router.post(
+    "/teams/{team_id}/applications/{application_id}/decline", response_model=OperationResponse
+)
+async def decline_team_application(
+    team_id: UUID,
+    application_id: UUID,
+    request: Request,
+    service: TeamServiceDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> OperationResponse:
+    response = await service.respond_to_application(
+        team_id, application_id, accept=False, audit_context=_audit_context(request, context)
+    )
+    assert isinstance(response, OperationResponse)
+    return response
+
+
+@router.patch("/teams/{team_id}/name", response_model=TeamResponse)
+async def rename_team(
+    team_id: UUID,
+    payload: TeamRenameRequest,
+    request: Request,
+    service: TeamServiceDependency,
+    context: AuthenticatedContextDependency,
+    _csrf: CsrfDependency,
+) -> TeamResponse:
+    return await service.rename_team(
+        team_id, payload, audit_context=_audit_context(request, context)
+    )
+
+
 @router.post("/teams", response_model=TeamCreatedResponse, status_code=status.HTTP_201_CREATED)
 async def create_team(
     payload: TeamCreateRequest,
@@ -191,6 +271,7 @@ async def create_team(
 ) -> TeamCreatedResponse:
     return await service.create_team(
         payload.name,
+        contact_wechat=payload.contact_wechat,
         audit_context=_audit_context(request, context),
     )
 

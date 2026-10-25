@@ -18,9 +18,22 @@ from app.auth.service import AuthenticatedContext, context_effective_role, conte
 from app.core.config import Settings
 from app.core.errors import ApplicationError
 from app.core.identifiers import uuid7
-from app.teams.composition import TeamCompositionService, composition_for
-from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile, TeamSettings
-from app.teams.repository import TeamRepository
+from app.notifications.models import OutboxJob
+from app.notifications.repository import OutboxRepository
+from app.teams.composition import (
+    TeamCompositionService,
+    composition_for,
+    effective_team_capacity,
+)
+from app.teams.models import (
+    Team,
+    TeamApplication,
+    TeamInvitation,
+    TeamMember,
+    TeamProfile,
+    TeamSettings,
+)
+from app.teams.repository import TeamApplicationRecord, TeamRepository
 from app.teams.schemas import (
     AdminCaptainTransferRequest,
     AdminMemberAddRequest,
@@ -31,6 +44,8 @@ from app.teams.schemas import (
     CaptainTransferRequest,
     InviteCodeRotatedResponse,
     OperationResponse,
+    TeamApplicationListResponse,
+    TeamApplicationResponse,
     TeamCreatedResponse,
     TeamDirectoryItem,
     TeamDirectoryResponse,
@@ -42,6 +57,7 @@ from app.teams.schemas import (
     TeamProfilePage,
     TeamProfileResponse,
     TeamProfileUpsertRequest,
+    TeamRenameRequest,
     TeamResponse,
     TeamSettingsResponse,
     TeamSettingsUpdateRequest,
@@ -75,6 +91,7 @@ class TeamService:
         self._users = UserRepository(session)
         self._auth = AuthRepository(session)
         self._audit = AuditRepository(session)
+        self._outbox = OutboxRepository(session)
         self._clock = clock or (lambda: datetime.now(UTC))
 
     @staticmethod
@@ -168,6 +185,10 @@ class TeamService:
 
     async def _team_response(self, team: Team, *, actor_user_id: UUID) -> TeamResponse:
         members = await self._teams.current_members(team.id)
+        captain_email = next(
+            (record.user.email for record in members if record.user.id == team.captain_user_id),
+            None,
+        )
         return TeamResponse(
             id=team.id,
             name=team.name,
@@ -175,7 +196,7 @@ class TeamService:
             captain_user_id=team.captain_user_id,
             member_count=len(members),
             composition=composition_for(record.direction_name for record in members),
-            max_members=team.max_members,
+            max_members=effective_team_capacity(team.max_members),
             dissolved_at=team.dissolved_at,
             revision=team.revision,
             members=[
@@ -192,6 +213,8 @@ class TeamService:
                 for record in members
             ],
             can_manage=team.status == "forming" and team.captain_user_id == actor_user_id,
+            captain_email=captain_email,
+            contact_wechat=team.contact_wechat,
         )
 
     async def team_settings(self, *, context: AuthenticatedContext) -> TeamSettingsResponse:
@@ -240,7 +263,9 @@ class TeamService:
         can_send = False
         pending_invitees: set[UUID] = set()
         if actor_team is not None:
-            can_send = await self._teams.member_count(actor_team.id) < actor_team.max_members
+            can_send = await self._teams.member_count(actor_team.id) < effective_team_capacity(
+                actor_team.max_members
+            )
             pending_invitees = await self._teams.pending_invitee_ids(actor_team.id)
         return TeamProfilePage(
             items=[
@@ -358,7 +383,7 @@ class TeamService:
         if team is None:
             await self._session.rollback()
             raise self._conflict("TEAM_REQUIRED", "请先创建或加入一支队伍，再邀请成员。")
-        if await self._teams.member_count(team.id) >= team.max_members:
+        if await self._teams.member_count(team.id) >= effective_team_capacity(team.max_members):
             await self._session.rollback()
             raise self._conflict("TEAM_FULL", "当前队伍人数已满。")
         target = await self._users.get_by_id(payload.invitee_user_id, for_update=True)
@@ -472,7 +497,7 @@ class TeamService:
         ):
             await self._session.rollback()
             raise self._conflict("ALREADY_IN_TEAM", "当前账号已经加入一支队伍。")
-        if await self._teams.member_count(team.id) >= team.max_members:
+        if await self._teams.member_count(team.id) >= effective_team_capacity(team.max_members):
             await self._session.rollback()
             raise self._conflict("TEAM_FULL", "目标队伍人数已满。")
         await self._composition.require_add(team.id, audit_context.actor.user.id)
@@ -528,7 +553,7 @@ class TeamService:
             page=page,
             page_size=page_size,
         )
-        already_in_team = await self._teams.team_for_user(context.user.id) is not None
+        current_team = await self._teams.team_for_user(context.user.id)
         return TeamDirectoryResponse(
             items=[
                 TeamDirectoryItem(
@@ -536,11 +561,19 @@ class TeamService:
                     name=record.team.name,
                     status=cast(TeamStatus, record.team.status),
                     member_count=record.member_count,
-                    max_members=record.team.max_members,
+                    max_members=effective_team_capacity(record.team.max_members),
                     can_join=(
-                        not already_in_team
+                        current_team is None
                         and record.team.status == "forming"
-                        and record.member_count < record.team.max_members
+                        and record.member_count < effective_team_capacity(record.team.max_members)
+                        and await self._composition.can_add(record.team.id, context.user.id)
+                    ),
+                    can_apply=(
+                        (current_team is None or current_team.id != record.team.id)
+                        and (
+                            current_team is None or current_team.captain_user_id != context.user.id
+                        )
+                        and record.member_count < effective_team_capacity(record.team.max_members)
                         and await self._composition.can_add(record.team.id, context.user.id)
                     ),
                 )
@@ -562,6 +595,7 @@ class TeamService:
         self,
         name: str,
         *,
+        contact_wechat: str | None = None,
         audit_context: TeamAuditContext,
     ) -> TeamCreatedResponse:
         self._require_student(audit_context.actor)
@@ -581,6 +615,9 @@ class TeamService:
         team = Team(
             id=uuid7(),
             name=name.strip(),
+            contact_wechat=(
+                contact_wechat.strip() if contact_wechat and contact_wechat.strip() else None
+            ),
             status="forming",
             captain_user_id=audit_context.actor.user.id,
             invite_code_hash=self._invite_hash(invite_code),
@@ -607,7 +644,10 @@ class TeamService:
             audit_context,
             action="team.create",
             target_id=team.id,
-            change_summary={"name": team.name, "max_members": team.max_members},
+            change_summary={
+                "name": team.name,
+                "max_members": effective_team_capacity(team.max_members),
+            },
             now=now,
         )
         try:
@@ -692,7 +732,7 @@ class TeamService:
                 code="INVITE_CODE_INVALID",
                 message="邀请码无效或已轮换。",
             )
-        if await self._teams.member_count(team.id) >= team.max_members:
+        if await self._teams.member_count(team.id) >= effective_team_capacity(team.max_members):
             await self._session.commit()
             raise self._conflict("TEAM_FULL", "目标队伍人数已满。")
         await self._composition.require_add(team.id, audit_context.actor.user.id)
@@ -741,7 +781,7 @@ class TeamService:
         await self._composition.require_add(None, audit_context.actor.user.id)
         for candidate in await self._teams.forming_teams_for_update():
             candidate_count = await self._teams.member_count(candidate.id)
-            if candidate_count >= candidate.max_members:
+            if candidate_count >= effective_team_capacity(candidate.max_members):
                 continue
             if not await self._composition.can_add(candidate.id, audit_context.actor.user.id):
                 continue
@@ -822,6 +862,283 @@ class TeamService:
                 message="只有当前队长可以执行此操作。",
             )
         return team
+
+    async def rename_team(
+        self, team_id: UUID, payload: TeamRenameRequest, *, audit_context: TeamAuditContext
+    ) -> TeamResponse:
+        self._require_student(audit_context.actor)
+        await self._require_team_open()
+        team = await self._mutable_team_for_captain(team_id, audit_context.actor.user.id)
+        if team.revision != payload.revision:
+            await self._session.rollback()
+            raise self._conflict("REVISION_CONFLICT", "队伍信息已更新，请刷新后重试。")
+        if team.name != payload.name:
+            old_name = team.name
+            team.name = payload.name
+            team.updated_at = self._clock()
+            team.revision += 1
+            self._add_audit(
+                audit_context,
+                action="team.rename",
+                target_id=team.id,
+                change_summary={"old_name": old_name, "new_name": payload.name},
+                now=team.updated_at,
+            )
+            try:
+                await self._session.commit()
+            except IntegrityError as exc:
+                await self._session.rollback()
+                raise self._conflict("TEAM_NAME_CONFLICT", "已有同名队伍。") from exc
+        else:
+            await self._session.rollback()
+        return await self._team_response(team, actor_user_id=audit_context.actor.user.id)
+
+    @staticmethod
+    def _application_response(record: TeamApplicationRecord) -> TeamApplicationResponse:
+        return TeamApplicationResponse(
+            id=record.application.id,
+            team_id=record.team.id,
+            team_name=record.team.name,
+            applicant_user_id=record.applicant.id,
+            applicant_full_name=record.applicant.full_name,
+            status=cast(
+                Literal["pending", "accepted", "declined", "cancelled"], record.application.status
+            ),
+            created_at=record.application.created_at,
+            responded_at=record.application.responded_at,
+        )
+
+    async def my_applications(
+        self, *, context: AuthenticatedContext
+    ) -> TeamApplicationListResponse:
+        self._require_student(context)
+        if not (await self._team_settings_record()).is_team_open:
+            return TeamApplicationListResponse(items=[])
+        records = await self._teams.applications_for_applicant(context.user.id)
+        return TeamApplicationListResponse(
+            items=[self._application_response(record) for record in records]
+        )
+
+    async def captain_applications(
+        self, team_id: UUID, *, context: AuthenticatedContext
+    ) -> TeamApplicationListResponse:
+        self._require_student(context)
+        if not (await self._team_settings_record()).is_team_open:
+            return TeamApplicationListResponse(items=[])
+        await self._mutable_team_for_captain(team_id, context.user.id)
+        records = await self._teams.applications_for_team(team_id)
+        return TeamApplicationListResponse(
+            items=[self._application_response(record) for record in records]
+        )
+
+    async def apply_to_team(
+        self, team_id: UUID, *, audit_context: TeamAuditContext
+    ) -> TeamApplicationResponse:
+        self._require_student(audit_context.actor)
+        await self._require_team_open()
+        await self._composition.lock()
+        team = await self._teams.get_team(team_id, for_update=True)
+        if team is None or team.status != "forming":
+            await self._session.rollback()
+            raise self._not_found()
+        current = await self._teams.team_for_user(audit_context.actor.user.id, for_update=True)
+        if current is not None and current.id == team.id:
+            await self._session.rollback()
+            raise self._conflict("ALREADY_IN_TEAM", "已经是该队伍成员。")
+        if current is not None and current.captain_user_id == audit_context.actor.user.id:
+            await self._session.rollback()
+            raise self._conflict("CAPTAIN_TRANSFER_REQUIRED", "请先转让当前队伍的队长身份。")
+        existing = await self._teams.pending_application(team.id, audit_context.actor.user.id)
+        if existing is not None:
+            return TeamApplicationResponse(
+                id=existing.id,
+                team_id=team.id,
+                team_name=team.name,
+                applicant_user_id=audit_context.actor.user.id,
+                applicant_full_name=audit_context.actor.user.full_name,
+                status="pending",
+                created_at=existing.created_at,
+                responded_at=None,
+            )
+        if await self._teams.member_count(team.id) >= effective_team_capacity(team.max_members):
+            await self._session.rollback()
+            raise self._conflict("TEAM_FULL", "目标队伍人数已满。")
+        await self._composition.require_add(team.id, audit_context.actor.user.id)
+        captain = (
+            await self._users.get_by_id(team.captain_user_id) if team.captain_user_id else None
+        )
+        if captain is None or captain.status != "active":
+            await self._session.rollback()
+            raise self._conflict("TEAM_CAPTAIN_UNAVAILABLE", "目标队伍暂无可处理申请的队长。")
+        now = self._clock()
+        application = TeamApplication(
+            id=uuid7(),
+            team_id=team.id,
+            applicant_user_id=audit_context.actor.user.id,
+            status="pending",
+            responded_at=None,
+            created_at=now,
+            updated_at=now,
+            revision=1,
+        )
+        self._teams.add_application(application)
+        self._outbox.add(
+            OutboxJob(
+                id=uuid7(),
+                job_type="team_application_email",
+                event_key=f"team_application:{application.id}",
+                payload={
+                    "recipient": captain.email,
+                    "full_name": captain.full_name,
+                    "applicant_user_id": str(audit_context.actor.user.id),
+                    "applicant_name": audit_context.actor.user.full_name,
+                    "team_name": team.name,
+                    "target_url": "/competitions",
+                },
+                secret_payload_ciphertext=None,
+                status="pending",
+                available_at=now,
+                attempt_count=0,
+                max_attempts=8,
+                locked_by=None,
+                locked_at=None,
+                last_error_code=None,
+                last_error_summary=None,
+                created_at=now,
+                sent_at=None,
+            )
+        )
+        self._add_audit(
+            audit_context,
+            action="team.application_create",
+            target_id=application.id,
+            target_type="team_application",
+            change_summary={"team_id": str(team.id)},
+            now=now,
+        )
+        try:
+            await self._session.commit()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            existing = await self._teams.pending_application(team_id, audit_context.actor.user.id)
+            if existing is not None:
+                return TeamApplicationResponse(
+                    id=existing.id,
+                    team_id=team.id,
+                    team_name=team.name,
+                    applicant_user_id=audit_context.actor.user.id,
+                    applicant_full_name=audit_context.actor.user.full_name,
+                    status="pending",
+                    created_at=existing.created_at,
+                    responded_at=None,
+                )
+            raise self._conflict(
+                "TEAM_APPLICATION_CONFLICT", "申请状态发生变化，请刷新后重试。"
+            ) from exc
+        return TeamApplicationResponse(
+            id=application.id,
+            team_id=team.id,
+            team_name=team.name,
+            applicant_user_id=audit_context.actor.user.id,
+            applicant_full_name=audit_context.actor.user.full_name,
+            status="pending",
+            created_at=now,
+            responded_at=None,
+        )
+
+    async def respond_to_application(
+        self, team_id: UUID, application_id: UUID, *, accept: bool, audit_context: TeamAuditContext
+    ) -> TeamResponse | OperationResponse:
+        self._require_student(audit_context.actor)
+        await self._require_team_open()
+        if accept:
+            await self._composition.lock()
+        team = await self._mutable_team_for_captain(team_id, audit_context.actor.user.id)
+        application = await self._teams.application_for_team(
+            application_id, team.id, for_update=True
+        )
+        if application is None:
+            await self._session.rollback()
+            raise self._not_found()
+        if application.status != "pending":
+            await self._session.rollback()
+            raise self._conflict("APPLICATION_NOT_PENDING", "该申请已经处理。")
+        now = self._clock()
+        if accept:
+            applicant = await self._users.get_by_id(application.applicant_user_id, for_update=True)
+            if (
+                applicant is None
+                or applicant.role not in {"student", "admin"}
+                or applicant.status != "active"
+            ):
+                await self._session.rollback()
+                raise self._conflict("APPLICATION_UNAVAILABLE", "申请人已无法加入队伍。")
+            current = await self._teams.team_for_user(applicant.id, for_update=True)
+            if current is not None and current.id == team.id:
+                await self._session.rollback()
+                raise self._conflict("ALREADY_IN_TEAM", "申请人已在当前队伍。")
+            if current is not None and current.captain_user_id == applicant.id:
+                await self._session.rollback()
+                raise self._conflict("CAPTAIN_TRANSFER_REQUIRED", "申请人须先转让原队队长身份。")
+            if await self._teams.member_count(team.id) >= effective_team_capacity(team.max_members):
+                await self._session.rollback()
+                raise self._conflict("TEAM_FULL", "目标队伍人数已满。")
+            await self._composition.require_add(team.id, applicant.id)
+            if current is not None:
+                old_member = await self._teams.current_member(
+                    current.id, applicant.id, for_update=True
+                )
+                if old_member is None:
+                    await self._session.rollback()
+                    raise self._conflict("TEAM_MEMBERSHIP_CONFLICT", "原队伍成员状态已变化。")
+                old_member.left_at = now
+                current.updated_at = now
+                current.revision += 1
+                await self._session.flush()
+            self._teams.add_member(
+                TeamMember(
+                    id=uuid7(),
+                    team_id=team.id,
+                    user_id=applicant.id,
+                    joined_at=now,
+                    left_at=None,
+                    added_by_admin=False,
+                    admin_reason=None,
+                )
+            )
+            await self._teams.cancel_pending_for_invitee(applicant.id, responded_at=now)
+            await self._teams.cancel_pending_applications_for_applicant(
+                applicant.id, responded_at=now, exclude_id=application.id
+            )
+            team.updated_at = now
+            team.revision += 1
+        application.status = "accepted" if accept else "declined"
+        application.responded_at = now
+        application.updated_at = now
+        application.revision += 1
+        self._add_audit(
+            audit_context,
+            action="team.application_accept" if accept else "team.application_decline",
+            target_id=application.id,
+            target_type="team_application",
+            change_summary={
+                "team_id": str(team.id),
+                "switched_from_team_id": (
+                    str(current.id) if accept and current is not None else None
+                ),
+            },
+            now=now,
+        )
+        try:
+            await self._session.commit()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise self._conflict(
+                "TEAM_MEMBERSHIP_CONFLICT", "组队状态发生变化，请刷新后重试。"
+            ) from exc
+        if accept:
+            return await self._team_response(team, actor_user_id=audit_context.actor.user.id)
+        return OperationResponse()
 
     async def rotate_invite_code(
         self,
@@ -960,6 +1277,7 @@ class TeamService:
         team.updated_at = now
         team.revision += 1
         await self._teams.cancel_pending_for_team(team.id, responded_at=now)
+        await self._teams.cancel_pending_applications_for_team(team.id, responded_at=now)
         self._add_audit(
             audit_context,
             action="team.dissolve",
@@ -992,7 +1310,7 @@ class TeamService:
                     status=cast(TeamStatus, record.team.status),
                     captain_user_id=record.team.captain_user_id,
                     member_count=record.member_count,
-                    max_members=record.team.max_members,
+                    max_members=effective_team_capacity(record.team.max_members),
                 )
                 for record in records
             ],
@@ -1105,7 +1423,7 @@ class TeamService:
         if await self._teams.team_for_user(user.id, for_update=True) is not None:
             await self._session.rollback()
             raise self._conflict("ALREADY_IN_TEAM", "该学生已经加入其他队伍。")
-        if await self._teams.member_count(team.id) >= team.max_members:
+        if await self._teams.member_count(team.id) >= effective_team_capacity(team.max_members):
             await self._session.rollback()
             raise self._conflict("TEAM_FULL", "目标队伍人数已满。")
         now = self._clock()

@@ -14,13 +14,24 @@ from app.auth.repository import AuthRepository
 from app.auth.service import AuthenticatedContext
 from app.core.config import Settings
 from app.core.errors import ApplicationError
+from app.notifications.models import OutboxJob
 from app.teams.composition import TeamCompositionService
-from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile, TeamSettings
-from app.teams.repository import TeamListRecord, TeamProfileRecord, TeamRepository
+from app.teams.models import (
+    Team,
+    TeamApplication,
+    TeamInvitation,
+    TeamMember,
+    TeamProfile,
+    TeamSettings,
+)
+from app.teams.repository import TeamListRecord, TeamMemberRecord, TeamProfileRecord, TeamRepository
 from app.teams.schemas import (
     AdminMemberAddRequest,
+    TeamCreateRequest,
+    TeamDirectoryItem,
     TeamInvitationCreateRequest,
     TeamProfileUpsertRequest,
+    TeamRenameRequest,
     TeamResponse,
     TeamSettingsUpdateRequest,
 )
@@ -136,6 +147,193 @@ def test_team_models_have_no_competition_dependency_and_enforce_global_membershi
     assert str(current_user_index.dialect_options["postgresql"]["where"])
     team_indexes = {index.name for index in team_table.indexes}
     assert "uq_teams_active_name" in team_indexes
+    assert "contact_wechat" in team_table.columns
+    assert any(
+        str(constraint.name or "").endswith("contact_wechat_present")
+        for constraint in team_table.constraints
+    )
+
+
+def test_team_contact_is_optional_and_normalized() -> None:
+    assert TeamCreateRequest(name=" 队伍 ", contact_wechat="  pnx_wechat  ").model_dump() == {
+        "name": "队伍",
+        "contact_wechat": "pnx_wechat",
+    }
+    assert TeamCreateRequest(name="队伍", contact_wechat="   ").contact_wechat is None
+
+
+def test_team_application_has_pending_uniqueness_and_cascading_membership_independence() -> None:
+    table = cast(Table, TeamApplication.__table__)
+    index = next(
+        index
+        for index in table.indexes
+        if index.name == "uq_team_applications_pending_team_applicant"
+    )
+    assert index.unique is True
+    assert str(index.dialect_options["postgresql"]["where"]) == "status = 'pending'"
+    assert table.c.team_id.foreign_keys.pop().ondelete == "CASCADE"
+
+
+@pytest.mark.asyncio
+async def test_captain_can_rename_team_with_revision_and_audit() -> None:
+    now = datetime.now(UTC)
+    audit_context = make_audit_context()
+    team = make_team("原队名", captain_user_id=audit_context.actor.user.id)
+    service, session = make_service(now)
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            get_team=AsyncMock(return_value=team), current_members=AsyncMock(return_value=[])
+        ),
+    )
+
+    result = await service.rename_team(
+        team.id, TeamRenameRequest(name=" 新队名 ", revision=1), audit_context=audit_context
+    )
+
+    assert result.name == "新队名"
+    assert team.revision == 2
+    session.commit.assert_awaited_once()
+    cast(Mock, service._audit.add).assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_team_application_enqueues_one_captain_email_with_application() -> None:
+    now = datetime.now(UTC)
+    audit_context = make_audit_context()
+    team = make_team("目标队")
+    captain = SimpleNamespace(
+        id=team.captain_user_id,
+        status="active",
+        email="captain@connect.hkust-gz.edu.cn",
+        full_name="队长",
+    )
+    service, session = make_service(now)
+    applications: list[TeamApplication] = []
+    jobs: list[OutboxJob] = []
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            get_team=AsyncMock(return_value=team),
+            team_for_user=AsyncMock(return_value=None),
+            pending_application=AsyncMock(
+                side_effect=lambda *_: applications[0] if applications else None
+            ),
+            member_count=AsyncMock(return_value=1),
+            add_application=applications.append,
+        ),
+    )
+    service._users = cast(
+        UserRepository, SimpleNamespace(get_by_id=AsyncMock(return_value=captain))
+    )
+    service._outbox = SimpleNamespace(add=jobs.append)  # type: ignore[assignment]
+
+    first = await service.apply_to_team(team.id, audit_context=audit_context)
+    second = await service.apply_to_team(team.id, audit_context=audit_context)
+
+    assert first.id == second.id
+    assert len(applications) == len(jobs) == 1
+    assert jobs[0].job_type == "team_application_email"
+    assert jobs[0].payload["recipient"] == captain.email
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_captain_must_transfer_before_applying_to_another_team() -> None:
+    now = datetime.now(UTC)
+    audit_context = make_audit_context()
+    current = make_team("原队", captain_user_id=audit_context.actor.user.id)
+    target = make_team("目标队")
+    service, session = make_service(now)
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            get_team=AsyncMock(return_value=target),
+            team_for_user=AsyncMock(return_value=current),
+        ),
+    )
+
+    with pytest.raises(ApplicationError) as captured:
+        await service.apply_to_team(target.id, audit_context=audit_context)
+
+    assert captured.value.code == "CAPTAIN_TRANSFER_REQUIRED"
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_accepted_application_switches_membership_in_one_transaction() -> None:
+    now = datetime.now(UTC)
+    audit_context = make_audit_context()
+    target = make_team("目标队", captain_user_id=audit_context.actor.user.id)
+    old = make_team("原队")
+    applicant_id = uuid4()
+    old_member = TeamMember(
+        id=uuid4(),
+        team_id=old.id,
+        user_id=applicant_id,
+        joined_at=now - timedelta(days=1),
+        left_at=None,
+        added_by_admin=False,
+        admin_reason=None,
+    )
+    application = TeamApplication(
+        id=uuid4(),
+        team_id=target.id,
+        applicant_user_id=applicant_id,
+        status="pending",
+        responded_at=None,
+        created_at=now,
+        updated_at=now,
+        revision=1,
+    )
+    added: list[TeamMember] = []
+    service, session = make_service(now)
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            get_team=AsyncMock(return_value=target),
+            application_for_team=AsyncMock(return_value=application),
+            team_for_user=AsyncMock(return_value=old),
+            member_count=AsyncMock(return_value=1),
+            current_member=AsyncMock(return_value=old_member),
+            add_member=added.append,
+            cancel_pending_for_invitee=AsyncMock(),
+            cancel_pending_applications_for_applicant=AsyncMock(),
+        ),
+    )
+    service._users = cast(
+        UserRepository,
+        SimpleNamespace(
+            get_by_id=AsyncMock(
+                return_value=SimpleNamespace(id=applicant_id, role="student", status="active")
+            )
+        ),
+    )
+    service._team_response = AsyncMock(  # type: ignore[method-assign]
+        return_value=TeamResponse(
+            id=target.id,
+            name=target.name,
+            status="forming",
+            captain_user_id=target.captain_user_id,
+            member_count=2,
+            max_members=5,
+            dissolved_at=None,
+            revision=2,
+            members=[],
+            can_manage=True,
+        )
+    )
+
+    result = await service.respond_to_application(
+        target.id, application.id, accept=True, audit_context=audit_context
+    )
+
+    assert isinstance(result, TeamResponse)
+    assert old_member.left_at == now
+    assert len(added) == 1 and added[0].user_id == applicant_id and added[0].team_id == target.id
+    assert application.status == "accepted"
+    session.flush.assert_awaited_once()
+    session.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -299,7 +497,9 @@ async def test_student_creates_team_without_competition_and_receives_invite_once
         ),
     )
 
-    result = await service.create_team("  原子队  ", audit_context=audit_context)
+    result = await service.create_team(
+        "  原子队  ", contact_wechat="  pnx_team  ", audit_context=audit_context
+    )
     cast(AsyncMock, service._composition.require_add).assert_awaited_once_with(
         None, audit_context.actor.user.id
     )
@@ -307,13 +507,65 @@ async def test_student_creates_team_without_competition_and_receives_invite_once
     team = cast(Team, add_team.call_args.args[0])
     member = cast(TeamMember, add_member.call_args.args[0])
     assert team.name == "原子队"
+    assert team.contact_wechat == "pnx_team"
     assert team.max_members == 5
+    assert result.max_members == 5
     assert member.team_id == team.id
     assert member.user_id == audit_context.actor.user.id
     assert result.invite_code
     assert result.invite_code not in team.invite_code_hash
     assert "competition_id" not in result.model_dump()
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_team_detail_returns_captain_email_and_contact_without_public_directory_leak() -> (
+    None
+):
+    now = datetime.now(UTC)
+    captain_id = uuid4()
+    team = make_team("联系方式队", captain_user_id=captain_id, created_at=now)
+    team.contact_wechat = "pnx_team"
+    member = TeamMember(
+        id=uuid4(),
+        team_id=team.id,
+        user_id=captain_id,
+        joined_at=now,
+        left_at=None,
+        added_by_admin=False,
+        admin_reason=None,
+    )
+    service, _session = make_service(now)
+    service._teams = cast(
+        TeamRepository,
+        SimpleNamespace(
+            current_members=AsyncMock(
+                return_value=[
+                    TeamMemberRecord(
+                        member=member,
+                        user=cast(
+                            User,
+                            SimpleNamespace(
+                                id=captain_id,
+                                email="captain@connect.hkust-gz.edu.cn",
+                                full_name="队长",
+                                student_number="20260001",
+                            ),
+                        ),
+                        profile=None,
+                        direction_name="机械",
+                    )
+                ]
+            )
+        ),
+    )
+
+    result = await service._team_response(team, actor_user_id=captain_id)
+
+    assert result.captain_email == "captain@connect.hkust-gz.edu.cn"
+    assert result.contact_wechat == "pnx_team"
+    assert "captain_email" not in TeamDirectoryItem.model_fields
+    assert "contact_wechat" not in TeamDirectoryItem.model_fields
 
 
 @pytest.mark.asyncio

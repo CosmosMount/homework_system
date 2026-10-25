@@ -25,6 +25,10 @@ class Team(TimestampRevisionMixin, Base):
     __tablename__ = "teams"
     __table_args__ = (
         CheckConstraint("length(trim(name)) BETWEEN 1 AND 120", name="name_present"),
+        CheckConstraint(
+            "contact_wechat IS NULL OR length(trim(contact_wechat)) BETWEEN 1 AND 64",
+            name="contact_wechat_present",
+        ),
         CheckConstraint("status IN ('forming', 'dissolved')", name="status_allowed"),
         CheckConstraint("max_members BETWEEN 1 AND 20", name="max_members_range"),
         CheckConstraint("invite_code_hash ~ '^[0-9a-f]{64}$'", name="invite_code_hash_format"),
@@ -47,6 +51,7 @@ class Team(TimestampRevisionMixin, Base):
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid7)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    contact_wechat: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="forming")
     captain_user_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
@@ -157,6 +162,41 @@ class TeamInvitation(TimestampRevisionMixin, Base):
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     invited_by_user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TeamApplication(TimestampRevisionMixin, Base):
+    __tablename__ = "team_applications"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'accepted', 'declined', 'cancelled')", name="status_allowed"
+        ),
+        CheckConstraint(
+            "(status = 'pending' AND responded_at IS NULL) OR "
+            "(status <> 'pending' AND responded_at IS NOT NULL)",
+            name="response_state_consistent",
+        ),
+        Index(
+            "uq_team_applications_pending_team_applicant",
+            "team_id",
+            "applicant_user_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index("ix_team_applications_team_status_created", "team_id", "status", "created_at"),
+        Index("ix_team_applications_applicant_status", "applicant_user_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid7)
+    team_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
+    )
+    applicant_user_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     status: Mapped[str] = mapped_column(

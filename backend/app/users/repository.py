@@ -521,6 +521,7 @@ class UserRepository:
         )
         mail_identity_predicates: list[Any] = [
             OutboxJob.payload["recipient"].as_string().in_((user.email, user.email_normalized)),
+            OutboxJob.payload["applicant_user_id"].as_string() == str(user.id),
             OutboxJob.event_key.endswith(f":{user.id}"),
             OutboxJob.event_key.contains(f":{user.id}:"),
         ]
@@ -542,6 +543,8 @@ class UserRepository:
             redacted_payload = dict(job.payload)
             redacted_payload["recipient"] = None
             redacted_payload.pop("full_name", None)
+            redacted_payload.pop("applicant_name", None)
+            redacted_payload.pop("applicant_user_id", None)
             job.payload = redacted_payload
             job.secret_payload_ciphertext = None
             if job.status in {"pending", "processing", "retry"}:

@@ -13,6 +13,7 @@ from app.health.router import router as health_router
 from app.help_requests.router import router as help_requests_router
 from app.intentions.router import router as intentions_router
 from app.knowledge.router import router as knowledge_router
+from app.materials.router import router as materials_router
 from app.notifications.center_router import router as notification_center_router
 from app.notifications.router import router as notifications_router
 from app.submissions.router import router as submissions_router
@@ -49,6 +50,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(help_requests_router, prefix="/api/v1")
     application.include_router(intentions_router, prefix="/api/v1")
     application.include_router(knowledge_router, prefix="/api/v1")
+    application.include_router(materials_router, prefix="/api/v1")
     application.include_router(submissions_router, prefix="/api/v1")
     application.include_router(notification_center_router, prefix="/api/v1")
     application.include_router(notifications_router, prefix="/api/v1")

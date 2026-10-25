@@ -137,6 +137,9 @@ class ObjectBackupManifest:
 
 _BACKUP_ID_PATTERN = re.compile(r"^pnx-backup-[0-9]{8}T[0-9]{6}Z-(?:daily|weekly)$")
 _SAFE_OBJECT_KEY_PREFIXES = frozenset({"knowledge", "objects"})
+_MATERIAL_PHOTO_KEY_PATTERN = re.compile(
+    r"^materials/returns/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 
 
 def _payload_path(root: Path, object_key: str) -> Path:
@@ -144,7 +147,10 @@ def _payload_path(root: Path, object_key: str) -> Path:
     if (
         pure_path.is_absolute()
         or len(pure_path.parts) < 2
-        or pure_path.parts[0] not in _SAFE_OBJECT_KEY_PREFIXES
+        or (
+            pure_path.parts[0] not in _SAFE_OBJECT_KEY_PREFIXES
+            and _MATERIAL_PHOTO_KEY_PATTERN.fullmatch(object_key) is None
+        )
         or any(part in {"", ".", ".."} for part in pure_path.parts)
     ):
         raise StorageOperationError("UNSAFE_OBJECT_KEY")

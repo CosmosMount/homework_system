@@ -19,6 +19,7 @@ MAIL_JOB_TYPES = (
     "assignment_reminder_email",
     "submission_feedback_email",
     "intention_open_email",
+    "team_application_email",
 )
 
 

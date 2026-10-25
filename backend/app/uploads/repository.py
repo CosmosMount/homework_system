@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.announcements.models import AnnouncementFile
 from app.knowledge.models import KnowledgeAsset
+from app.materials.models import MaterialLoan
 from app.submissions.models import Feedback, FeedbackFile, VersionFile
 from app.uploads.models import StoredFile, UploadPart, UploadSession
 
@@ -70,6 +71,15 @@ class UploadRepository:
                 )
             ).all()
         )
+        return_photos = list(
+            (
+                await self._session.scalars(
+                    select(MaterialLoan)
+                    .where(MaterialLoan.photo_object_key.is_not(None))
+                    .order_by(MaterialLoan.photo_object_key, MaterialLoan.id)
+                )
+            ).all()
+        )
         references: list[StoredFile | StorageReconciliationReference] = [*stored_files]
         references.extend(
             StorageReconciliationReference(
@@ -82,6 +92,24 @@ class UploadRepository:
             )
             for asset in knowledge_assets
         )
+        # 配套物资的一次归还由两条借用记录共用同一个照片对象。
+        seen_photo_keys: set[str] = set()
+        for loan in return_photos:
+            if loan.photo_object_key is None or loan.photo_object_key in seen_photo_keys:
+                continue
+            if loan.photo_size is None or loan.photo_sha256 is None:
+                raise ValueError("material return photo metadata is incomplete")
+            seen_photo_keys.add(loan.photo_object_key)
+            references.append(
+                StorageReconciliationReference(
+                    id=loan.id,
+                    object_key=loan.photo_object_key,
+                    size_bytes=loan.photo_size,
+                    sha256=loan.photo_sha256,
+                    status="available",
+                    deleted_at=None,
+                )
+            )
         return sorted(references, key=lambda record: record.object_key)
 
     async def get_session(

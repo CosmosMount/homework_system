@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import OneTimeToken
 from app.notifications.admin_service import OutboxAdministrationService
+from app.notifications.mailer import render_mail
 from app.notifications.models import OutboxJob
 from app.notifications.repository import MAIL_JOB_TYPES, StudentNotificationRepository
 from app.notifications.service import (
@@ -48,6 +49,24 @@ def make_job(
 
 def test_feedback_email_is_visible_to_mail_administration_and_account_cleanup() -> None:
     assert "submission_feedback_email" in MAIL_JOB_TYPES
+
+
+def test_team_application_email_is_safe_and_visible_to_mail_administration() -> None:
+    job = make_job()
+    job.job_type = "team_application_email"
+    job.payload = {
+        "recipient": "captain@connect.hkust-gz.edu.cn",
+        "full_name": "队长",
+        "applicant_name": "<申请人>",
+        "team_name": "<目标队>",
+        "target_url": "/competitions",
+    }
+    mail = render_mail(job, {}, app_base_url="https://example.edu")
+    assert "team_application_email" in MAIL_JOB_TYPES
+    assert "&lt;申请人&gt;" in mail.html
+    assert "&lt;目标队&gt;" in mail.html
+    assert "https://example.edu/competitions" in mail.text
+    assert "邀请码" not in mail.text
 
 
 def test_transient_delivery_failure_uses_backoff_and_redacts_free_form_error() -> None:
@@ -366,6 +385,19 @@ async def test_worker_deletes_completed_account_object_without_multipart_abort()
     assert await processor.run_once() == 1
     assert processor.object_store.abort_calls == []
     assert processor.object_store.delete_calls == ["account/private-object"]
+    assert processor.sent_ids == [job.id]
+
+
+@pytest.mark.asyncio
+async def test_worker_deletes_material_return_photo_without_multipart_abort() -> None:
+    job = make_account_object_job(object_key="materials/returns/test-photo")
+    job.job_type = "delete_material_photo"
+    job.event_key = f"material-photo:{uuid4()}"
+    processor = ObjectCleanupProcessorHarness(job, upload_id=None)
+
+    assert await processor.run_once() == 1
+    assert processor.object_store.abort_calls == []
+    assert processor.object_store.delete_calls == ["materials/returns/test-photo"]
     assert processor.sent_ids == [job.id]
 
 

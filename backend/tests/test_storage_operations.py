@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.knowledge.models import KnowledgeAsset
+from app.materials.models import MaterialLoan
 from app.uploads.models import StoredFile
 from app.uploads.object_store import MinioObjectStore, ObjectInspection
 from app.uploads.operations import (
@@ -176,12 +177,12 @@ async def test_storage_reconciliation_tracks_knowledge_assets() -> None:
         created_at=now,
         last_seen_at=now,
     )
-    session = FakeReconciliationSession([[], [asset]])
+    session = FakeReconciliationSession([[], [asset], []])
     repository = UploadRepository(cast(AsyncSession, session))
 
     references = await repository.files_for_reconciliation()
 
-    assert len(session.statements) == 2
+    assert len(session.statements) == 3
     assert "knowledge_assets" in session.statements[1]
     assert len(references) == 1
     reference = references[0]
@@ -201,6 +202,54 @@ async def test_storage_reconciliation_tracks_knowledge_assets() -> None:
     assert report.database_file_count == 1
     assert report.available_file_count == 1
     assert report.untracked_objects == []
+
+
+@pytest.mark.asyncio
+async def test_storage_reconciliation_counts_shared_return_photo_once() -> None:
+    payload = b"return-photo"
+    photo_key = f"materials/returns/{uuid4()}"
+    now = datetime.now(UTC)
+    loans = [
+        MaterialLoan(
+            id=uuid4(),
+            material_id=uuid4(),
+            borrower_user_id=uuid4(),
+            checkout_idempotency_key=uuid4(),
+            return_idempotency_key=uuid4(),
+            checked_out_at=now,
+            returned_at=now,
+            photo_object_key=photo_key,
+            photo_mime_type="image/png",
+            photo_size=len(payload),
+            photo_sha256=hashlib.sha256(payload).hexdigest(),
+        )
+        for _ in range(2)
+    ]
+    session = FakeReconciliationSession([[], [], loans])
+    references = await UploadRepository(cast(AsyncSession, session)).files_for_reconciliation()
+
+    assert len(session.statements) == 3
+    assert "material_loans" in session.statements[2]
+    assert len(references) == 1
+    assert references[0].object_key == photo_key
+    report = await StorageReconciler(
+        cast(UploadRepository, FakeRepository(references)),
+        cast(MinioObjectStore, FakeObjectStore({photo_key: payload})),
+    ).run()
+    assert report.ok is True
+    assert report.available_file_count == 1
+
+
+@pytest.mark.asyncio
+async def test_storage_reconciliation_reports_photo_pending_cleanup_as_untracked() -> None:
+    photo_key = f"materials/returns/{uuid4()}"
+    session = FakeReconciliationSession([[], [], []])
+    references = await UploadRepository(cast(AsyncSession, session)).files_for_reconciliation()
+    report = await StorageReconciler(
+        cast(UploadRepository, FakeRepository(references)),
+        cast(MinioObjectStore, FakeObjectStore({photo_key: b"old-photo"})),
+    ).run()
+    assert report.untracked_objects == [photo_key]
 
 
 @pytest.mark.asyncio
@@ -233,6 +282,23 @@ async def test_storage_export_and_empty_bucket_import_round_trip_includes_knowle
     assert import_summary["object_count"] == export_summary["object_count"]
     assert import_summary["total_bytes"] == export_summary["total_bytes"]
     assert target.payloads == source.payloads
+
+
+@pytest.mark.asyncio
+async def test_storage_export_and_import_return_photo(tmp_path: Path) -> None:
+    photo_key = f"materials/returns/{uuid4()}"
+    source = FakeObjectStore({photo_key: b"photo"})
+    bundle = tmp_path / "return-photo"
+    await StorageTransfer(cast(MinioObjectStore, source)).export(bundle)
+    target = FakeObjectStore({})
+    await StorageTransfer(cast(MinioObjectStore, target)).import_into_empty_bucket(bundle)
+    assert target.payloads == source.payloads
+
+    for unsafe_key in ("materials/other/123", "materials/returns/../escape"):
+        with pytest.raises(StorageOperationError, match="UNSAFE_OBJECT_KEY"):
+            await StorageTransfer(
+                cast(MinioObjectStore, FakeObjectStore({unsafe_key: b"unsafe"}))
+            ).export(tmp_path / f"unsafe-{uuid4()}")
 
 
 @pytest.mark.asyncio

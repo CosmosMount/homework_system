@@ -8,21 +8,21 @@ from app.teams.repository import TeamRepository
 from app.teams.schemas import TeamCompositionResponse
 from app.users.repository import UserRepository
 
-COMPOSITION_RULE = "每队需要机械 2 人、嵌入式控制/硬件合计 1～2 人、算法 1 人。"
+COMPOSITION_RULE = "每队需要机械 1～2 人、嵌入式控制 1 人、嵌入式硬件 1 人、算法 1 人。"
+MAX_COMPOSITION_MEMBERS = 5
+
+
+def effective_team_capacity(max_members: int) -> int:
+    return min(max_members, MAX_COMPOSITION_MEMBERS)
 
 
 def direction_category(name: str | None) -> str:
     normalized = (name or "").strip().removesuffix("组")
     if normalized == "机械":
         return "mechanical"
-    if normalized in {
-        "嵌入式",
-        "嵌入式控制",
-        "硬件",
-        "嵌入式控制/硬件",
-        "嵌入式-控制",
-        "嵌入式-硬件",
-    }:
+    if normalized in {"嵌入式控制", "嵌入式-控制"}:
+        return "embedded_control"
+    if normalized in {"嵌入式硬件", "嵌入式-硬件", "硬件"}:
         return "embedded_hardware"
     if normalized == "算法":
         return "algorithm"
@@ -30,14 +30,21 @@ def direction_category(name: str | None) -> str:
 
 
 def composition_for(names: Iterable[str | None]) -> TeamCompositionResponse:
-    counts = {"mechanical": 0, "embedded_hardware": 0, "algorithm": 0, "unassigned": 0}
+    counts = {
+        "mechanical": 0,
+        "embedded_control": 0,
+        "embedded_hardware": 0,
+        "algorithm": 0,
+        "unassigned": 0,
+    }
     for name in names:
         counts[direction_category(name)] += 1
     return TeamCompositionResponse(
         **counts,
         is_complete=(
-            counts["mechanical"] == 2
-            and 1 <= counts["embedded_hardware"] <= 2
+            1 <= counts["mechanical"] <= 2
+            and counts["embedded_control"] == 1
+            and counts["embedded_hardware"] == 1
             and counts["algorithm"] == 1
             and counts["unassigned"] == 0
         ),
@@ -48,7 +55,8 @@ def fits_composition(names: Iterable[str | None]) -> bool:
     counts = composition_for(names)
     return (
         counts.mechanical <= 2
-        and counts.embedded_hardware <= 2
+        and counts.embedded_control <= 1
+        and counts.embedded_hardware <= 1
         and counts.algorithm <= 1
         and counts.unassigned == 0
     )
@@ -88,7 +96,7 @@ class TeamCompositionService:
             raise ApplicationError(
                 status_code=409,
                 code="TEAM_DIRECTION_REQUIRED",
-                message="请先在个人资料中选择机械、嵌入式控制/硬件或算法技术方向。",
+                message="请先在个人资料中选择机械、嵌入式控制、嵌入式硬件或算法技术方向。",
             )
         if not await self.can_add(team_id, user_id):
             await self._reject()

@@ -6,7 +6,14 @@ from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
-from app.teams.models import Team, TeamInvitation, TeamMember, TeamProfile, TeamSettings
+from app.teams.models import (
+    Team,
+    TeamApplication,
+    TeamInvitation,
+    TeamMember,
+    TeamProfile,
+    TeamSettings,
+)
 from app.users.models import Direction, User
 
 
@@ -39,6 +46,13 @@ class TeamInvitationRecord:
     invited_by: User
 
 
+@dataclass(frozen=True, slots=True)
+class TeamApplicationRecord:
+    application: TeamApplication
+    team: Team
+    applicant: User
+
+
 class TeamRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -54,6 +68,97 @@ class TeamRepository:
 
     def add_invitation(self, invitation: TeamInvitation) -> None:
         self._session.add(invitation)
+
+    def add_application(self, application: TeamApplication) -> None:
+        self._session.add(application)
+
+    async def pending_application(
+        self, team_id: UUID, applicant_id: UUID
+    ) -> TeamApplication | None:
+        result: TeamApplication | None = await self._session.scalar(
+            select(TeamApplication).where(
+                TeamApplication.team_id == team_id,
+                TeamApplication.applicant_user_id == applicant_id,
+                TeamApplication.status == "pending",
+            )
+        )
+        return result
+
+    async def application_for_team(
+        self, application_id: UUID, team_id: UUID, *, for_update: bool = False
+    ) -> TeamApplication | None:
+        statement = select(TeamApplication).where(
+            TeamApplication.id == application_id, TeamApplication.team_id == team_id
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        result: TeamApplication | None = await self._session.scalar(statement)
+        return result
+
+    async def applications_for_team(self, team_id: UUID) -> list[TeamApplicationRecord]:
+        rows = (
+            await self._session.execute(
+                select(TeamApplication, Team, User)
+                .join(Team, Team.id == TeamApplication.team_id)
+                .join(User, User.id == TeamApplication.applicant_user_id)
+                .where(TeamApplication.team_id == team_id, TeamApplication.status == "pending")
+                .order_by(TeamApplication.created_at, TeamApplication.id)
+            )
+        ).all()
+        return [
+            TeamApplicationRecord(application=row[0], team=row[1], applicant=row[2]) for row in rows
+        ]
+
+    async def applications_for_applicant(self, applicant_id: UUID) -> list[TeamApplicationRecord]:
+        rows = (
+            await self._session.execute(
+                select(TeamApplication, Team, User)
+                .join(Team, Team.id == TeamApplication.team_id)
+                .join(User, User.id == TeamApplication.applicant_user_id)
+                .where(
+                    TeamApplication.applicant_user_id == applicant_id,
+                    TeamApplication.status == "pending",
+                )
+                .order_by(TeamApplication.created_at.desc(), TeamApplication.id.desc())
+            )
+        ).all()
+        return [
+            TeamApplicationRecord(application=row[0], team=row[1], applicant=row[2]) for row in rows
+        ]
+
+    async def cancel_pending_applications_for_team(
+        self, team_id: UUID, *, responded_at: datetime
+    ) -> None:
+        await self._session.execute(
+            update(TeamApplication)
+            .where(TeamApplication.team_id == team_id, TeamApplication.status == "pending")
+            .values(
+                status="cancelled",
+                responded_at=responded_at,
+                updated_at=responded_at,
+                revision=TeamApplication.revision + 1,
+            )
+        )
+
+    async def cancel_pending_applications_for_applicant(
+        self, applicant_id: UUID, *, responded_at: datetime, exclude_id: UUID | None = None
+    ) -> None:
+        filters = [
+            TeamApplication.applicant_user_id == applicant_id,
+            TeamApplication.status == "pending",
+        ]
+        if exclude_id is not None:
+            filters.append(TeamApplication.id != exclude_id)
+        await self._session.execute(
+            update(TeamApplication)
+            .where(*filters)
+            .values(
+                status="cancelled",
+                responded_at=responded_at,
+                updated_at=responded_at,
+                revision=TeamApplication.revision + 1,
+            )
+        )
 
     async def team_settings(self, *, for_update: bool = False) -> TeamSettings | None:
         statement = select(TeamSettings).where(TeamSettings.id.is_(True))
